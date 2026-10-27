@@ -50,6 +50,17 @@ _lock = threading.Lock()
 _MASTER_STARTED = time.time()
 # Seconds a SIGTERM'd queue worker is given to hand its rows back.
 _DRAIN_SECONDS = 25
+# The deploy's shutdown budget (release-safety audit 10/26/26 A05-12).
+# Railway sends SIGTERM and SIGKILLs RAILWAY_DEPLOYMENT_DRAINING_SECONDS
+# later (the service setting; docs/ops/RECOVERY.md "Deploys" says 60). The
+# master gives the web worker graceful_timeout to finish its requests and
+# run its atexit (lease release, telemetry flush, boot stop), and only then
+# runs on_exit, which gives the queue worker _DRAIN_SECONDS to hand its rows
+# back — so both together must fit inside the drain, or the SIGKILL lands
+# mid-handback and rows wait out their lease. gunicorn's default is 30
+# (30 + 25 = 55, with nothing documented to fit it in).
+DEPLOY_DRAIN_SECONDS = 60
+graceful_timeout = 20
 
 
 def _queue_command():

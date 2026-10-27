@@ -45,9 +45,10 @@ def _scratch(tmp_path, monkeypatch):
 
 
 def _live_db(path, monkeypatch, restaurants=1):
-    """A fully migrated database at `path`, made the app's DB_PATH."""
-    models.init_db(path)
-    models.ensure_columns(path)
+    """A fully migrated database at `path`, made the app's DB_PATH — the
+    whole boot schema (models.boot_schema), which /health checks since the
+    release-safety round (10/26/26 A05-07)."""
+    models.boot_schema(path)
     for i in range(restaurants):
         rid = create_restaurant(Restaurant(name=f"Backup Co {i}", owner_email=f"b{i}@x.test"), db_path=path)
         models.update_restaurant(rid, {"gmb_refresh_token": f"tok-{i}"}, db_path=path)

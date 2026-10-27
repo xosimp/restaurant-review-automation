@@ -114,10 +114,11 @@ def init_webhooks(db_path=DB_PATH):
         # Which event a delivery row was (#75): the id the endpoint received.
         "ALTER TABLE webhook_deliveries ADD COLUMN event_id TEXT",
     ):
-        try:
-            conn.execute(col_sql)
-        except Exception:
-            pass
+        # "duplicate column" / "already exists" mean applied; anything else
+        # fails the boot (release-safety audit 10/26/26 A05-07 — it was
+        # swallowed, and a failed ALTER booted "OK").
+        from models import _apply_migration
+        _apply_migration(conn, col_sql)
     conn.commit()
     conn.close()
 
@@ -223,6 +224,12 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH, event_id=None):
     once, connected to the vetted address, no redirect followed; a URL that
     now resolves somewhere private is refused and not retried."""
     import net_safety
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # A customer's own endpoint, never from staging (A05-06). Nothing
+        # recorded: no delivery happened, and a failure count would disable
+        # the endpoint in a copy of the data.
+        return {"ok": False, "status": 0, "attempts": 0, "error": _config_gate.sends_refused_reason()}
     event_id = event_id or new_event_id()
     payload_str = json.dumps({
         "id":            event_id,

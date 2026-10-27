@@ -106,7 +106,7 @@ def build_id() -> str:
     wrapper (_csrf_fetch.html) can tell when a JSON answer's X-Cavnar-Build
     names a newer build than the JavaScript on screen (audit 10/26/26
     A06-13)."""
-    return (os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or "").strip()[:12]
+    return build_sha()[:12]
 
 
 def scheduling_allowed() -> bool:
@@ -130,8 +130,77 @@ def scheduling_allowed() -> bool:
     if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
         return True
     # Railway sets all of these on every deploy; any one is enough.
-    return any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
-                                       "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"))
+    if not any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
+                                       "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME")):
+        return False
+    # ...and only the production environment schedules (release-safety audit
+    # 10/26/26 A05-06): a staging copy made with "duplicate environment"
+    # carries production's keys, and its scheduler would brief, alert and
+    # text real people. "local" here is a Railway process that names no
+    # environment at all, which has never been seen — kept as it was.
+    return deploy_env() in ("production", "local")
+
+
+# ── Which deployment this is, and whether it may reach real people ──────────
+# (release-safety audit 10/26/26, A05-06 / R8). CAVNAR_ENV names it; without
+# it Railway's own environment name does (production's is "production", so
+# production needs no new variable); a laptop or a test run is "local".
+# Staging is any other name: it boots, serves and runs its queue like
+# production, but its scheduler stands down (scheduling_allowed) and every
+# send point — emails.deliver, notify's Twilio send, APNs and Web Push,
+# Stripe with a live key, DocuSign outside its demo account — refuses
+# (outbound_sends_allowed), whatever keys it carries.
+
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def deploy_env() -> str:
+    """"production" | "staging" | "local" | another environment's name,
+    lower-cased: CAVNAR_ENV, else RAILWAY_ENVIRONMENT_NAME (or the older
+    RAILWAY_ENVIRONMENT, which Railway sets to the same name), else
+    "local"."""
+    for var in ("CAVNAR_ENV", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_ENVIRONMENT"):
+        value = (os.getenv(var) or "").strip().lower()
+        if value:
+            return value
+    return "local"
+
+
+def is_production() -> bool:
+    return deploy_env() == "production"
+
+
+def outbound_sends_allowed() -> bool:
+    """Whether this process may email, text, push, charge or send contracts
+    to real people. True in production and on a laptop ("local" — the owner
+    and login flows a local backend sends today, CLAUDE.md, are deliberate;
+    the scheduler's sends are held there by scheduling_allowed); False in
+    any other named environment (staging, a PR environment, a duplicated
+    one) unless ALLOW_NONPROD_SENDS=1 says otherwise, deliberately — e.g. a
+    staging that holds only test keys and test addresses."""
+    if deploy_env() in ("production", "local"):
+        return True
+    return (os.getenv("ALLOW_NONPROD_SENDS") or "").strip().lower() in _TRUTHY
+
+
+def sends_refused_reason() -> str:
+    """The one sentence a refused send records: names the environment."""
+    return (f"outbound sends are off in the {deploy_env()!r} environment "
+            "(CAVNAR_ENV / RAILWAY_ENVIRONMENT_NAME is not production; ALLOW_NONPROD_SENDS=1 overrides)")
+
+
+def build_sha() -> str:
+    """The commit this process runs, as Railway (RAILWAY_GIT_COMMIT_SHA) or
+    an emergency deploy (GIT_COMMIT) names it; "" when neither does."""
+    return (os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or "").strip()
+
+
+def build_label() -> str:
+    """build_sha() shortened to 12, or "unknown" — never empty, so /health
+    and the X-Cavnar-Build header always say which build answered (A05-13:
+    a `railway up` deploy names no commit, and that must be visible)."""
+    sha = build_sha()
+    return sha[:12] if sha else "unknown"
 
 
 def restore_frozen() -> bool:
@@ -141,9 +210,28 @@ def restore_frozen() -> bool:
     database file, on the app volume. A stat, no import of ours beyond the
     already-loaded models (its DB_PATH, so a test's database has its own)."""
     import sys
+    if volume_optional() and not (os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip() and on_railway():
+        # No volume (release-safety audit 10/26/26, P3): the freeze lives in
+        # object storage (marker_store), answered from a 30-second cache.
+        try:
+            import marker_store
+            return marker_store.exists(".restore_freeze")
+        except Exception as e:     # a guard that cannot read never stops the platform (restore_guard)
+            import logging
+            logging.getLogger("config").warning("restore freeze unreadable in object storage: %s", e)
+            return False
     models = sys.modules.get("models")
     path = getattr(models, "DB_PATH", None) or os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
     return os.path.exists(os.path.join(os.path.dirname(os.path.abspath(path)) or ".", ".restore_freeze"))
+
+
+def volume_optional() -> bool:
+    """VOLUME_OPTIONAL=1 (release-safety audit 10/26/26, P3): this service may
+    run with no Railway volume — its database is Postgres, its markers live
+    in object storage (marker_store) and its backups go straight to object
+    storage. Off by default: production keeps its volume until Will detaches
+    it (docs/ops/RECOVERY.md → Retiring the volume)."""
+    return (os.getenv("VOLUME_OPTIONAL") or "").strip().lower() in _TRUTHY
 
 
 def google_places_key() -> str:
@@ -175,6 +263,13 @@ def stripe_api(key=None):
     version = (os.getenv("STRIPE_API_VERSION") or "").strip()
     if version:
         stripe.api_version = version
+    # A live key outside production is refused (A05-06): a staging copy
+    # carrying production's STRIPE_SECRET_KEY would charge, refund and
+    # cancel real customers. A test-mode key (sk_test_ / rk_test_) works in
+    # any environment.
+    if not outbound_sends_allowed() and str(stripe.api_key or "").startswith(("sk_live_", "rk_live_")):
+        stripe.api_key = ""
+        raise RuntimeError("Stripe: a live key is refused here — " + sends_refused_reason())
     if not getattr(stripe, "_cavnar_bounded", False):
         http_client = getattr(stripe, "http_client", None)
         client_cls = getattr(stripe, "RequestsClient", None) or getattr(http_client, "RequestsClient", None)

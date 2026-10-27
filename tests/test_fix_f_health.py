@@ -355,7 +355,8 @@ def test_the_web_boot_runs_the_guards_before_it_builds_anything():
                             "hosted_dashboard.py"), encoding="utf-8").read()
     guard = src.index("_models_boot.require_volume()")
     emptied = src.index("_sm_boot.assert_platform_not_emptied()")
-    first_init = src.index("    _init_db()")
+    # init_db runs first inside models.boot_schema (release-safety A05-07).
+    first_init = src.index("    _models_boot.boot_schema(")
     admin_seed = src.index("# ── Admin account seed")
     assert guard < emptied < first_init < admin_seed
     assert src.index("_logging_setup.configure()") < src.index("app = Flask(__name__)")

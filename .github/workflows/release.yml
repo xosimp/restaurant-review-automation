@@ -1,0 +1,83 @@
+# Release health (release-safety audit 10/26/26, A05-11 / A07-01 / R15).
+#
+# 1. smoke — after every successful production deploy (Railway reports each
+#    deploy as a GitHub deployment): scripts/smoke.py against the live site —
+#    /health names the deployed SHA, /login renders, its static files resolve,
+#    and (with the SMOKE_TOKEN secret, the smoke tenant's session token) one
+#    web and one mobile read answer. A failure fails the run (GitHub emails
+#    the owner) and prints the Railway rollback step.
+# 2. lag — hourly: the build /health names against the head of the branch
+#    Railway deploys (vars.DEPLOY_BRANCH, default `production`; `main` while
+#    that branch does not exist). A head waiting over 60 minutes, or a build
+#    of "unknown", fails the run.
+#
+# The in-process half — the 15-minute comparison of the new build with the
+# previous one — is platform_monitor.release_health, paged by the supervisor.
+# Reads only: nothing here deploys, writes or sends.
+name: release
+
+on:
+  deployment_status:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.event.deployment.sha || github.ref }}
+  cancel-in-progress: false
+
+env:
+  PRODUCTION_URL: ${{ vars.PRODUCTION_URL || 'https://dashboard.cavnar.ai' }}
+
+jobs:
+  smoke:
+    # Only the web service's production deployments, once they succeeded.
+    if: >-
+      github.event_name == 'deployment_status' &&
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment.environment == (vars.RAILWAY_DEPLOY_ENVIRONMENT || 'Cavnar AI / production')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install requests only (the locked version)
+        run: pip install "$(grep -E '^requests==' requirements.txt)"
+      - name: Smoke the live site
+        env:
+          SMOKE_TOKEN: ${{ secrets.SMOKE_TOKEN }}
+        run: python scripts/smoke.py "$PRODUCTION_URL" --expect-sha "${{ github.event.deployment.sha }}" --expect-env production
+
+  lag:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install requests only (the locked version)
+        run: pip install "$(grep -E '^requests==' requirements.txt)"
+      - name: The deployed build against the deploy branch's head
+        env:
+          DEPLOY_BRANCH: ${{ vars.DEPLOY_BRANCH || 'production' }}
+        run: |
+          branch="$DEPLOY_BRANCH"
+          if ! git rev-parse --verify --quiet "origin/$branch" >/dev/null; then
+            echo "origin/$branch does not exist yet; checking main (Railway deploys main until the promote flow)"
+            branch=main
+          fi
+          head_sha=$(git rev-parse "origin/$branch")
+          head_time=$(git log -1 --format=%ct "origin/$branch")
+          python scripts/release_lag.py "$PRODUCTION_URL" --head-sha "$head_sha" --head-time "$head_time"

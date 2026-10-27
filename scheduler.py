@@ -2305,6 +2305,30 @@ def gunzip_snapshot(src_path, dest_path):
         _sh.copyfileobj(gz, out, _BACKUP_CHUNK)
 
 
+def _no_volume_backups() -> bool:
+    """No volume, on purpose (VOLUME_OPTIONAL — release-safety audit
+    10/26/26, P3): the snapshot is scratch on the container's disk and the
+    off-site copy is the backup."""
+    try:
+        import marker_store
+        return marker_store.backend() == "object"
+    except Exception as e:
+        log.warning(f"backup: marker backend unknown, using the volume path: {e}")
+        return False
+
+
+def backup_dir_path():
+    """Where backup_db writes and the drill reads: BACKUP_DIR, else beside the
+    database on the volume, else (no volume) a scratch directory."""
+    if os.getenv("BACKUP_DIR"):
+        return os.getenv("BACKUP_DIR")
+    if _no_volume_backups():
+        import tempfile
+        return os.path.join(tempfile.gettempdir(), "cavnar-backups")
+    from models import DB_PATH
+    return os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+
+
 def local_snapshots(backup_dir):
     """Every local snapshot in `backup_dir`, oldest first by the date in its
     name (a gzipped one after a plain one of the same date)."""
@@ -2581,7 +2605,7 @@ def backup_db():
 
     timestamp = _chi_now().strftime("%Y-%m-%d")
     filename = f"cavnar_ai_backup_{timestamp}.db"
-    backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+    backup_dir = backup_dir_path()
     # The uncompressed, checked copy the gzip is made from — kept just long
     # enough to be scrubbed for the off-site copy (no second copy, no
     # decompress), then deleted.
@@ -2762,6 +2786,13 @@ def backup_db():
                offsite_error="; ".join(errors)[:500] or None)
     if not targets:
         _backup_failed(run, "no off-site copy was made tonight — " + ("; ".join(errors) or "unknown"))
+    if _no_volume_backups():
+        # No volume (VOLUME_OPTIONAL): the snapshot was scratch on the
+        # container's disk, gone at the next deploy anyway — the off-site
+        # copy just made is the backup (Postgres's own point-in-time
+        # recovery is the first restore path).
+        _remove_quietly(local_path)
+        run["_detail"]["local"] = "not kept: no volume (VOLUME_OPTIONAL); the off-site copy is the backup"
     run["finished_at"] = _now_utc_stamp()
     _backup_too_slow(run)
     run["detail_json"] = _json.dumps(run.pop("_detail", {}), default=str)[:2000]
@@ -4854,9 +4885,17 @@ def run_restore_drill():
     """
     import sqlite3, shutil
     from models import DB_PATH, init_db
-    backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+    backup_dir = backup_dir_path()
     # Gzipped since 10/7/26 (#8); a plain one from before still counts.
     snaps = local_snapshots(backup_dir)
+    if not snaps and _no_volume_backups():
+        # No volume (VOLUME_OPTIONAL): no snapshot is kept locally; the drill
+        # proves the off-site copy, the backup there is.
+        os.makedirs(backup_dir, exist_ok=True)
+        off = _drill_offsite(backup_dir)
+        if not (off.get("checked") and off.get("ok")):
+            raise RuntimeError(f"restore drill (off-site only, no volume): {off.get('summary')}")
+        return {"offsite": off, "ok": True, "attempted": 1, "failed": 0, "skipped": 0, "hit_bound": False}
     if not snaps:
         raise RuntimeError(f"restore drill: no snapshot in {backup_dir}")
     newest = snaps[-1]

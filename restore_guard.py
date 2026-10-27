@@ -63,9 +63,13 @@ def active() -> bool:
     if flag in ("1", "true", "on", "yes"):
         return True
     # Production: Railway, with its volume mounted (models.require_volume
-    # refuses a boot without one) — never a laptop or a test's process.
+    # refuses a boot without one) — or with no volume on purpose
+    # (VOLUME_OPTIONAL: its files live in object storage, marker_store) —
+    # never a laptop or a test's process.
     import config
-    return config.on_railway() and bool((os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip())
+    import marker_store
+    return config.on_railway() and (bool((os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip())
+                                    or marker_store.backend() == "object")
 
 
 def _dir():
@@ -81,7 +85,32 @@ def freeze_path():
     return os.path.join(_dir(), FREEZE_FILE)
 
 
+def _object_backed():
+    """No volume, on purpose: the epoch and the freeze live in object
+    storage (marker_store — release-safety audit 10/26/26, P3)."""
+    try:
+        import marker_store
+        return marker_store.backend() == "object"
+    except Exception as e:
+        log.warning("restore guard: marker backend unknown, using the volume path: %s", e)
+        return False
+
+
+def _remove(path):
+    if _object_backed():
+        import marker_store
+        marker_store.remove(os.path.basename(path))
+        return
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
 def _read_json(path):
+    if _object_backed():
+        import marker_store
+        return marker_store.read(os.path.basename(path))
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -91,6 +120,10 @@ def _read_json(path):
 
 
 def _write_json(path, data):
+    if _object_backed():
+        import marker_store
+        marker_store.write(os.path.basename(path), data)
+        return
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f)
@@ -110,6 +143,8 @@ def _parse(value):
 
 def frozen() -> dict:
     """The freeze record (detected_at, db_seq, volume_seq, db_id), or None."""
+    if _object_backed():
+        return _read_json(freeze_path())
     return _read_json(freeze_path()) if os.path.exists(freeze_path()) else None
 
 
@@ -190,14 +225,8 @@ def confirm(actor="operator", db_path=None) -> dict:
     if db_id:
         _write_json(epoch_path(), {"db_id": db_id, "seq": db_seq, "at": time.time(), "confirmed_by": actor})
     else:
-        try:
-            os.remove(epoch_path())
-        except FileNotFoundError:
-            pass
-    try:
-        os.remove(freeze_path())
-    except FileNotFoundError:
-        pass
+        _remove(epoch_path())
+    _remove(freeze_path())
     log.warning("restore guard: confirmed by %s (database counter %s); scheduling resumes on the next tick",
                 actor, db_seq)
     return {"ok": True, "was_frozen": held is not None, "db_seq": db_seq, "freeze": held}
@@ -209,9 +238,7 @@ def forget_baseline() -> None:
     as a second, unreviewed one). The next tick baselines again."""
     for p in (epoch_path(),):
         try:
-            os.remove(p)
-        except FileNotFoundError:
-            pass
+            _remove(p)
         except OSError as e:
             log.warning("restore guard: %s not removed: %s", p, e)
 

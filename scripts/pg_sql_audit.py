@@ -124,7 +124,10 @@ def static_statements(root=ROOT):
 # copy, the shadow's typed writes, the partition upkeep — every statement
 # of pg_partitions runs through execute_native): never translated, so not audited as
 # SQLite.
-_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py", "pg_partitions.py"}
+_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py", "pg_partitions.py",
+           # scripts/build_index.py: its catalog reads go to psycopg directly
+           # (release-safety audit 10/26/26, A05-04).
+           "build_index.py"}
 
 
 def _nodes(root=ROOT):

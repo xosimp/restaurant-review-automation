@@ -716,7 +716,8 @@ def test_an_emptied_volume_is_refused_before_init_db():
     import status_manager
     assert status_manager.VOLUME_MARKER == ".cavnar-volume.json"
     boot = _read("hosted_dashboard.py")
-    assert boot.index("assert_platform_not_emptied()") < boot.index("_init_db()")
+    # init_db runs first inside models.boot_schema (release-safety A05-07).
+    assert boot.index("assert_platform_not_emptied()") < boot.index("_models_boot.boot_schema(")
     _says(RECOVERY, "`.cavnar-volume.json`", "`allow_empty_database=1`")
 
 
@@ -947,13 +948,13 @@ def test_the_deploy_healthcheck_waits_120_seconds():
 
 def test_the_worker_boot_the_split_doc_describes():
     src = _read("worker.py")
-    assert "init_db()" in src and "ensure_columns()" in src and "_LEASE_KEEPER.start()" in src
+    assert "models.boot_schema()" in src and "_LEASE_KEEPER.start()" in src
     assert "ops.shutdown_scheduler()" in src and "close_orphaned_runs()" in src
     # The volume guard and the JSON log open main(), before the schema is
     # touched (the integration wave, 9/29/26), as the doc says.
-    assert src.index("logging_setup.configure()") < src.index("models.require_volume()") < src.index("init_db()")
+    assert src.index("logging_setup.configure()") < src.index("models.require_volume()") < src.index("models.boot_schema()")
     assert "basicConfig" not in src
-    _says(SPLIT, "worker.py calls both at the top of main()")
+    _says(SPLIT, "worker.py calls both at the top of main()", "`models.boot_schema()`")
 
 
 # ── whose answer, and view-as (memory re-audit 9/29/26, PEOPLE-19) ──────────

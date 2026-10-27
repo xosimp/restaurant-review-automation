@@ -1,0 +1,10 @@
+# Indexes on a table production already has, built BEFORE their deploy with
+# scripts/build_index.py (CREATE INDEX CONCURRENTLY, no statement timeout) —
+# release-safety audit 10/26/26 A05-04 / R10. One index name per line.
+#
+# The rule (ARCHITECTURE_MANIFEST.md → Release compatibility): the boot may
+# create an index only on a table created in the same release. An index on a
+# table in migrations/schema_baseline.json is built first, by hand, on
+# production (railway ssh, a quiet hour), then its name goes here and its
+# `CREATE INDEX IF NOT EXISTS` ships in the boot DDL, where db_dialect answers
+# it from the catalog without a lock. tests/test_boot_ddl_rules.py holds it.

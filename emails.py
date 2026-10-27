@@ -432,7 +432,7 @@ def not_sent(reason: str, error: str = None) -> SendResult:
 _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
 # SendResult.reason values a retry will not change.
-_REFUSED_REASONS = {"suppressed", "rejected", "flood_guard", "no_recipient", "demo_store"}
+_REFUSED_REASONS = {"suppressed", "rejected", "flood_guard", "no_recipient", "demo_store", "env_refused"}
 
 # A suppressed address still gets security mail — locking someone out of
 # their own account because a newsletter bounced would be a worse failure
@@ -645,6 +645,12 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     recipients = [t for t in (list(to) if isinstance(to, (list, tuple)) else [to]) if t]
     to_email = recipients[0] if recipients else ""
     subject = payload.get("subject", "")
+
+    # Not from a staging or other non-production environment, whatever key
+    # it holds (config.outbound_sends_allowed — release-safety audit
+    # 10/26/26 A05-06). No email_log row: nothing happened.
+    if not config.outbound_sends_allowed():
+        return SendResult(False, error=config.sends_refused_reason(), attempts=0, reason="env_refused")
 
     if not key or not to_email:
         result = SendResult(False, error="RESEND_API_KEY or recipient missing", attempts=0,

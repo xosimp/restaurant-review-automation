@@ -356,10 +356,25 @@ def init_guest_marketing(db_path=DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_gcq_restaurant ON guest_campaign_queue(restaurant_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_guest_campaigns_status ON guest_campaigns(status, restaurant_id)",
     ):
-        try:
-            conn.execute(col_sql)
-        except Exception:
-            pass
+        if col_sql.lstrip().upper().startswith(("UPDATE", "DELETE")):
+            # A data rewrite in the list: a failure over this database's own
+            # rows is recorded and never fails the boot (A05-15's rule — a
+            # boot must not depend on what the data happens to hold).
+            try:
+                conn.execute(col_sql)
+            except Exception as e:
+                print(f"[guest_marketing] boot data rewrite skipped: {e}")
+                try:
+                    import ops
+                    ops.capture(e, job="guest_marketing_boot_rewrite", context=col_sql[:120])
+                except Exception as cap_e:
+                    print(f"[guest_marketing] could not record it: {cap_e}")
+            continue
+        # Schema: "duplicate column" / "already exists" mean applied; anything
+        # else fails the boot (release-safety audit 10/26/26 A05-07 — it was
+        # swallowed, and a failed ALTER or index booted "OK").
+        from models import _apply_migration
+        _apply_migration(conn, col_sql)
     conn.commit()
     try:
         _backfill_consent_scopes(conn)

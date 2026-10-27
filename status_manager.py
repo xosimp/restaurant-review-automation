@@ -517,21 +517,37 @@ _reference_schema = {}
 
 
 def _reference_columns():
-    """{table: {columns}} of a database built by this code's own init_db and
-    ensure_columns — the schema every deploy migrates to. Built once per
-    process in a scratch file."""
+    """{table: {columns}} of a database built by this code's own boot schema
+    (models.boot_schema: init_db, ensure_columns AND the init_* chain — auth,
+    webhooks, guest marketing, push, telemetry; release-safety audit
+    10/26/26 A05-07) — the schema every deploy migrates to. Read from the
+    image's reference_schema.json when the build wrote one for THIS code
+    (A05-09: the build phase pays for the scratch boot, not every deploy's
+    boot); otherwise built once per process in a scratch file."""
     if "cols" in _reference_schema:
         return _reference_schema["cols"]
+    cols = load_reference_artifact()
+    if cols is not None:
+        _reference_schema["cols"] = cols
+        _reference_schema["source"] = "artifact"
+        return cols
+    cols = build_reference_columns()
+    _reference_schema["cols"] = cols
+    _reference_schema["source"] = "built"
+    return cols
+
+
+def build_reference_columns():
+    """{table: {columns}} of a scratch database built by models.boot_schema."""
     import contextlib
     import io
     import tempfile
     import sqlite3
-    from models import init_db, ensure_columns
+    import models
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "reference.db")
         with contextlib.redirect_stdout(io.StringIO()):
-            init_db(path)
-            ensure_columns(db_path=path)
+            models.boot_schema(path)
         conn = sqlite3.connect(path)
         try:
             tables = [r[0] for r in conn.execute(
@@ -539,8 +555,77 @@ def _reference_columns():
             cols = {t: {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')} for t in tables}
         finally:
             conn.close()
-    _reference_schema["cols"] = cols
     return cols
+
+
+# The reference schema built at image-build time (release-safety audit
+# 10/26/26 A05-09): scripts/build_reference_schema.py, run by the Nixpacks
+# build phase (nixpacks.toml), writes it beside the code with a hash of the
+# code it was built from. Every boot used to pay a full scratch boot (~4 s
+# locally, more on Railway) inside the deploy's outage for it.
+REFERENCE_SCHEMA_FILE = "reference_schema.json"
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_NOT_APP_CODE = {"tests", "scripts", "ios", "docs", "static", "templates", "public", "brand", "node_modules",
+                 "migrations", "__pycache__", ".git", ".claude", ".github", "demo_store"}
+
+
+def reference_schema_path() -> str:
+    return os.getenv("REFERENCE_SCHEMA_PATH") or os.path.join(_APP_DIR, REFERENCE_SCHEMA_FILE)
+
+
+def schema_code_hash(root=None) -> str:
+    """sha256 over the app's Python source (names and bytes, sorted), so an
+    artifact built from other code than this process runs is never used.
+    ~20-50 ms, once per process."""
+    import hashlib
+    root = root or _APP_DIR
+    h = hashlib.sha256()
+    files = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _NOT_APP_CODE and not d.startswith("."))
+        for name in filenames:
+            if name.endswith(".py"):
+                files.append(os.path.relpath(os.path.join(dirpath, name), root))
+    for rel in sorted(files):
+        h.update(rel.encode())
+        with open(os.path.join(root, rel), "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()
+
+
+def write_reference_artifact(path=None, cols=None) -> str:
+    """Build the reference schema (or take `cols`) and write it with this
+    code's hash. Returns the path written."""
+    import json
+    import time as _time
+    cols = cols if cols is not None else build_reference_columns()
+    path = path or reference_schema_path()
+    body = {"code_hash": schema_code_hash(), "built_at": _time.strftime("%Y-%m-%d %H:%M:%S", _time.gmtime()),
+            "tables": {t: sorted(c) for t, c in sorted(cols.items())}}
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(body, f, separators=(",", ":"))
+    os.replace(tmp, path)
+    return path
+
+
+def load_reference_artifact(path=None):
+    """{table: {columns}} from the build's artifact, or None when there is
+    none, it cannot be read, or it was built from other code."""
+    import json
+    path = path or reference_schema_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            body = json.load(f)
+        if body.get("code_hash") != schema_code_hash():
+            log.warning("reference schema artifact %s was built from other code; building it here", path)
+            return None
+        return {t: set(c) for t, c in (body.get("tables") or {}).items()}
+    except Exception as e:
+        log.warning("reference schema artifact %s unreadable (%s); building it here", path, e)
+        return None
 
 
 def warm_reference_schema():
@@ -728,6 +813,21 @@ def health_snapshot(db_path=None):
     if backup["offsite"] == "stale":
         problems.append("offsite_backup_stale")
 
+    # An index this process's boot could not build (models.note_missing_index
+    # — release-safety audit 10/26/26 A05-15 / A05-04): a UNIQUE one over
+    # duplicate rows is a guarantee the data does not have; any other ran
+    # past its build limit. Degraded, never a 500: the boot went on on
+    # purpose, and failing the deploy check would not fix the data.
+    try:
+        import models as _models_ix
+        missing_ix = dict(_models_ix.BOOT_MISSING_INDEXES)
+    except Exception:
+        missing_ix = {}
+    if any(v.get("unique") for v in missing_ix.values()):
+        problems.append("constraint_missing")
+    if any(not v.get("unique") for v in missing_ix.values()):
+        problems.append("index_missing")
+
     payload = {"status": "degraded" if problems else "ok", "problems": problems,
                "db": "ok",
                "database": {"write": write["state"], "write_ms": write["ms"], "journal": journal,
@@ -740,6 +840,8 @@ def health_snapshot(db_path=None):
                           # ok | stale | no_offsite | failed | never.
                           "last_run": (backup.get("raw") or {}).get("state")},
                "jobs_overdue": [j["job"] for j in overdue]}
+    if missing_ix:
+        payload["indexes_missing"] = sorted(missing_ix)
     if sched.get("beat_age_minutes") is not None:
         payload["scheduler_heartbeat_age_minutes"] = round(sched["beat_age_minutes"], 1)
     if sched.get("loop_completed_age_minutes") is not None:
@@ -1229,13 +1331,31 @@ def volume_marker_path(db_path=None):
 
 
 def _on_volume(db_path=None):
-    """Whether the database lives on the Railway volume. Only there is a
-    marker written: locally it would be litter in the checkout."""
+    """Whether the database lives on the Railway volume — or, with no volume
+    on purpose (VOLUME_OPTIONAL), is the platform's own database, whose
+    marker lives in object storage (marker_store). Only then is a marker
+    written: locally it would be litter in the checkout."""
     from models import DB_PATH
+    if _marker_in_object_store(db_path):
+        return True
     mount = (os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip()
     if not mount:
         return False
     return os.path.dirname(os.path.abspath(db_path or DB_PATH)) == os.path.abspath(mount)
+
+
+def _marker_in_object_store(db_path=None):
+    """The platform's database on a volume-less service (release-safety audit
+    10/26/26, P3): its marker is marker_store's, in object storage."""
+    from models import DB_PATH
+    if db_path and os.path.abspath(db_path) != os.path.abspath(DB_PATH):
+        return False
+    try:
+        import marker_store
+        return marker_store.backend() == "object"
+    except Exception as e:
+        log.warning("volume marker: backend unknown, using the volume path: %s", e)
+        return False
 
 
 def _allow_empty():
@@ -1255,6 +1375,9 @@ def client_restaurant_count(conn) -> int:
 
 
 def read_volume_marker(db_path=None):
+    if _marker_in_object_store(db_path):
+        import marker_store
+        return marker_store.read(VOLUME_MARKER)
     try:
         with open(volume_marker_path(db_path), encoding="utf-8") as f:
             data = json.load(f)
@@ -1291,6 +1414,14 @@ def record_volume_marker(db_path=None, conn=None):
     marker = {"version": 1, "db": os.path.basename(os.path.abspath(db_path or _db_path())),
               "first_seen_at": prev.get("first_seen_at") or now, "updated_at": now,
               "clients_seen": max(int(prev.get("clients_seen") or 0), int(n))}
+    if _marker_in_object_store(db_path):
+        try:
+            import marker_store
+            marker_store.write(VOLUME_MARKER, marker)
+        except Exception as e:
+            log.warning("volume marker: could not write it to object storage: %s", e)
+            return None
+        return marker
     path = volume_marker_path(db_path)
     tmp = path + ".tmp"
     try:

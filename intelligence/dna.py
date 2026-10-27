@@ -65,7 +65,7 @@ def get_conn(db_path=None):
 # 3 (memory audit 9/29/26, canonical_facts): staffing issues over WATCHED
 # nights only, reviews Google removed left out of the review mix, and loss
 # rates over final days — a version-2 row measured all three the old way.
-DNA_VERSION = 3
+DNA_VERSION = 3   # readers match it with == (release-safety audit 10/26/26 A05-05)
 MIN_ROBUST_N = 30          # restaurants measuring a dimension before the robust z replaces the anchors
 MAD_K = 1.4826
 Z_CLIP = 3.0
@@ -1174,7 +1174,7 @@ def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
         rows = conn.execute(
             "SELECT d.restaurant_id, d.dims_json FROM intel_dna d JOIN (SELECT restaurant_id, MAX(week) AS week "
             "FROM intel_dna GROUP BY restaurant_id) m ON m.restaurant_id=d.restaurant_id AND m.week=d.week "
-            "WHERE d.week >= ? AND COALESCE(d.version, 1) >= ?", (floor, DNA_VERSION)).fetchall()
+            "WHERE d.week >= ? AND COALESCE(d.version, 1) = ?", (floor, DNA_VERSION)).fetchall()
     except Exception:
         rows = []
     finally:
@@ -1317,7 +1317,7 @@ def latest_by_restaurant(db_path=DB_PATH, max_age_weeks=3) -> dict:
         rows = conn.execute(
             "SELECT d.restaurant_id, d.dims_json FROM intel_dna d JOIN (SELECT restaurant_id, MAX(week) AS week "
             "FROM intel_dna GROUP BY restaurant_id) m ON m.restaurant_id=d.restaurant_id AND m.week=d.week "
-            "WHERE d.week >= ? AND COALESCE(d.version, 1) >= ?", (floor, DNA_VERSION)).fetchall()
+            "WHERE d.week >= ? AND COALESCE(d.version, 1) = ?", (floor, DNA_VERSION)).fetchall()
     finally:
         conn.close()
     seeded = seeded_restaurant_ids(db_path=db_path)

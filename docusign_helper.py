@@ -57,6 +57,21 @@ def consent_url(base_url: str = None) -> str:
 DOCUSIGN_TIMEOUT = (5, 30)   # (connect, read) seconds
 
 
+class DocuSignRefused(RuntimeError):
+    """A DocuSign call this environment may not make (release-safety audit
+    10/26/26 A05-06)."""
+
+
+def _refuse_outside_production():
+    """Raise unless this environment may reach the production DocuSign
+    account: the demo account (demo.docusign.net) is allowed anywhere; the
+    live one only where config.outbound_sends_allowed() (production, a
+    laptop) — never from staging, which may hold production's keys."""
+    import config
+    if not is_demo() and not config.outbound_sends_allowed():
+        raise DocuSignRefused("DocuSign: the live account is refused here — " + config.sends_refused_reason())
+
+
 def get_access_token() -> str:
     """Get a DocuSign access token using JWT authentication."""
     import jwt
@@ -147,6 +162,7 @@ def send_contract(
 
 def _api():
     """The account's REST base and auth headers, on a fresh JWT token."""
+    _refuse_outside_production()
     return (f"{BASE_URL}/restapi/v2.1/accounts/{ACCOUNT_ID}",
             {"Authorization": f"Bearer {get_access_token()}", "Content-Type": "application/json"})
 
@@ -217,6 +233,7 @@ def _send_contract(
     module_count: int,
     modules_list: str,
 ) -> dict:
+    _refuse_outside_production()
     if not all([INTEGRATION_KEY, USER_ID, ACCOUNT_ID, TEMPLATE_ID, PRIVATE_KEY]):
         missing = [k for k, v in {
             "INTEGRATION_KEY": INTEGRATION_KEY,

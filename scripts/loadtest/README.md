@@ -17,6 +17,10 @@ step for Will (below).
    `HEALTHCHECK_PING_URL`). Its own `SECRET_KEY` and `CREDENTIAL_KEY`. Set `CAVNAR_ENV=staging` (WS2's
    `config.deploy_env()`; Railway also names the environment in `RAILWAY_ENVIRONMENT_NAME`). Same instance
    sizes as production, so results transfer.
+   With `CAVNAR_ENV=staging` the code never starts the scheduler and refuses every send — email, texts,
+   push, live-key Stripe, DocuSign's live account, Google replies, customer webhooks — even if a key was
+   left behind (`config.outbound_sends_allowed()`, docs/ops/RECOVERY.md → Deploys). The same environment
+   is the one Railway deploys `main` to before a promotion.
 2. Seed it from a shell with the staging `DATABASE_URL` and nothing else:
    `CAVNAR_ENV=staging python scripts/loadtest/seed_staging.py --restaurants 100` (then 500, then 1,500 —
    seed each size into a fresh database). `--plan` prints the world and writes nothing. It writes

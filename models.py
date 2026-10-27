@@ -46,6 +46,15 @@ def require_volume(environ=None, db_path=None):
               "this database is lost on every deploy.")
         return None
     mount = (env.get("RAILWAY_VOLUME_MOUNT_PATH") or "").strip()
+    if not mount and (env.get("VOLUME_OPTIONAL") or "").strip().lower() in ("1", "true", "yes", "on"):
+        # No volume, on purpose (release-safety audit 10/26/26, P3): allowed
+        # only where nothing durable needs one — the database is Postgres,
+        # the markers and backups have object storage, and no blob is kept
+        # on local disk. Otherwise refused, as before.
+        _volume_optional_ready(env)
+        print("VOLUME_OPTIONAL: running on Railway with no volume — database on Postgres, markers and "
+              "backups in object storage.")
+        return None
     if not mount:
         raise RuntimeError("Refusing to boot: this is Railway but no volume is attached "
                            "(RAILWAY_VOLUME_MOUNT_PATH is unset), so the database would be an empty "
@@ -60,6 +69,28 @@ def require_volume(environ=None, db_path=None):
         raise RuntimeError(f"Refusing to boot: the database ({db_path or DB_PATH}) is not on the "
                            f"volume ({mount}).")
     return mount
+
+def _volume_optional_ready(env):
+    """Raise unless a volume-less boot keeps everything durable: Postgres
+    (DATABASE_URL), an object store for markers and backups (BACKUP_S3_* or
+    BLOB_S3_*), and no BLOB_STORE=local without an explicit BLOB_STORE_DIR."""
+    url = (env.get("DATABASE_URL") or "").strip()
+    pinned_sqlite = (env.get("DB_BACKEND") or "").strip().lower() == "sqlite"
+    if not url.startswith(("postgres://", "postgresql://")) or pinned_sqlite:
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL is set but the database is not Postgres — a "
+                           "SQLite file in the container is lost on every deploy. Attach the volume.")
+    s3 = all((env.get(f"BACKUP_S3_{k}") or "").strip() for k in ("ENDPOINT", "BUCKET", "ACCESS_KEY_ID",
+                                                                  "SECRET_ACCESS_KEY")) or \
+        all((env.get(f"BLOB_S3_{k}") or "").strip() for k in ("ENDPOINT", "BUCKET", "ACCESS_KEY_ID",
+                                                                "SECRET_ACCESS_KEY"))
+    if not s3:
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL is set but no object storage is configured "
+                           "(BACKUP_S3_* or BLOB_S3_*): the restore guard's and the emptied-database "
+                           "markers would not survive a deploy. Configure it, or attach the volume.")
+    if (env.get("BLOB_STORE") or "").strip().lower() == "local" and not (env.get("BLOB_STORE_DIR") or "").strip():
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL with BLOB_STORE=local keeps blobs on the "
+                           "container's disk. Use BLOB_STORE=s3 (or db).")
+
 
 # ── The one time axis every review query uses ─────────────────────────────────
 #
@@ -1314,7 +1345,11 @@ def add_missing_columns(db_path, alters) -> int:
     schema — SQLite re-parses the whole schema to refuse it — so a boot (and
     every test that ran init_auth) paid ~0.2 s for columns already there.
     A statement that is not an ADD COLUMN, or whose check fails, is tried
-    as before."""
+    as before — under _apply_migration's rule (release-safety audit
+    10/26/26 A05-07): "duplicate column" / "already exists" mean applied,
+    anything else raises and fails the boot. Every failure used to be
+    swallowed, so a users ALTER that timed out on its lock booted "OK" and
+    every sign-in naming the column failed."""
     conn = boot_conn(db_path)
     have, ran = {}, 0
     try:
@@ -1333,17 +1368,11 @@ def add_missing_columns(db_path, alters) -> int:
                             pass
                 if have[table] is not None and col in have[table]:
                     continue
-            try:
-                conn.execute(sql)
-                conn.commit()
+            if _apply_migration(conn, sql):
                 ran += 1
                 if m and have.get(m.group(1)) is not None:
                     have[m.group(1)].add(m.group(2).lower())
-            except Exception:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
+            conn.commit()
     finally:
         conn.close()
     return ran
@@ -2287,15 +2316,70 @@ _MIGRATION_ALREADY_APPLIED = ("duplicate column name", "already exists")
 
 def _apply_migration(conn, sql, also_tolerate=()):
     """Run one boot migration. True if it applied, False if it was already
-    applied; any other failure raises."""
+    applied; any other failure raises — except an index this boot could not
+    build (release-safety audit 10/26/26 A05-15 / A05-04): a UNIQUE index
+    over duplicate rows, or a new index that ran past its build limit on
+    Postgres, is recorded (note_missing_index: ops.capture, /health
+    degraded) and the boot goes on. An all-tenant outage until a rollback,
+    redeployed into the same failure, was the alternative."""
     try:
         conn.execute(sql)
         return True
+    except sqlite3.IntegrityError as e:
+        if _UNIQUE_INDEX_RE.match(sql):
+            note_missing_index(_UNIQUE_INDEX_RE.match(sql).group(1), e, unique=True)
+            return False
+        raise
     except sqlite3.OperationalError as e:
         msg = str(e).lower()
         if any(s in msg for s in _MIGRATION_ALREADY_APPLIED + tuple(also_tolerate)):
             return False
+        m = _ANY_INDEX_RE.match(sql)
+        if m and "index build timed out" in msg:
+            note_missing_index(m.group(2), e, unique=bool(m.group(1)))
+            return False
         raise
+
+
+# ── Indexes a boot could not build (release-safety audit A05-15 / A05-04) ───
+_UNIQUE_INDEX_RE = _re_alter.compile(r"^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)", _re_alter.I)
+_ANY_INDEX_RE = _re_alter.compile(r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)", _re_alter.I)
+# {index name: {"unique": bool, "error": str}} — this process's boot. /health
+# reads it (constraint_missing for a UNIQUE one, index_missing otherwise);
+# the next boot that builds the index clears it.
+BOOT_MISSING_INDEXES = {}
+
+
+def note_missing_index(name, error, unique=True):
+    """Record an index this boot did not build, once per process: logged,
+    ops.capture (the console's failures, Sentry) and /health degraded. A
+    unique index over duplicates ships with its dedup, verified read-only on
+    production before the deploy (ARCHITECTURE_MANIFEST.md, Release
+    compatibility); this is the net when that was missed."""
+    if name in BOOT_MISSING_INDEXES:
+        return
+    BOOT_MISSING_INDEXES[name] = {"unique": bool(unique), "error": str(error)[:300]}
+    logging.getLogger(__name__).error("boot: index %s not built (%s) — %s", name,
+                                      "duplicate rows" if unique else "build limit", error)
+    try:
+        import ops
+        exc = error if isinstance(error, BaseException) else RuntimeError(str(error))
+        ops.capture(exc, job="boot_index_missing", context=f"index={name} unique={int(bool(unique))}")
+    except Exception as cap_e:
+        logging.getLogger(__name__).warning("could not record the missing index %s: %s", name, cap_e)
+
+
+def create_unique_index(conn, sql) -> bool:
+    """A boot CREATE UNIQUE INDEX outside init_db's list: True when it is in
+    place, False when duplicate rows refused it (recorded, the boot goes
+    on). Any other error raises."""
+    try:
+        conn.execute(sql)
+        return True
+    except sqlite3.IntegrityError as e:
+        m = _UNIQUE_INDEX_RE.match(sql)
+        note_missing_index(m.group(1) if m else sql[:60], e, unique=True)
+        return False
 
 
 # The tracker columns the learning sync reads (intelligence.feedback.sync):
@@ -2486,6 +2570,8 @@ def _ensure_place_id_uniqueness(conn):
                 print(f"[migrate] google_place_id {d[0]} is on live restaurants {d[1]} — "
                       f"reviews for it can only reach one of them. Clear it on the duplicates, "
                       f"or mark them is_demo=1, then redeploy to enable the unique index.")
+            note_missing_index("idx_restaurants_place_id_live",
+                               f"google_place_id on more than one live restaurant: {dupes[0][0]} ({dupes[0][1]})")
             return
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurants_place_id_live "
@@ -2845,7 +2931,10 @@ def init_db(db_path: str = DB_PATH):
         # Temporary passwords are no longer persisted (security audit A3):
         # they are emailed once and a fresh one is minted at contract
         # signing. Anything still stored is a plaintext login credential.
-        "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''",
+        # Once per database (data_migrations — release-safety audit
+        # 10/26/26 A05-08): nothing has written the column since.
+        ("temp_password_scrub_a3",
+         "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''"),
         "ALTER TABLE restaurants ADD COLUMN weekly_plan_enabled INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN send_delay_minutes INTEGER DEFAULT 0",
         # The weekly digest's model answer per (restaurant, prompt
@@ -3392,13 +3481,15 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE marketing_content_log ADD COLUMN metrics_synced_at TEXT",
         # ...and a post nobody ever measured holds NULL, not 0: blank, never
         # zero. Only rows the sync never stamped and that hold nothing but the
-        # column defaults; idempotent, so it is safe on every boot.
-        "UPDATE marketing_content_log SET reach=NULL, impressions=NULL, engaged=NULL, likes=NULL, "
-        "comments=NULL, shares=NULL WHERE metrics_synced_at IS NULL "
-        "AND (reach IS NOT NULL OR impressions IS NOT NULL OR engaged IS NOT NULL OR likes IS NOT NULL "
-        "     OR comments IS NOT NULL OR shares IS NOT NULL) "
-        "AND COALESCE(reach,0)=0 AND COALESCE(impressions,0)=0 AND COALESCE(engaged,0)=0 "
-        "AND COALESCE(likes,0)=0 AND COALESCE(comments,0)=0 AND COALESCE(shares,0)=0",
+        # column defaults. Once per database (A05-08): a row written since is
+        # read as unmeasured by marketing_signals.MEASURED_SQL either way.
+        ("marketing_unmeasured_null_mb7",
+         "UPDATE marketing_content_log SET reach=NULL, impressions=NULL, engaged=NULL, likes=NULL, "
+         "comments=NULL, shares=NULL WHERE metrics_synced_at IS NULL "
+         "AND (reach IS NOT NULL OR impressions IS NOT NULL OR engaged IS NOT NULL OR likes IS NOT NULL "
+         "     OR comments IS NOT NULL OR shares IS NOT NULL) "
+         "AND COALESCE(reach,0)=0 AND COALESCE(impressions,0)=0 AND COALESCE(engaged,0)=0 "
+         "AND COALESCE(likes,0)=0 AND COALESCE(comments,0)=0 AND COALESCE(shares,0)=0"),
         # Toast-driven food cost engine — persistent per-ingredient records
         # replacing the old re-parsed inventory_csv blob, plus a stock-event
         # ledger (recount/receiving/depletion/waste) and a recipe/BOM mapping
@@ -4135,10 +4226,12 @@ def init_db(db_path: str = DB_PATH):
         # the same ingredient could be bound to a dish twice and the plate
         # cost silently double-counted it. Collapse any existing duplicates
         # first, keeping the most recently added row, or the unique index
-        # can't be created and the guarantee would silently not exist.
-        """DELETE FROM recipe_ingredients WHERE id NOT IN (
+        # can't be created and the guarantee would silently not exist. Once per
+        # database (A05-08): the unique index below keeps it true after.
+        ("recipe_pair_dedup",
+         """DELETE FROM recipe_ingredients WHERE id NOT IN (
                SELECT MAX(id) FROM recipe_ingredients GROUP BY menu_item_id, ingredient_id
-           )""",
+           )"""),
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_pair ON recipe_ingredients(menu_item_id, ingredient_id)",
         # Units sold per dish per day. compute_daily_depletion already reads
         # exactly this from Toast to drive depletion and then discarded it,
@@ -4876,11 +4969,24 @@ def init_db(db_path: str = DB_PATH):
         # correction does not learn an event week as the forecast's lean.
         "ALTER TABLE forecast_log ADD COLUMN explained_by TEXT",
     ]
+    _pg_boot = _dialect.is_postgres(conn)
     try:
+        conn.execute(DATA_MIGRATIONS_DDL)
+        conn.commit()
         for m in migrations:
+            if isinstance(m, tuple):
+                # (name, data rewrite): once per database, recorded in
+                # data_migrations (release-safety audit 10/26/26 A05-08).
+                _run_once_sql(conn, m[0], m[1])
+                continue
             # "no such table": a few of these touch a table an init_* helper
             # creates later in boot (users, on a fresh file).
             _apply_migration(conn, m, also_tolerate=("no such table",))
+            if _pg_boot:
+                # One transaction per statement on Postgres (A05-16): a new
+                # column's ACCESS EXCLUSIVE lock, or an index's SHARE lock, is
+                # held for its own statement, not until the end of the list.
+                conn.commit()
         conn.commit()
     except Exception:
         conn.close()
@@ -5289,10 +5395,18 @@ def init_db(db_path: str = DB_PATH):
     grandfather_pos_live_mirror(db_path=db_path)
     grandfather_pos_guest_match(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
-    # back to Cavnar's default, alerts off (Benchmarking re-audit #3).
-    backfill_seeded_targets(db_path=db_path)
-    # After init_dsr: its POS evidence is one of the tables it reads.
-    backfill_missing_sales_null(db_path=db_path)
+    # back to Cavnar's default, alerts off (Benchmarking re-audit #3). Once
+    # per seeding rule (data_migrations, A05-08): a change to
+    # thresholds.seeded_targets ships with a new name here.
+    run_once("seeded_targets_rule_v1", lambda: backfill_seeded_targets(db_path=db_path, raise_errors=True),
+             db_path=db_path)
+    # After init_dsr: its POS evidence is one of the tables it reads. Once
+    # per database (A05-08): run on every boot it also turned a day whose
+    # labor arrived before its sales into "unknown" at the next deploy.
+    # Deferrable past the boot budget, like the backfills below.
+    _boot_backfill(_boot_t0, "missing-sales rewrite", lambda: run_once(
+        "missing_sales_null_ca3_f3", lambda: backfill_missing_sales_null(db_path=db_path, raise_errors=True),
+        db_path=db_path))
     # The demo seed's labor days written before they carried source 'seed'
     # (memory audit 9/29/26, "eligibility"), once.
     stamp_seed_provenance(db_path=db_path)
@@ -5395,6 +5509,142 @@ def _boot_backfill(boot_started, name, fn) -> bool:
     except Exception as e:
         _log.warning("[%s] boot backfill skipped: %s", name, e)
     return True
+
+
+# ── Run-once boot data migrations (release-safety audit 10/26/26, A05-08) ───
+#
+# A data rewrite at boot (an UPDATE or DELETE that fixes legacy rows) runs
+# ONCE per database and records itself in the data_migrations ledger (fix
+# round E's, which a few migrations already used — one ledger, not two),
+# instead of re-running on every boot forever: every boot's scan made each
+# deploy's outage longer, and a rewrite meant for legacy rows kept matching
+# rows written since (a labor day whose sales had not arrived yet turned
+# "unknown" at the next deploy). The name is the migration's identity: a
+# rewrite whose rule changes ships under a new name. tests/
+# test_ws2_boot_schema.py boots twice and holds the second boot to no
+# rewrite outside its recorded list of recurring ones.
+DATA_MIGRATIONS_DDL = """CREATE TABLE IF NOT EXISTS data_migrations (
+            name        TEXT PRIMARY KEY,
+            applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            detail      TEXT
+        )"""
+
+
+def migration_applied(conn, name) -> bool:
+    row = conn.execute("SELECT 1 FROM data_migrations WHERE name=?", (name,)).fetchone()
+    return row is not None
+
+
+def _record_migration(conn, name, rows=None, ms=None):
+    detail = ", ".join(p for p in ((f"rows={int(rows)}" if isinstance(rows, int) and rows >= 0 else ""),
+                                   (f"{int(ms)} ms" if ms is not None else "")) if p) or None
+    conn.execute("INSERT OR IGNORE INTO data_migrations (name, detail) VALUES (?, ?)", (name, detail))
+
+
+def _run_once_sql(conn, name, sql) -> bool:
+    """One data-rewrite statement of init_db's list, once per database, in
+    its own transaction with its ledger row. Returns whether it ran now; a
+    failure raises (the boot's DATA-11 rule: never serve half-migrated)."""
+    import time as _t
+    if migration_applied(conn, name):
+        return False
+    started = _t.monotonic()
+    cur = conn.execute(sql)
+    _record_migration(conn, name, rows=getattr(cur, "rowcount", None), ms=(_t.monotonic() - started) * 1000)
+    conn.commit()
+    return True
+
+
+def run_once(name, fn, db_path=None) -> bool:
+    """Run the data migration `fn()` once per database and record it in
+    data_migrations. Returns whether it ran now. `fn` raising leaves it
+    unrecorded (the next boot tries again) and is logged, never raised — the
+    stance every boot backfill already had."""
+    import time as _t
+    _log = logging.getLogger(__name__)
+    conn = get_conn(db_path)
+    try:
+        conn.execute(DATA_MIGRATIONS_DDL)
+        conn.commit()
+        if migration_applied(conn, name):
+            return False
+    finally:
+        conn.close()
+    started = _t.monotonic()
+    try:
+        rows = fn()
+    except Exception as e:
+        _log.warning("[%s] run-once data migration failed, retried next boot: %s", name, e)
+        return False
+    conn = get_conn(db_path)
+    try:
+        _record_migration(conn, name, rows=rows if isinstance(rows, int) else None,
+                          ms=(_t.monotonic() - started) * 1000)
+        conn.commit()
+    finally:
+        conn.close()
+    return True
+
+
+def applied_migrations(db_path=None) -> list:
+    """data_migrations, newest first, for the console and the tests."""
+    conn = get_conn(db_path)
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT name, applied_at, detail FROM data_migrations ORDER BY applied_at DESC, name").fetchall()]
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+
+# ── The whole boot schema, in one place (release-safety audit A05-07, R20) ──
+#
+# hosted_dashboard, worker.py, status_manager's reference schema (what
+# /health compares the live database with) and the test suite's template all
+# build the schema through boot_schema(), so the auth, webhook, guest
+# marketing and push tables are migrated — and checked by /health — exactly
+# like init_db's. Schema only: the seeds (status services, release notes, the
+# first sales audit, the admin login) stay in hosted_dashboard.
+
+def boot_schema(db_path=None, on_db_ready=None):
+    """Run every boot DDL step on `db_path` (the platform's database when
+    None): init_db, then the init_* chain hosted_dashboard runs after it, in
+    its order, ensure_columns again once their tables exist. `on_db_ready()`
+    runs straight after init_db (the web boot records its boot row there).
+    Raises on a migration failure, as init_db does."""
+    path = db_path or DB_PATH
+    init_db(path)
+    if on_db_ready is not None:
+        on_db_ready()
+    import auth
+    import guest_marketing
+    import platform_monitor
+    import provider_health
+    import push
+    import sales_audits
+    import webhooks
+    auth.init_auth(path)
+    # Telemetry tables (boot events, 5xx log, request rollups) and the
+    # provider probe ledger.
+    platform_monitor.init_platform_tables(db_path=path)
+    provider_health.init_provider_health(db_path=path)
+    init_staff_notes(path)
+    init_staff_availability(path)
+    ensure_columns(path)
+    init_email_log(path)
+    init_onboarding_emails(path)
+    webhooks.init_webhooks(path)
+    guest_marketing.init_guest_marketing(path)
+    push.init_push(path)
+    init_two_fa_backup_codes(path)
+    init_competitor_snapshots(path)
+    init_ai_visibility_queries(path)
+    init_staff_capabilities(path)
+    init_shift_profiles(path)
+    init_capability_changes(path)
+    init_ask_memory(path)
+    sales_audits.init_sales_audits(db_path=path)
 
 
 def run_deferred_boot_backfills() -> int:
@@ -9795,6 +10045,7 @@ def init_shift_requests(db_path: str = DB_PATH):
         # Duplicates from before the index: the transactional check still
         # guards new requests; the index lands once they are answered.
         print(f"[models] uq_shift_requests_live not created yet: {e}")
+        note_missing_index("uq_shift_requests_live", e)
     # One live request per shift BY ITS ID (ARCH-6): a retimed or renamed
     # shift is still the one shift.
     try:
@@ -9803,6 +10054,7 @@ def init_shift_requests(db_path: str = DB_PATH):
                      "AND shift_id IS NOT NULL AND shift_id <> ''")
     except sqlite3.IntegrityError as e:
         print(f"[models] uq_shift_requests_live_sid not created yet: {e}")
+        note_missing_index("uq_shift_requests_live_sid", e)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_requests_sid ON shift_change_requests(restaurant_id, shift_id)")
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shift_sections'").fetchone():
         if "shift_id" not in {r[1] for r in conn.execute("PRAGMA table_info(shift_sections)")}:
@@ -10126,8 +10378,8 @@ def init_ask_memory(db_path: str = DB_PATH):
     _migrate_ask_memory_key(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_rest "
                  "ON ask_memory(restaurant_id, created_at)")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_memory_fact_author "
-                 "ON ask_memory(restaurant_id, fact, COALESCE(user_id, 0))")
+    create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_memory_fact_author "
+                              "ON ask_memory(restaurant_id, fact, COALESCE(user_id, 0))")
     have = {r[1] for r in conn.execute("PRAGMA table_info(ask_memory)").fetchall()}
     for col, decl in _ASK_MEMORY_COLUMNS:
         if col not in have:
@@ -14817,7 +15069,7 @@ def backfill_organizations(db_path: str = DB_PATH) -> int:
         return 0
 
 
-def backfill_seeded_targets(db_path: str = DB_PATH) -> int:
+def backfill_seeded_targets(db_path: str = DB_PATH, raise_errors: bool = False) -> int:
     """Re-check every SEEDED target against today's seeding rule
     (thresholds.seeded_targets — like-for-like definition, confirmed
     service model) and put the ones that no longer qualify back to Cavnar's
@@ -14863,11 +15115,13 @@ def backfill_seeded_targets(db_path: str = DB_PATH) -> int:
             print(f"[backfill] seeded targets: {n} restaurant(s) reset to Cavnar AI's starting target")
         return n
     except Exception as e:
+        if raise_errors:
+            raise
         print(f"[backfill] seeded-target check skipped: {e}")
         return 0
 
 
-def backfill_missing_sales_null(db_path: str = DB_PATH) -> int:
+def backfill_missing_sales_null(db_path: str = DB_PATH, raise_errors: bool = False) -> int:
     """Rewrite the $0 "missing sales" rows the old per-day archive wrote as
     what they were: unknown (CA3 F3).
 
@@ -14910,6 +15164,8 @@ def backfill_missing_sales_null(db_path: str = DB_PATH) -> int:
         finally:
             conn.close()
     except Exception as e:
+        if raise_errors:
+            raise
         print(f"[backfill] missing-sales rewrite skipped: {e}")
         return 0
 
@@ -15135,6 +15391,8 @@ def ensure_pos_binding_indexes(db_path: str = DB_PATH) -> dict:
                 pass
             dup = pos_binding_duplicates(provider, db_path=db_path)
             out[provider] = "duplicates" if dup else f"error: {type(e).__name__}"
+            if dup:
+                note_missing_index(name, e)
             logging.getLogger(__name__).error("POS binding index %s not made (%s): duplicates %s",
                                               name, e, dup)
             try:
