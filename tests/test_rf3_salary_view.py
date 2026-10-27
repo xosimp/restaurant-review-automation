@@ -31,6 +31,10 @@ from flask import Flask, g
 import models
 from models import Restaurant, create_restaurant, get_conn, update_restaurant
 
+# In the deploy gate (`pytest -m contract`, ~11 s): a salary reaching a
+# manager is the owner's hardest rule (B3 P0).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _db(db_path, monkeypatch):
