@@ -183,12 +183,71 @@ def update_refusal(path, method, headers, today=None, environ=None) -> Optional[
     return update_body(minimum, environ) if app.build < minimum else None
 
 
+# ── cohort switches (rollout — blind re-audit 10/27/26 RF6, B4/B5 P2) ──────
+# Each refusal rule is a rollout feature, ON for everyone by default (today's
+# behaviour). A console flag (POST /admin/api/rollout) narrows it at run time
+# with no deploy — percent 0 is the kill switch, 10 retires a build at a
+# tenth of the restaurants first — and ROLLOUT_<FEATURE>=off is the
+# deploy-time one. Consulted only when a refusal is about to be sent.
+FEATURE_MIN_BUILD = "client_min_build"
+FEATURE_HEADERLESS = "client_headerless_cutoff"
+# The web dashboard's "Cavnar AI was updated" bar (_csrf_fetch.html, A06-13).
+FEATURE_RELOAD_BAR = "stale_tab_reload"
+
+
+def _session_restaurant_id(headers):
+    """The restaurant of the session the request's Bearer token names, or
+    None (no token, a dead one, an unreadable store — logged)."""
+    raw = str((headers or {}).get("Authorization") or "")
+    token = raw[7:].strip() if raw.startswith("Bearer ") else ""
+    if not token:
+        return None
+    try:
+        import auth
+        user = auth.get_session_user(token)
+    except Exception as e:
+        log.warning("client gate: the session behind a refusal could not be read: %s", e)
+        return None
+    rid = (user or {}).get("restaurant_id")
+    return int(rid) if rid is not None else None
+
+
+def refusal_allowed(headers) -> bool:
+    """Whether the rule about to refuse this request is on for its
+    restaurant's cohort (rollout.enabled, default ON). A request whose
+    restaurant is unknown (no session yet) is refused only at 100%."""
+    import rollout
+    feature = FEATURE_MIN_BUILD if from_headers(headers) is not None else FEATURE_HEADERLESS
+    return rollout.enabled(feature, _session_restaurant_id(headers), default=True)
+
+
+def page_build():
+    """The build a dashboard page is rendered with (`cavnar_build`, which
+    the stale-tab bar compares with each answer's X-Cavnar-Build), or "" —
+    no bar — when the viewer's restaurant is outside FEATURE_RELOAD_BAR's
+    cohort. Default ON."""
+    import config
+    build = config.build_id()
+    if not build:
+        return ""
+    rid = None
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            rid = (getattr(g, "cavnar_current_user", None) or {}).get("restaurant_id")
+    except ImportError:
+        rid = None
+    import rollout
+    return build if rollout.enabled(FEATURE_RELOAD_BAR, rid, default=True) else ""
+
+
 def gate():
     """App-level before_request (install): a build below the minimum, or a
-    headerless one past the cutoff, gets 426 before any route runs."""
+    headerless one past the cutoff, gets 426 before any route runs — when
+    its rule is on for the request's restaurant (refusal_allowed)."""
     from flask import jsonify, request
     body = update_refusal(request.path, request.method, request.headers)
-    if body is None:
+    if body is None or not refusal_allowed(request.headers):
         return None
     resp = jsonify(**body)
     resp.status_code = UPDATE_STATUS

@@ -246,8 +246,9 @@ static_bundles.install(app)
 # fetch wrapper (_csrf_fetch.html) compares it with each JSON answer's
 # X-Cavnar-Build and offers a reload once they differ — a tab left open
 # across a deploy otherwise runs the old JavaScript against the new routes
-# (audit 10/26/26 A06-13).
-app.context_processor(lambda: {"cavnar_build": config.build_id()})
+# (audit 10/26/26 A06-13). A cohort switch (rollout "stale_tab_reload",
+# default on — client_compat.page_build) turns the bar off at run time.
+app.context_processor(lambda: {"cavnar_build": client_compat.page_build()})
 # The iPhone app's build on every /mobile/api and /staff/api request: a build
 # under MOBILE_MIN_BUILD gets 426 {update_required} (client_compat, audit #25
 # A06-02); one with no header is served until MOBILE_HEADERLESS_CUTOFF.

@@ -683,4 +683,26 @@ and the build after it (release-safety audit 10/26/26, A05-05 / A05-14):
   enum values a shipped iOS build decodes.
 - **Queue job kinds**: a kind the running build does not know is left queued
   for the build that does (job_queue), never failed.
+- **A risky behaviour ships behind a cohort switch** (blind re-audit
+  10/27/26, B4/B5 P2): `rollout.enabled("<feature>", restaurant_id,
+  default=...)`, the feature registered in `rollout.FEATURES` with its
+  default and where it is read. A new owner-visible behaviour, or a payload
+  whose meaning changes, starts default OFF and goes 0% → an allow-list →
+  10% → 100% from the console (`POST /admin/api/rollout`, no deploy); a
+  change that must reach everyone (a refusal, a security fix) is default ON
+  and the flag is its run-time kill switch. Today: `client_min_build`,
+  `client_headerless_cutoff`, `stale_tab_reload` (client_compat).
+- **Every release boots on the previous release's database first.**
+  `scripts/upgrade_boot_check.py` boots the previous release (origin/
+  production, else the merge-base with main, else HEAD~1) on a fresh SQLite
+  and a scratch Postgres 16, seeds every table, boots this code on it twice,
+  boots the previous release on the result (the rollback), and holds the
+  prebuilt-index rule against that release itself. A new NOT NULL column on
+  a populated table, a UNIQUE index over existing rows, a run-once rewrite
+  that fails on real rows — what a fresh boot cannot see — fail it.
+- **Boot DDL runs one booter at a time** on Postgres (`models.boot_ddl_lock`,
+  a transaction-scoped advisory lock held for the whole `boot_schema`): two
+  containers overlapping a deploy, or a scheduler process beside the web
+  worker, never race on the catalog; the second waits (at most
+  `BOOT_LOCK_WAIT_SECONDS`) and then finds everything applied.
 
