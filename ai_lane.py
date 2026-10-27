@@ -115,6 +115,11 @@ _DDL = (
 )
 # A test points the shared copy at its own database; None is the default one.
 _EVENTS_DB = None
+# A shared turn whose newest row is older than this and that never ended: its worker died (a deploy, a
+# recycle) mid-turn. In memory the turn would be gone and the poll told so; from the rows it is answered
+# the lane's own error instead of waiting forever.
+SHARED_STALE_SECONDS = 180
+STALE_MESSAGE = "Couldn't get an answer right now — try again."
 _prune_state = {"at": 0.0}
 _PRUNE_EVERY_SECONDS = 60
 
@@ -202,7 +207,7 @@ def _read_rows(turn_id, restaurant_id, user_id, after=0):
     try:
         conn = models.get_conn(_EVENTS_DB)
         try:
-            rows = conn.execute("SELECT seq, kind, event_json FROM ai_lane_events WHERE turn_id=? "
+            rows = conn.execute("SELECT seq, kind, event_json, created_at FROM ai_lane_events WHERE turn_id=? "
                                 "AND restaurant_id=? AND user_key=? ORDER BY seq",
                                 (str(turn_id or ""), restaurant_id, _user_key(user_id))).fetchall()
         finally:
@@ -212,8 +217,9 @@ def _read_rows(turn_id, restaurant_id, user_id, after=0):
         return None
     if not rows:
         return None
-    events, done = [], False
-    for seq, kind, event_json in rows:
+    events, done, newest = [], False, 0.0
+    for seq, kind, event_json, created_at in rows:
+        newest = max(newest, float(created_at or 0))
         if kind == "event":
             try:
                 events.append(json.loads(event_json))
@@ -221,6 +227,9 @@ def _read_rows(turn_id, restaurant_id, user_id, after=0):
                 log.warning("ai_lane: shared event %s/%s unreadable: %s", turn_id, seq, e)
         elif kind == "end":
             done = True
+    if not done and time.time() - newest > SHARED_STALE_SECONDS:
+        events.append({"type": "error", "error": STALE_MESSAGE})
+        done = True
     after = max(0, min(int(after or 0), len(events)))
     return events[after:], len(events), done
 

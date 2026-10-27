@@ -303,6 +303,26 @@ def test_a_queued_turn_reads_as_pending_on_the_other_worker(lane_db, monkeypatch
     assert ai_lane.read(turn.id, 1, 7)[2] is True
 
 
+def test_a_turn_whose_worker_died_is_answered_not_left_waiting(lane_db, monkeypatch, one_worker):
+    """The worker running a shared turn was recycled mid-turn: its rows stop and never end. A poll on
+    another worker is answered the lane's error once they are stale — never a wait without end."""
+    import ai_lane
+    import models
+    monkeypatch.setenv("CAVNAR_WEB_WORKERS", "2")
+    old = time.time() - ai_lane.SHARED_STALE_SECONDS - 5
+    conn = models.get_conn(lane_db)
+    try:
+        conn.execute("INSERT INTO ai_lane_events (turn_id, seq, restaurant_id, user_key, kind, event_json, "
+                     "created_at) VALUES ('dead', -1, 1, '7', 'open', NULL, ?)", (old,))
+        conn.execute("INSERT INTO ai_lane_events (turn_id, seq, restaurant_id, user_key, kind, event_json, "
+                     "created_at) VALUES ('dead', 0, 1, '7', 'event', '{\"type\": \"progress\"}', ?)", (old,))
+        conn.commit()
+    finally:
+        conn.close()
+    events, nxt, done = ai_lane.read("dead", 1, 7)
+    assert done and nxt == 2 and events[-1] == {"type": "error", "error": ai_lane.STALE_MESSAGE}
+
+
 def test_a_staff_login_reads_its_own_turn_on_the_other_worker(lane_db, monkeypatch, one_worker):
     import ai_lane
     monkeypatch.setenv("CAVNAR_WEB_WORKERS", "2")
