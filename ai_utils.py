@@ -150,6 +150,8 @@ AI_RUNAWAY_BASELINE_DAYS = int(os.getenv("AI_RUNAWAY_BASELINE_DAYS", "7"))
 # database too: tests and the restore drill read other files.
 _MEMO_SECS = _BUDGET_CACHE_SECS = 60
 _budget_memo = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("ai_utils._budget_memo", _budget_memo)
 _budget_lock = threading.Lock()
 
 
@@ -517,6 +519,7 @@ _TIER_LABELS = {
 # read-add-write raced a concurrent call's, and two calls finishing together
 # on two request threads lost one call's cost from the running total.
 _budget_cache = {}
+_process_caches.register("ai_utils._budget_cache", _budget_cache)
 
 
 class AIBudgetExceeded(RuntimeError):
@@ -981,6 +984,7 @@ def _record_budget_stop(scope, restaurant_id, vendor="anthropic"):
 
 
 _warned_memo = set()
+_process_caches.register("ai_utils._warned_memo", _warned_memo)
 _WARNED_MEMO_MAX = 5000
 
 
@@ -1067,6 +1071,7 @@ def _note_forecast(entry):
 _RATE_CACHE_SECS = 60
 _BASELINE_CACHE_SECS = 3600
 _rate_cache = {}            # (kind, restaurant_id, action) -> (at, value)
+_process_caches.register("ai_utils._rate_cache", _rate_cache)
 _rate_lock = threading.Lock()
 
 
@@ -1210,6 +1215,7 @@ _UNATTENDED_TRIGGERS = ("scheduler", "system")
 _FAR_FUTURE_SECONDS = 10 * 365 * 86400
 
 _control_cache = {}
+_process_caches.register("ai_utils._control_cache", _control_cache)
 _control_lock = threading.Lock()
 
 
@@ -4131,6 +4137,7 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
 # hitting a stop shows up as a count, not as a thousand rows.
 _BLOCKED_COALESCE_SECONDS = 60
 _blocked_memo = {}
+_process_caches.register("ai_utils._blocked_memo", _blocked_memo)
 _blocked_lock = threading.Lock()
 
 
@@ -5077,6 +5084,7 @@ def _static_system(kwargs):
 
 
 _template_cache = {}
+_process_caches.register("ai_utils._template_cache", _template_cache)
 
 
 def _caller_template(depth=3):

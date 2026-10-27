@@ -1516,6 +1516,8 @@ _FAILED_ACTIONS = ("error", "error_retry", "failed")
 # minute, so one read serves ten minutes.
 _MISSING_TTL_SECONDS = 600
 _missing_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("dsr.pipeline._missing_cache", _missing_cache)
 # A night is reported missing this long after its provisional deadline.
 MISSING_AFTER_DEADLINE = timedelta(hours=1)
 

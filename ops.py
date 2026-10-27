@@ -2189,6 +2189,8 @@ def jobs_overdue(now=None, db_path=None) -> list:
 
 
 _bound_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("ops._bound_cache", _bound_cache)
 _BOUND_TTL_SECONDS = 600
 
 

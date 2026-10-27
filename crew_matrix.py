@@ -791,6 +791,8 @@ def answer(restaurant_id, role, day, part, choice, user=None, history_id=None, r
 MATRIX_CACHE_SECONDS = 600
 MATRIX_CACHE_SIZE = 512
 _matrix_cache = collections.OrderedDict()
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("crew_matrix._matrix_cache", _matrix_cache)
 _matrix_lock = threading.Lock()
 
 

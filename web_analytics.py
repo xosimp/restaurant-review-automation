@@ -168,6 +168,8 @@ def configured() -> bool:
 
 
 _token_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("web_analytics._token_cache", _token_cache)
 _token_lock = threading.Lock()
 
 

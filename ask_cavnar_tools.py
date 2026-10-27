@@ -4034,6 +4034,57 @@ _FOOD_METRICS = {"food_cost_pct", "weekly_waste"}
 _MODULE_FLAGS = {"reviews": "module_reviews", "labor": "module_labor",
                  "inventory": "module_inventory", "marketing": "module_marketing"}
 
+# Every tool with no module flag that no name set above (or _STAFF_CONTACT_
+# TOOLS / _TEAM_SETTINGS_TOOLS below) gates, with the reason it is safe for
+# every console login — the Ask twin of auth._UNGATED_PREFIXES (release-
+# safety audit 10/26/26 A04-09). tests/test_ask_tools_classified.py fails on
+# a module-None tool that is in neither, so "who may read this?" is asked
+# when a tool is written. Being here is not "open to everyone": each reason
+# names the per-viewer projection the tool applies inside.
+_MODULELESS_REVIEWED = {
+    "read_business_snapshot": "business_intelligence.executive_brief on the viewer_restaurant: a module the "
+                              "login may not view is off there too, money ranking included",
+    "read_data_health": "the payload /api/data-health gives every console login (data_health.payload_for): "
+                        "source freshness and sync state, no module figures",
+    "read_alerts": "each row filtered by alert_visible (the bell's rule, client_api._sees) against the "
+                   "login's denied modules",
+    "remember": "owner_memory.remember stamped with the login; personnel or money notes default to the "
+                "account holders' audience",
+    "forget": "owner_memory.forget with the login: a teammate drops only notes they added",
+    "read_email_history": "the list /api/email-history gives every console login (get_email_log_for_client): "
+                          "what was sent and whether it landed, no module figures",
+    "change_setting": "runs client_api's own _do_* handler with the login, which refuses a non-owner "
+                      "(_owner_only_setting) as the settings screen does",
+    "read_open_issues": "issues.list_issues with sees_loss (LOSS_VIEW) and hide_modules for the login",
+    "read_goals": "each goal filtered by metric_visible (food cost needs Food Cost, comps LOSS_VIEW)",
+    "read_outcomes": "metric_visible plus outcomes.visible_to for the login (the REST route's rule)",
+    "set_goal": "refused by metric_visible for a metric the login may not see; a teammate's goal is "
+                "proposed for an account holder",
+    "track_outcome": "refused by metric_visible for a metric the login may not see",
+    "read_restaurant_memory": "features, slopes and links projected by intelligence.visible on the denied "
+                              "modules; the advice record by rec_learning.viewer_sees_record",
+    "read_platform_intelligence": "comparisons and patterns projected by intelligence.visible on the denied "
+                                  "modules; anonymous cohort bands only",
+    "read_decisions": "decisions.history with sees_loss and the login as viewer",
+    "read_recent_reads": "each kept read gated by _read_surface_allowed (module view, owner-only surfaces "
+                         "for principals, unknown surfaces refused)",
+    "read_target_history": "only targets whose thresholds.TARGET_MODULES module the login may view",
+    "read_events": "dollars and staffing need Labor, item mix gameday.item_mix_visible, ordering Food Cost, "
+                   "guest-text timing gameday.guest_text_visible, game-night reviews Reviews",
+    "read_upcoming": "posts and guest texts need Marketing, time off Labor, the DSR Tomorrow dsr.access for "
+                     "the login",
+    "read_forecast_record": "each forecast kind dropped when its module is denied; demand accuracy needs "
+                            "Labor; DSR predictions filtered by dsr.access's cite rule",
+    "read_closeouts": "the close-outs /api/closeout gives every console login (the closer is usually not the "
+                      "owner); their words, fenced",
+    "read_past_conversations": "this login's own chats only (permissions.acting_login_id; support's own "
+                               "through view-as)",
+    "set_data_retention": "a proposal: confirming runs POST /api/account-settings/data-retention, which is "
+                          "principal-only in the route",
+    "create_issue": "a proposal: confirming runs POST /api/issues, open to every console login "
+                    "(strategy_routes._do_issue_create); it reveals no module figures",
+}
+
 
 def viewer_restaurant(restaurant, user):
     """`restaurant` as `user` may see it in Ask. `user` is the auth

@@ -366,24 +366,17 @@ def test_status_admin_write_is_recorded_in_admin_events(app, db_path):
 
 
 def test_the_status_blueprint_is_csrf_protected_where_the_app_wires_csrf():
-    """Source-level: hosted_dashboard.py is unsafe to import here (real DB
-    init, background threads), so the wiring is read from its source — every
-    blueprint handed to csrf_protect at boot."""
-    import ast
-    import os
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hosted_dashboard.py")
-    tree = ast.parse(open(path).read())
-    protected = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.For) and isinstance(node.iter, ast.Tuple):
-            body_calls = [n for n in ast.walk(node) if isinstance(n, ast.Call)
-                          and getattr(n.func, "id", "") == "csrf_protect"]
-            if body_calls:
-                protected |= {e.id for e in node.iter.elts if isinstance(e, ast.Name)}
-        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "csrf_protect":
-            protected |= {a.id for a in node.args if isinstance(a, ast.Name)}
-    assert "admin_bp" in protected, "parser sanity: admin_bp is protected at boot"
-    assert "status_bp" in protected
+    """hosted_dashboard.py is unsafe to import here (real DB init,
+    background threads); since audit #25 (A04-06) it registers through
+    blueprints.register_all, whose plan is the wiring as data — every
+    blueprint handed to csrf_protect at boot. (The booted app's hooks are
+    checked against the plan by tests/test_cross_tenant_crawl.py.)"""
+    import admin_routes
+    import blueprints
+    import status_routes
+    protected = {obj for step, obj in blueprints.plan() if step == "csrf"}
+    assert admin_routes.admin_bp in protected, "sanity: admin_bp is protected at boot"
+    assert status_routes.status_bp in protected
 
 
 # ── SEC-34 / item 11: view-as over GET ──────────────────────────────────────

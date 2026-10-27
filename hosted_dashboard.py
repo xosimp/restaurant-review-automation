@@ -36,7 +36,16 @@ import time as _boot_time
 _BOOT_STARTED = _boot_time.monotonic()
 PORT = int(os.getenv("PORT", 5000))
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
-from models import get_conn, get_restaurant, get_review_stats, get_reviews_data, get_top_issues, get_sentiment_trend, is_full_tier, get_active_modules
+from models import get_restaurant, get_review_stats, get_reviews_data, get_top_issues, get_sentiment_trend, is_full_tier, get_active_modules
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from auth import get_session_user, create_user
 
 # ── Sentry error monitoring ───────────────────────────────────────────────────
@@ -241,105 +250,15 @@ def add_security_headers(response):
     import security_headers
     return security_headers.apply(response)
 
-# Register blueprints
-from admin_routes import admin_bp
-from webhook_routes import webhook_bp
-from social_routes import social_bp
-from auth_routes import auth_bp
-from client_api import client_bp
-from toast_routes import toast_bp
-from square_routes import square_bp
-from clover_routes import clover_bp
-from rpower_routes import rpower_bp
-from status_routes import status_bp
-from mobile_api import mobile_bp
-from csrf import csrf_protect, ensure_csrf_cookie
-
-# Every browser-facing blueprint gets double-submit CSRF enforcement.
-# webhook_bp (HMAC-verified external callers), auth_bp (own form tokens) and
-# mobile_bp (bearer-token auth, no cookie jar to carry a CSRF cookie — see
-# mobile_api.py's module docstring) are intentionally exempt. status_bp is
-# protected: its public pages are GETs, which the check never touches, and
-# its /admin/status writes post the public outage banner (SEC-23).
-for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpower_bp, status_bp):
-    csrf_protect(_bp)
-
-app.register_blueprint(admin_bp)
-# Support's masking on every blueprint under /admin, not only admin_bp's
-# (re-audit 10/20/26 R7-11; applied once per response).
-from admin_routes import _admin_support_redaction as _support_mask
-app.after_request(_support_mask)
-from sales_audit_routes import audit_bp
-if not getattr(audit_bp, "_csrf_wired", False):
-    csrf_protect(audit_bp)
-    audit_bp._csrf_wired = True
-app.register_blueprint(audit_bp)
-# Onboarding at scale (scale audit 10/19/26): bulk provisioning, backfill
-# pacing, setup confirmations, checklists, the DSR calendar, partners —
-# admin-console writes, CSRF-protected like admin_bp.
-from onboarding_routes import onboarding_bp
-if not getattr(onboarding_bp, "_csrf_wired", False):
-    csrf_protect(onboarding_bp)
-    onboarding_bp._csrf_wired = True
-app.register_blueprint(onboarding_bp)
-app.register_blueprint(webhook_bp)
-app.register_blueprint(social_bp)
-app.register_blueprint(auth_bp)
-app.register_blueprint(client_bp)
-app.register_blueprint(toast_bp)
-app.register_blueprint(square_bp)
-app.register_blueprint(clover_bp)
-app.register_blueprint(rpower_bp)
-app.register_blueprint(status_bp)
-app.register_blueprint(mobile_bp)
-
-# Issues, goals, outcomes, menu, invoices, demand, loss, morning brief — web
-# half is CSRF-protected like client_bp; the mobile half is bearer-token like
-# mobile_bp; the /i/<token> issue page is a public link whose token is the
-# credential (no session, no cookie jar to double-submit from).
-from strategy_routes import strategy_bp, strategy_mobile_bp, issue_link_bp
-if not getattr(strategy_bp, "_csrf_wired", False):
-    csrf_protect(strategy_bp)
-    strategy_bp._csrf_wired = True
-app.register_blueprint(strategy_bp)
-app.register_blueprint(strategy_mobile_bp)
-app.register_blueprint(issue_link_bp)
-
-# The staff portal. Deliberately NOT in the csrf_protect tuple above: the
-# iPhone app calls it with a Bearer token, and its sign-in POST happens
-# before any session exists. The browser portal (/staff/home, 10/7/26) is
-# cookie-authenticated, so staff_csrf_check — app-wide, for staff_bp and
-# staff_knowledge_bp only — holds every cookie-authenticated write to the
-# double-submit token; a Bearer call and the pre-session sign-in, sign-up
-# and forgot-PIN routes are left alone (staff_routes, "CSRF for the browser
-# portal").
-from staff_routes import staff_bp, staff_csrf_check
-app.before_request(staff_csrf_check)
-# Running late, announcements and the staff ↔ manager thread (staff_comms):
-# its staff routes are on staff_bp (staff_routes imports them). Its owner
-# half is the Team inbox under Labor — web CSRF-protected like strategy_bp,
-# mobile bearer-token like mobile_bp.
-from staff_comms_routes import staff_comms_bp, staff_comms_mobile_bp
-if not getattr(staff_comms_bp, "_csrf_wired", False):
-    csrf_protect(staff_comms_bp)
-    staff_comms_bp._csrf_wired = True
-app.register_blueprint(staff_comms_bp)
-app.register_blueprint(staff_comms_mobile_bp)
-app.register_blueprint(staff_bp)
-# The staff brief's approval, house rules, docs and certifications (console,
-# web + mobile twins) and the employee's language, docs and ask
-# (staff_knowledge_routes, employee audit B7). The web half is CSRF-protected
-# like strategy_bp; the staff half takes the staff portal's posture above.
-from staff_knowledge_routes import staff_knowledge_bp, knowledge_bp, knowledge_mobile_bp
-if not getattr(knowledge_bp, "_csrf_wired", False):
-    csrf_protect(knowledge_bp)
-    knowledge_bp._csrf_wired = True
-app.register_blueprint(knowledge_bp)
-app.register_blueprint(knowledge_mobile_bp)
-app.register_blueprint(staff_knowledge_bp)
+# Register blueprints: every blueprint, its CSRF wiring and the app-wide hooks
+# that go with them (support masking, the staff portal's CSRF check, the CSRF
+# cookie) live in blueprints.py — one list the module-gate sweep, the
+# cross-tenant crawl and the client-path tests build from too (audit #25
+# A04-06). Order is kept: support masking after the security headers above,
+# ensure_csrf_cookie last.
+import blueprints as _blueprints
+_blueprints.register_all(app)
 _check_duplicate_routes()
-
-app.after_request(ensure_csrf_cookie)
 
 
 @app.teardown_appcontext

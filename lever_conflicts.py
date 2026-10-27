@@ -83,6 +83,8 @@ def _norm(s):
 
 
 _FACTS_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("lever_conflicts._FACTS_CACHE", _FACTS_CACHE)
 _FACTS_TTL = 60
 
 

@@ -47,6 +47,8 @@ from csrf import csrf_exempt  # the email unsubscribe links: their token is the 
 
 # Simple in-memory insight cache: {cache_key: (timestamp, value)}
 _insight_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("client_api._insight_cache", _insight_cache)
 _INSIGHT_TTL = 300  # 5 minutes
 
 # The most rows one CSV import will process inline. A year of shifts for a
@@ -8311,6 +8313,7 @@ def _pplx_wait_turn():
 
 _AIVIS_CACHE_SECS = int(os.getenv("AI_VISIBILITY_CACHE_SECS", "21600"))  # 6 hours
 _aivis_cache = {}
+_process_caches.register("client_api._aivis_cache", _aivis_cache)
 
 
 # Cached per process because a restaurant's address does not normally
@@ -8320,6 +8323,7 @@ _aivis_cache = {}
 # so a wrong one silently scores zero forever.
 _CITY_CACHE_SECS = 86400
 _city_cache = {}
+_process_caches.register("client_api._city_cache", _city_cache)
 # Both per-process caches above are keyed by restaurant / place and were
 # never bounded (scale audit 10/19/26, SEC-19): memory grew with the fleet,
 # per worker. home_brief._cache_put's sweep: oldest first, expired or past

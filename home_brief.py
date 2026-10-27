@@ -31,6 +31,8 @@ def get_conn(db_path=None):
     return _models_gc.get_conn() if db_path is None else _models_gc.get_conn(db_path)
 
 _CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("home_brief._CACHE", _CACHE)
 _CACHE_TTL = 60  # seconds — a refresh within a minute costs nothing
 # A ceiling on live entries. Nothing ever removed an expired one, so the
 # dict held one full Home payload per (restaurant, login) that had ever

@@ -70,9 +70,12 @@ def test_owner_web_and_staff_session_lifetimes():
 
 
 def test_the_staff_browser_portal_holds_cookie_writes_to_csrf():
+    import blueprints
     import staff_routes
-    src = _read("hosted_dashboard.py")
-    assert "app.before_request(staff_csrf_check)" in src
+    # hosted_dashboard registers through blueprints.register_all (audit #25
+    # A04-06); the booted app's hooks are checked against this plan by
+    # tests/test_cross_tenant_crawl.py.
+    assert ("before_request", staff_routes.staff_csrf_check) in blueprints.plan()
     assert staff_routes.STAFF_CSRF_BLUEPRINTS == {"staff", "staff_knowledge"}
     check = inspect.getsource(staff_routes.staff_csrf_check)
     assert 'startswith("Bearer ")' in check and 'request.cookies.get("staff_session")' in check
@@ -986,3 +989,36 @@ def test_the_view_as_sentences_hold_in_code():
     _says(SECURITY, "`view_as_read`", "`permissions.acting_login_id`",
           "an admin's rating is shown and not counted in the operational score",
           "the morning brief is built per login from what that login may see")
+
+
+# ── rollback and kill switches (release-safety audit 10/26/26, A04-11) ──────
+
+_ROLLBACK_PHRASE = re.compile(r"\brollback\b|\broll(?:ing)? back\b|\bkill[ -]switch\b|\bescape hatch\b", re.I)
+
+
+def _env_entries_outside_the_switch_table():
+    """{variable: its entry's text} for every table row or bullet in
+    ENVIRONMENT.md that leads with a variable, outside the switch table."""
+    text = _read("docs/ops/ENVIRONMENT.md")
+    start = text.index("## Rollback and kill switches")
+    end = text.find("\n## ", start + 1)
+    rest = text[:start] + (text[end:] if end != -1 else "")
+    out = {}
+    for line in rest.splitlines():
+        m = re.match(r"\s*(?:\|\s*|-\s+)`([A-Z][A-Z0-9_]+)`", line)
+        if m:
+            out.setdefault(m.group(1), "")
+            out[m.group(1)] += " " + line
+    return out
+
+
+def test_every_documented_rollback_switch_is_in_the_switch_table_and_tested():
+    """An entry that calls its variable a rollback, a kill switch or an
+    escape hatch is in the "Rollback and kill switches" table (which
+    tests/test_rollback_switches.py runs the off state of), and every switch
+    in the table says so in its own entry."""
+    from tests.test_rollback_switches import ROLLBACK_SWITCHES
+    entries = _env_entries_outside_the_switch_table()
+    described = {v for v, line in entries.items() if _ROLLBACK_PHRASE.search(line)}
+    assert sorted(described - set(ROLLBACK_SWITCHES)) == [], "add these to the switch table and test their off state"
+    assert sorted(set(ROLLBACK_SWITCHES) - described) == [], "say 'the rollback' (or 'kill switch') in their entry"

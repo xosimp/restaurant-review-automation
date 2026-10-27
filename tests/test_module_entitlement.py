@@ -174,3 +174,100 @@ def test_a_full_tier_client_is_never_refused_by_the_gate(client, db_path):
         assert client.get(path, headers=_hdr(token)).status_code != 403, path
     for path in ("/mobile/api/labor", "/mobile/api/marketing", "/mobile/api/intel", "/mobile/api/reviews"):
         assert client.get(path, headers=_hdr(token)).status_code == 200, path
+
+
+# ── the team's side of Labor, and the gates that fail open (audit #25) ─────
+
+@pytest.mark.parametrize("path", [
+    "/api/staff-brief", "/api/staff-brief/draft", "/api/staff-brief/approve", "/api/house-rules",
+    "/api/staff-docs", "/api/staff-docs/3/remove", "/api/staff-certs", "/api/staff-certs/3/remove",
+    "/mobile/api/staff-brief", "/mobile/api/staff-brief/focus", "/mobile/api/house-rules",
+    "/mobile/api/staff-docs", "/mobile/api/staff-certs/9/remove",
+])
+def test_the_staff_brief_rules_docs_and_certs_belong_to_labor(path):
+    """They checked the role inside but not the plan, and no sweep saw them
+    (A04-06): a Reviews-only owner could draft staff briefs, a model call."""
+    assert auth._required_module(path) == "labor"
+
+
+def test_the_public_status_json_is_deliberately_ungated():
+    assert auth._required_module("/api/status") is None
+    assert any("/api/status".startswith(p) for p in auth._UNGATED_PREFIXES)
+
+
+@pytest.fixture
+def knowledge_client():
+    import staff_knowledge_routes
+    flask_app = Flask(__name__)
+    flask_app.register_blueprint(mobile_bp)
+    flask_app.register_blueprint(staff_knowledge_routes.knowledge_mobile_bp)
+    return flask_app.test_client()
+
+
+def test_a_reviews_only_client_cannot_draft_a_staff_brief_or_read_house_rules(knowledge_client, db_path):
+    rid = _restaurant(db_path, module_reviews=1, module_labor=0, module_inventory=0, module_marketing=0)
+    token = _login(knowledge_client, db_path, rid)
+    for method, path in (("post", "/mobile/api/staff-brief/draft"), ("get", "/mobile/api/staff-brief"),
+                         ("get", "/mobile/api/house-rules"), ("get", "/mobile/api/staff-docs"),
+                         ("get", "/mobile/api/staff-certs")):
+        resp = getattr(knowledge_client, method)(path, headers=_hdr(token), json={} if method == "post" else None)
+        assert resp.status_code == 403, path
+        assert resp.get_json()["module_locked"] is True, path
+
+
+def test_a_labor_client_still_reads_house_rules(knowledge_client, db_path):
+    rid = _restaurant(db_path, module_reviews=1, module_labor=1, module_inventory=0, module_marketing=0)
+    token = _login(knowledge_client, db_path, rid)
+    resp = knowledge_client.get("/mobile/api/house-rules", headers=_hdr(token))
+    assert resp.status_code == 200 and resp.get_json()["ok"] is True
+
+
+@pytest.fixture
+def captured(monkeypatch):
+    import ops
+    seen = []
+    monkeypatch.setattr(ops, "capture", lambda exc, job="unknown", context="", **k: seen.append((job, type(exc).__name__)))
+    models._gate_open_reported.clear()
+    yield seen
+    models._gate_open_reported.clear()
+
+
+def test_the_module_gate_still_fails_open_but_reports_it_once_a_minute(client, db_path, captured, monkeypatch):
+    """A03-12: a broken restaurants read lets the request through (revenue,
+    not data) — and the console hears about it, once a minute, not per
+    request."""
+    rid = _restaurant(db_path, module_reviews=1, module_labor=0, module_inventory=0, module_marketing=0)
+    token = _login(client, db_path, rid)
+    real = models.get_active_modules
+    monkeypatch.setattr(models, "get_active_modules", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert client.get("/mobile/api/labor", headers=_hdr(token)).status_code != 403
+    assert client.get("/mobile/api/labor", headers=_hdr(token)).status_code != 403
+    assert captured == [("module_gate_open", "RuntimeError")]
+    monkeypatch.setattr(models, "get_active_modules", real)
+
+
+def test_the_billing_predicate_reports_a_failed_read(db_path, captured, monkeypatch):
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert models.subscription_allows_access(1) is True
+    assert captured == [("billing_gate_open", "RuntimeError")]
+
+
+def test_the_reporter_reports_again_after_its_window(captured, monkeypatch):
+    clock = [1000.0]
+    import time
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    assert models.report_gate_open("module", RuntimeError("x"), restaurant_id=1) is True
+    assert models.report_gate_open("module", RuntimeError("x"), restaurant_id=1) is False
+    assert models.report_gate_open("module", ValueError("y"), restaurant_id=1) is True
+    clock[0] += models._GATE_OPEN_REPORT_SECONDS + 1
+    assert models.report_gate_open("module", RuntimeError("x"), restaurant_id=1) is True
+    assert [j for j, _ in captured] == ["module_gate_open"] * 3
+
+
+def test_the_auth_gates_report_through_the_same_reporter(captured):
+    import flask
+    app = flask.Flask(__name__)
+    with app.test_request_context("/api/labor"):
+        user = {"restaurant_id": 7, "is_admin": False}
+        assert auth._gate_failed_open("pos_hold", KeyError("restaurant_id"), user) is True
+    assert captured == [("pos_hold_gate_open", "KeyError")]

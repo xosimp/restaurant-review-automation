@@ -38,6 +38,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `CAVNAR_PROCESS_ROLE` | `web` (set by worker.py) | `queue` / `scheduler`: set by `worker.py` for itself — one process of its kind, not one of gunicorn's web workers, so its pools keep their whole bound whatever `CAVNAR_WEB_WORKERS` it inherited. Never set it by hand. | pool_sizing.py, worker.py |
 | `SCHEDULER_PROCESS_SUPERVISED`, `QUEUE_WORKER_SUPERVISED` | set by gunicorn's master | `1` when the master supervises that process (set before the web worker forks): the platform check warns when a supervised queue worker goes silent. Never set them by hand. | gunicorn.conf.py, ops.py |
 | `CAVNAR_SEASONS_DIR` | `event_intel/seasons` | Where the bundled season files load from. Unset in production; the test suite points it at its frozen copy, `tests/fixtures/seasons`, because the live files are refreshed daily (`.github/workflows/refresh-seasons.yml`). | event_intel/store.py |
+| `ROLLOUT_<FEATURE>` | unset | A cohort rollout flag's deploy-time state (`rollout.py`, audit #25): `on`, `off`, or `<percent>[;allow=1,2][;deny=3]` (restaurant ids). Wins over the console's `rollout_flags` row for that feature, so `off` holds a feature off for every restaurant whatever the table says; an unreadable value is off. The name is the feature upper-cased, e.g. `ROLLOUT_NEW_HOME`. | rollout.py |
 | `ALLOW_LOCAL_SCHEDULER` | `""` | 1 lets a non-Railway backend run the scheduler and live sends. Never set it on a machine with production keys (CLAUDE.md). | scheduler.py |
 | `RESTORE_FROM` | — | Boot-time database restore source (`db_restore.py`, `docs/ops/RECOVERY.md`). While set, the scheduler and live sends stay off. | admin_routes.py, db_restore.py, scheduler.py |
 | `ALLOW_EMPTY_DATABASE` | — | 1 lets the app boot on an empty database where the volume's marker says client data existed (a deliberate fresh start); otherwise that boot is refused and `/health` fails (`status_manager.platform_emptied`). | status_manager.py |
@@ -200,9 +201,9 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `POS_SYNC_QUEUE` | `"1"` | The nightly POS sync as one `pos_sync` queue row per store at its own 3-5am (RPOWER audit #23 A5-02). `0`: the old sweep in the scheduler process (`pos.sync_all`, `POS_SYNC_WORKERS` x `POS_SYNC_MAX_SECONDS`) — the rollback. | pos.py |
 | `POS_SYNC_SPREAD_MINUTES` | `120` | Each store's sync row is due at its own `POS_SYNC_LOCAL_HOUR` plus a fixed offset (from its id) inside this many minutes, so a region's stores do not start in one minute. | pos.py |
 | `POS_SYNC_FOLLOWERS_LATEST_HOUR` | `6` | The jobs that read the night's sync (Labor pre-warm, loss sync, DSR backfill) wait for the rows due by 3am Chicago plus the spread, never past this Chicago hour. | scheduler.py |
-| `LIVE_LABOR_QUEUE` | `"1"` | Live labor's per-store reads as `live_labor` queue rows (the `live` group, the queue worker; A5-03). `0`: read on the scheduler lane's pool as before. | labor_live.py |
+| `LIVE_LABOR_QUEUE` | `"1"` | Live labor's per-store reads as `live_labor` queue rows (the `live` group, the queue worker; A5-03). `0`: read on the scheduler lane's pool as before (the rollback). | labor_live.py |
 | `LIVE_LABOR_OFF_WINDOW_MINUTES` | `30` | Live labor's cadence outside a store's decision windows (within 45 minutes of a published shift's start or end, or an hour of the night's cut time: every 15). 60 while the budget check stretched live reads, and for a store with no published schedule today (A1-02). | labor_live.py |
-| `LIVE_SALES_INCREMENTAL` | `"1"` | Live sales so far read incrementally: the store's day-so-far line set kept (`pos_live_snapshot` kind `sales_lines`), the lines written since the last read (less 15 minutes) merged in from `ticketsales/getbytimestamp` (A1-01 / A5-06). `0`: the whole day every read. | live_sales.py |
+| `LIVE_SALES_INCREMENTAL` | `"1"` | Live sales so far read incrementally: the store's day-so-far line set kept (`pos_live_snapshot` kind `sales_lines`), the lines written since the last read (less 15 minutes) merged in from `ticketsales/getbytimestamp` (A1-01 / A5-06). `0`: the whole day every read (the rollback). | live_sales.py |
 | `LIVE_SALES_FULL_EVERY_SECONDS` | `3600` | The whole day re-read this often as the safety net (a line deleted outright never appears in the change feed); never under 300. | live_sales.py |
 | `DSR_CLOSE_POLL_STEPS` | `10,20,30` | Minutes between the DSR's `closeday` polls once a night is past its store's learned close lag (`pos_closed`; the last step repeats). Before the lag (median of first-seen-closed minus the stated close over 14 nights, 3 needed) the POS is not asked (A5-04). | pos_closed.py |
 | `POS_COLD_MONTHS_PER_PASS` | `200` | Restaurant-months of sale lines the nightly cold-tier pass exports and deletes at most (`pos_cold.tier`). | pos_cold.py |
@@ -445,6 +446,31 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `AI_INTERACTIVE_ESCALATION_SECONDS` | `20` | How long after an interactive read starts a second, stronger attempt may still begin (`ai_orchestrator.escalation_deadline` — the labor and marketing reads' T1 → T2). Past it the first attempt's outcome stands and the read's own fallback is served: an owner never waits twice. | ai_orchestrator.py |
 | `DSR_BATCH_CUTOFF_MINUTES` | `"45"` | How long the DSR sweep waits for a batched narrative before writing it synchronously and discarding the batch's answer (`dsr.pipeline`, #20) — never past the end of quiet hours or the night's missing check, less 20 minutes. A night is batched only inside the restaurant's alert quiet hours (its push is held anyway); outside them it is written at once. | dsr/pipeline.py |
 
+## Rollback and kill switches
+
+Every variable above that is described as a rollback, a kill switch or an escape hatch, with the value that turns it off and what the off state does. During an incident one of these is set and the service restarted, so the off path must still work: `tests/test_rollback_switches.py` runs each off state (parametrised over this table), and `tests/test_docs_controls.py` holds this table and the entries above to each other (release-safety audit 10/26/26, A04-11). A new rollback switch gets a row here and an off-state test in the same commit.
+
+| Variable | Off value | The off (rollback) state |
+|---|---|---|
+| `AI_LANE_ENABLED` | `0` | A polled Ask turn streams on the request (server-sent events) instead of running on the interactive lane. |
+| `LIVE_SALES_INCREMENTAL` | `0` | Live sales so far re-reads the whole day every time and keeps no line set. |
+| `LIVE_LABOR_QUEUE` | `0` | Live labor reads each due store on the scheduler's slot pool instead of queueing `live_labor` rows. |
+| `POS_SYNC_QUEUE` | `0` | The nightly POS sync runs the old sweep (`pos.sync_all`) instead of queueing `pos_sync` rows. |
+| `QUEUE_WORKER` | `0` | The web process consumes its own queue; gunicorn starts no queue worker. |
+| `SCHEDULER_PROCESS` | unset | gunicorn starts no scheduler process; the web process runs the scheduler thread. |
+| `CAVNAR_CONN_POOL` | `0` | Every SQLite connection is opened and closed for real (no per-thread pool). |
+| `DB_BACKEND` | `sqlite` | The platform's database stays SQLite even with `DATABASE_URL` set. |
+| `RESTORE_GUARD` | `0` | The restore guard never holds the platform, even on Railway with a freeze recorded. |
+| `AI_BATCHES_ENABLED` | `0` | No workflow batches; every batchable call goes synchronously. |
+| `AI_BATCH_CANCEL_GRACE_SECONDS` | `0` | A batch's late items fall back at once; no batch is cancelled for its cutoffs. |
+| `AI_WORKFLOW_OFF` | a workflow name | That workflow makes no model call; its run is recorded `off` and its caller serves its fallback. |
+| `SCHEDULE_CPSAT_ISOLATE` | `0` | Every CP-SAT solve runs in this process; no solver process is started. |
+| `SCHEDULE_MANAGERS_IN_SOLVE` | `0` | The solver-first draft pins the manager plan's rows instead of choosing managers in its solve. |
+| `STUDIO_OFFLOAD` | `0` | Every Schedule Studio read is answered on the request thread; nothing goes to the queue. |
+| `HOME_SNAPSHOTS` | `0` | Home's slow reads are built on every request; nothing is kept. |
+| `HOME_SNAPSHOT_COLD` | `request` | A Home block not kept for today is built on the request instead of queued. |
+| `SILENT_PUSH_JITTER_SECONDS` | `0` | The fleet-wide `dsr` widget wake is sent at once instead of queued at each restaurant's offset. |
+
 ## Legacy and scripts only
 
 | Variable | Default | What it does | Read in |
@@ -488,9 +514,9 @@ Changed or added by the scale audit fix round (10/19/26, F5 — AI infrastructur
 - `AI_RETRY_AFTER_MAX_SECONDS` (**30**), `AI_RETRY_AFTER_INTERACTIVE_MAX_SECONDS` (**5**) (A4-02): a retried call waits the provider's `retry-after` plus jitter (else full jitter over the exponential step); past these an unattended / an owner's call is not retried. A call refused by the provider's rate limit after its retries is never a breaker failure (it records a `rate_limited` health event once a minute).
 - `INTERACTIVE_AI_PER_TENANT_MAX` — **0**, none (SEC-06): a hard ceiling on the interactive slots one restaurant holds. With none, the slots are still fair (`ai_utils.FairSlots`): a lone restaurant may use every slot, and under contention a freed slot goes to the waiting restaurant holding the fewest, then the one served longest ago.
 - `ASK_MAX_PER_TENANT` — **1** (SEC-06): of the `ASK_MAX_CONCURRENT` streamed Ask turns, how many one restaurant may hold (0: no ceiling). A polled turn runs on the lane below instead.
-- `AI_LANE_ENABLED` (**1**), `AI_LANE_WORKERS` (**6**), `AI_LANE_PER_TENANT` (**2**), `AI_LANE_QUEUE_MAX` (**32**), `AI_LANE_QUEUE_WAIT_SECONDS` (**20**) (A4-01): the interactive lane (`ai_lane`) — an Ask turn the client polls runs here, off the request threads, at most two per restaurant at once and fair between restaurants; a turn left waiting past the wait is answered "busy". `AI_LANE_WORKERS` and `AI_LANE_PER_TENANT` are the container's bounds, split between gunicorn web workers (`CAVNAR_WEB_WORKERS`, audit #25 WS10). `0` for `AI_LANE_ENABLED` streams every turn as before.
+- `AI_LANE_ENABLED` (**1**), `AI_LANE_WORKERS` (**6**), `AI_LANE_PER_TENANT` (**2**), `AI_LANE_QUEUE_MAX` (**32**), `AI_LANE_QUEUE_WAIT_SECONDS` (**20**) (A4-01): the interactive lane (`ai_lane`) — an Ask turn the client polls runs here, off the request threads, at most two per restaurant at once and fair between restaurants; a turn left waiting past the wait is answered "busy". `AI_LANE_WORKERS` and `AI_LANE_PER_TENANT` are the container's bounds, split between gunicorn web workers (`CAVNAR_WEB_WORKERS`, audit #25 WS10). `0` for `AI_LANE_ENABLED` streams every turn as before (the rollback).
 - `AI_LANE_SHARED_EVENTS` — unset (audit #25 WS10): a polled turn's events live in the memory of the worker running it; with more than one web worker (`CAVNAR_WEB_WORKERS` > 1) each event is also written to `ai_lane_events`, so a poll another worker serves reads it (same login, same restaurant only). `1` forces the shared copy on with one worker, `0` off with several (polls landing elsewhere then answer 404). Unset with one worker — production — nothing is written.
-- `AI_BATCH_CANCEL_GRACE_SECONDS` — **600** (A4-07): a batch cancelled because every item still out in it was past its cutoff is given this long to end (its answered items are then used, the cancelled ones fall back) before its items fall back one by one anyway. 0 switches the cancel-first path off (every late item falls back at once, as before).
+- `AI_BATCH_CANCEL_GRACE_SECONDS` — **600** (A4-07): a batch cancelled because every item still out in it was past its cutoff is given this long to end (its answered items are then used, the cancelled ones fall back) before its items fall back one by one anyway. 0 switches the cancel-first path off (every late item falls back at once, as before — the rollback).
 - `AI_CANARY_PERCENT` — **0** (A4-10): a stable share of ALL restaurants (by a hash of the id) in the T1 canary beside `AI_CANARY_RESTAURANTS`. No eval in the repo yet backs a cheaper first rung for real restaurants, so the default adds none; set e.g. 10 to let the learner judge Haiku on real data.
 - `INVOICE_MODEL` — default **`claude-opus-5-5`** (was `claude-opus-5`) (A4-11): the same Opus tier a fifth cheaper; read when a scan runs. `claude-opus-5` rolls back.
 - `SCHEDULE_T3_RUN_CAP_USD` — **1.5** (A5-F9): the dollars a model schedule run may spend while on T3 (Sonnet 5.5, $0.29-0.41 a measured week); past it the code fallback writes the week. Once the gate escalates to T4 the policy's $6 is the cap. 0: the policy's cap throughout. (The model draft is reached only by a pin or `SCHEDULE_DRAFT_SOURCE=model`.)
@@ -515,7 +541,7 @@ Changed or added by the AI cost audit (10/7/26):
 
 Added by the scale fix round (10/19/26, FE-01 — `home_snapshots.py`):
 
-- `HOME_SNAPSHOTS` — **1**: Home's four slow reads (the morning brief, good news, the monthly review, the cross-module links; web and phone) are kept per restaurant, business day and viewer scope in `home_snapshots` and served from the row. `0` builds every read on the request, as before.
+- `HOME_SNAPSHOTS` — **1**: Home's four slow reads (the morning brief, good news, the monthly review, the cross-module links; web and phone) are kept per restaurant, business day and viewer scope in `home_snapshots` and served from the row. `0` builds every read on the request, as before (the rollback).
 - `HOME_SNAPSHOT_REFRESH_SECONDS` — **900**: a kept answer older than this is rebuilt in the queue worker (a bulk `home_snapshot` row) on its next read even when no stamped input moved; a moved input (the owner's own write) queues it at the interactive class and the answer says `stale`. The kept answer is served meanwhile.
 - ~~`HOME_SNAPSHOT_WORKERS`, `HOME_SNAPSHOT_MAX_PENDING`~~ — gone (blind re-audit 10/20/26 R6-F5): the in-process rebuild pool is replaced by the job queue's `home` group (`QUEUE_HOME_CONCURRENCY`, below). Remove them from Railway if set; nothing reads them.
 
@@ -526,7 +552,7 @@ Changed by the blind re-audit fix round (10/20/26, R6-F4/F5/F10 — `home_snapsh
 - `HOME_PRECOMPUTE_HOUR` — **5**: the local hour from which the hourly `home_precompute` job queues each restaurant's Home blocks (once a business day, until three hours later), after the 3am POS chain and before the owner wakes. Only scopes opened in the last `HOME_PRECOMPUTE_ACTIVE_DAYS` (**14**) are built — the owner's and each manager's brief and links, each good-news view, the monthly review, the group view's location rows; one not opened for 45 days is forgotten.
 - `QUEUE_HOME_CONCURRENCY` — **2** (and `QUEUE_HOME_MAX_RUNNING`, 2×): the job queue's `home` group — Home block builds doing work at once across every process, in the queue worker, never on the web process's request threads.
 - `ACTIVITY_TTL_SECONDS` — **300** (was a fixed 45): how long one restaurant's activity feed (`activity.feed`, `/api/activity`) is kept per process. The web polls it every 2 minutes (was 1), so a viewer reads a kept build on most ticks (FE-05).
-- `SILENT_PUSH_JITTER_SECONDS` — **600**: the window a restaurant's `dsr` widget wake (`push.fire_silent`) is spread over — each restaurant at its own fixed offset (a hash of its id), sent by the job queue (kind `silent_push`) instead of every owner phone at once when held reports are released (FE-12). `0` sends at once, as before.
+- `SILENT_PUSH_JITTER_SECONDS` — **600**: the window a restaurant's `dsr` widget wake (`push.fire_silent`) is spread over — each restaurant at its own fixed offset (a hash of its id), sent by the job queue (kind `silent_push`) instead of every owner phone at once when held reports are released (FE-12). `0` sends at once, as before (the rollback).
 
 | Variable | Default | Read in |
 |---|---|---|

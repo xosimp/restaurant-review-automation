@@ -991,6 +991,8 @@ _CONTEXT_BUILDERS = (
 # rating, a memory change, and a direct action Ask itself ran), and the
 # per-minute parts (the local time, DATA STATE) are per-turn blocks outside it.
 _CONTEXT_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("ask_cavnar._CONTEXT_CACHE", _CONTEXT_CACHE)
 _CONTEXT_TTL_SECONDS = 300
 # Bounded like home_brief._CACHE: it was a plain dict never evicted, one entry
 # per restaurant and permission set for the life of the process (DATA-32).

@@ -792,6 +792,8 @@ def _tie_notes(flags, booked=()) -> list:
 FREQUENT_SERIES_GAMES = 30
 _MATTERS_SECONDS = 60
 _matters_memo = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("event_memory._matters_memo", _matters_memo)
 
 
 def effect_matters(eff) -> bool:

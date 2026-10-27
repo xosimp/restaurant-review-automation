@@ -57,6 +57,8 @@ BLOCKING_DOWN_CAP = 49
 CACHE_TTL = 60
 _CACHE_MAX = 2000
 _CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("data_health._CACHE", _CACHE)
 _LOCK = threading.Lock()
 
 # What an owner calls each source in a status line.

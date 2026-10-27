@@ -914,3 +914,17 @@ def _fresh_generation_slots():
     job_queue._draining.clear()
     yield
     job_queue._draining.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_caches():
+    """Every module-level cache that registered with process_caches (release-
+    safety audit 10/26/26, A04-13), reset before and after each test: ids
+    restart at 1 in every test database, so a cache keyed by restaurant id
+    hands one test's answer to the next. tests/test_process_caches.py keeps
+    every `_*cache*` / `_*memo*` container registered. The per-cache resets
+    above stay (they also reset state that is not a registered cache)."""
+    import process_caches
+    process_caches.clear_all()
+    yield
+    process_caches.clear_all()

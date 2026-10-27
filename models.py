@@ -1237,10 +1237,13 @@ class _HandleFinal:
             _release(conn, self.key, self.tid, self.tainted)
 
 
-def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
+def get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
     # None is the platform's own database (blind re-audit 10/11/26: callers
     # thread an optional db_path=None through — owner_rules did, and
     # sqlite3.connect(None) failed every generation's staff-note read).
+    # The default is None, not DB_PATH, so a bare get_conn() reads DB_PATH
+    # when it is CALLED (audit #25 A04-07): a default bound at definition
+    # time never followed a patched models.DB_PATH.
     if db_path is None:
         db_path = DB_PATH
     # Postgres behind the same door when DATABASE_URL names one (db_dialect —
@@ -5056,6 +5059,10 @@ def init_db(db_path: str = DB_PATH):
     # a poll another gunicorn worker serves (ai_lane, audit #25 WS10).
     from ai_lane import init_ai_lane
     init_ai_lane(db_path)
+    # Cohort rollout flags (rollout — audit #25 P3): a change on for some
+    # restaurants first, set from the console.
+    from rollout import init_rollout
+    init_rollout(db_path)
     # Home's slow blocks kept as per-restaurant read models (home_snapshots,
     # scale audit 10/19/26 FE-01).
     from home_snapshots import init_home_snapshots
@@ -5547,6 +5554,8 @@ def _notify_restaurant_change(restaurant_id):
 # restaurant is created outside update_restaurant).
 _TENANT_NAMES_TTL = 300
 _tenant_names_cache = {"key": None, "at": 0.0, "rows": ()}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("models._tenant_names_cache", _tenant_names_cache)
 # Names too generic to be read as another tenant ("Pizza", "The Bar"), and
 # the platform's own name.
 _TENANT_GENERIC_NAMES = {"other", "bar", "pub", "cafe", "café", "grill", "kitchen", "pizza", "tavern", "bistro",
@@ -7096,7 +7105,8 @@ def restaurant_has_module(restaurant_id: int, key: str, db_path: str = DB_PATH) 
             # your listing", which is the true answer.
             return is_full_tier(restaurant)
         return any(m["key"] == key for m in get_active_modules(restaurant))
-    except Exception:
+    except Exception as e:
+        report_gate_open("module", e, restaurant_id=restaurant_id)
         return True
 
 
@@ -14423,6 +14433,7 @@ LEARNING_TEST_NAME_WORDS = frozenset({"test", "tests", "testing", "qa", "demo", 
 LEARNING_TEST_NAME_PHRASES = ("cavnar ai",)
 _INTERNAL_HOMES_TTL = 60.0
 _internal_homes_cache = {}
+_process_caches.register("models._internal_homes_cache", _internal_homes_cache)
 
 
 def _learning_get(r, k):
@@ -14701,12 +14712,48 @@ def subscription_allows_access(restaurant_id: int, db_path: str = DB_PATH) -> bo
             "SELECT billing_status FROM restaurants WHERE id=?", (restaurant_id,)
         ).fetchone()
         conn.close()
-    except Exception:
+    except Exception as e:
+        report_gate_open("billing", e, restaurant_id=restaurant_id)
         return True
     if not row:
         return True
     status = (row["billing_status"] or "").strip().lower()
     return status not in BLOCKED_BILLING_STATES
+
+
+# The revenue gates fail OPEN (this one, restaurant_has_module, and auth's
+# billing, module and POS-hold gates): a broken read must not take a paying
+# client's product away. Each failure is reported (audit #25 A03-12) — logged
+# and ops.capture-d — at most once a minute per (gate, exception type) per
+# process: a read that fails, fails on every request, and the console needs
+# the fact, not a row per request.
+_GATE_OPEN_REPORT_SECONDS = 60
+_gate_open_reported = {}
+_process_caches.register("models._gate_open_reported", _gate_open_reported)
+
+
+def report_gate_open(gate, exc, restaurant_id=None, path=""):
+    """Report that the `gate` failed open on `exc`. True when this call
+    reported it, False when it was inside the minute's window (or the report
+    itself failed — it never raises: it runs inside the gate's except)."""
+    import logging
+    import time as _time
+    key = (str(gate), type(exc).__name__)
+    now = _time.monotonic()
+    last = _gate_open_reported.get(key)
+    if last is not None and now - last < _GATE_OPEN_REPORT_SECONDS:
+        return False
+    _gate_open_reported[key] = now
+    logging.getLogger("models").warning("%s gate failed open (restaurant %s): %s: %s", gate, restaurant_id,
+                                        type(exc).__name__, exc)
+    try:
+        import ops
+        ops.capture(exc, job=f"{gate}_gate_open", context=f"restaurant_id={restaurant_id} path={str(path)[:120]}",
+                    restaurant_id=restaurant_id, kind="request")
+    except Exception as report_exc:
+        logging.getLogger("models").warning("could not record a %s gate failing open: %s", gate, report_exc)
+        return False
+    return True
 
 
 def normalize_owner_email(value) -> str:

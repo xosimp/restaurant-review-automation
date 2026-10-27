@@ -55,6 +55,8 @@ MIN_COMPETITORS = 3
 #     reach a user: the welcome email, which is sent from a webhook or an
 #     admin action, never from a page load.
 _CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("first_look._CACHE", _CACHE)
 _CACHE_TTL = 6 * 3600
 _CACHE_LOCK = threading.Lock()
 _CACHE_MAX = 500

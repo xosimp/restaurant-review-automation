@@ -13,7 +13,16 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import DB_PATH, get_conn, boot_conn, add_missing_columns
+from models import DB_PATH, boot_conn, add_missing_columns
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # ── Schema extension ──────────────────────────────────────────────────────────
 
@@ -3220,6 +3229,8 @@ def otp_country_allowed(phone: str) -> bool:
 STAFF_OTP_PER_RESTAURANT_PLATFORM_DEFAULT = 4
 STAFF_OTP_SHARE_PER_STAFF_PCT_DEFAULT = 125
 _otp_platform_memo = {"at": 0.0, "n": 0}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("auth._otp_platform_memo", _otp_platform_memo)
 
 
 def _otp_join_restaurants(conn) -> int:
@@ -5840,9 +5851,22 @@ def _billing_blocked(user) -> bool:
             return False
         from models import subscription_allows_access
         return not subscription_allows_access(user["restaurant_id"])
-    except Exception:
-        # Fail open — see models.subscription_allows_access.
+    except Exception as e:
+        # Fail open — see models.subscription_allows_access — but counted, so
+        # a broken read is seen in the console, not only by the revenue it
+        # leaks (audit #25 A03-12).
+        _gate_failed_open("billing", e, user)
         return False
+
+
+def _gate_failed_open(gate, exc, user=None):
+    """A revenue gate (billing, module, the POS owner hold) that failed open:
+    logged and ops.capture-d, at most once a minute per (gate, exception
+    type) — models.report_gate_open (audit #25 A03-12). Never raises."""
+    from flask import has_request_context
+    rid = user.get("restaurant_id") if isinstance(user, dict) else None
+    path = (request.path or "") if has_request_context() else ""
+    return _models_mod.report_gate_open(gate, exc, restaurant_id=rid, path=path)
 
 
 _BILLING_BLOCKED_MESSAGE = (
@@ -5882,7 +5906,8 @@ def _pos_owner_hold(user) -> bool:
         from models import get_restaurant
         r = get_restaurant(user["restaurant_id"])
         return bool(r is not None and getattr(r, "pos_owner_hold", None))
-    except Exception:
+    except Exception as e:
+        _gate_failed_open("pos_hold", e, user)
         return False
 
 
@@ -5960,6 +5985,18 @@ _MODULE_PREFIXES = (
     # phone's Live Activity (iOS parity audit 10/7/26 #94).
     ("/api/intraday",               "labor"),
     ("/mobile/api/intraday",        "labor"),
+    # The team's side of Labor (staff_knowledge_routes): tonight's lineup
+    # brief (its draft is a model call), the house rules, staff docs and
+    # certifications the staff portal shows. They checked the role inside
+    # but not the plan, and sat outside the sweep (audit #25 A04-06).
+    ("/api/staff-brief",            "labor"),
+    ("/api/house-rules",            "labor"),
+    ("/api/staff-docs",             "labor"),
+    ("/api/staff-certs",            "labor"),
+    ("/mobile/api/staff-brief",     "labor"),
+    ("/mobile/api/house-rules",     "labor"),
+    ("/mobile/api/staff-docs",      "labor"),
+    ("/mobile/api/staff-certs",     "labor"),
     # Food Cost
     ("/api/food-cost",              "inventory"),
     ("/api/inv-insight",            "inventory"),
@@ -6079,6 +6116,9 @@ _UNGATED_PREFIXES = (
     "/api/post-to-facebook", "/api/post-to-instagram", "/api/post-insights", "/api/meta-review-test",
     # Public pages whose token is the credential.
     "/api/public/",
+    # The public status page's JSON (status_routes): no login, no restaurant
+    # data — the platform's own service states and incidents (A04-06).
+    "/api/status",
     # One-off admin tools (admin_required), and two login_required debug
     # endpoints (debug-insights, gbp-debug) that are candidates for removal
     # after verification — listed so they stay visible, not endorsed.
@@ -6109,9 +6149,10 @@ def _module_blocked(user, path=None):
         if restaurant_has_module(user["restaurant_id"], key):
             return None
         return module_label(key)
-    except Exception:
+    except Exception as e:
         # Fail open — a lookup failure must not take a paying client's tab
-        # away. See models.restaurant_has_module.
+        # away. See models.restaurant_has_module. Counted (A03-12).
+        _gate_failed_open("module", e, user)
         return None
 
 

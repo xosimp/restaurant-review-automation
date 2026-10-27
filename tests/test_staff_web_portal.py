@@ -280,10 +280,14 @@ def test_the_apps_bearer_calls_and_the_pre_session_routes_are_left_alone(db, tol
 
 
 def test_hosted_dashboard_wires_the_staff_csrf_check():
-    src = _read("hosted_dashboard.py")
-    assert "from staff_routes import staff_bp, staff_csrf_check" in src
-    assert "app.before_request(staff_csrf_check)" in src
+    # hosted_dashboard registers through blueprints.register_all (audit #25
+    # A04-06); its plan is the wiring as data. tests/test_cross_tenant_crawl.py
+    # checks the booted app's hooks match it.
+    import blueprints
     import staff_routes
+    steps = blueprints.plan()
+    assert ("before_request", staff_routes.staff_csrf_check) in steps
+    assert ("blueprint", staff_routes.staff_bp) in steps
     assert staff_routes.STAFF_CSRF_BLUEPRINTS == {"staff", "staff_knowledge"}
     assert "staff.portal_authenticate" in staff_routes.STAFF_CSRF_EXEMPT_ENDPOINTS
     assert not any(e.startswith("staff_knowledge.") for e in staff_routes.STAFF_CSRF_EXEMPT_ENDPOINTS)

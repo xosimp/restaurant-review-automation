@@ -1,91 +1,554 @@
 {
- "admin_events.py::bug_reports": 1,
- "admin_routes.py::users": 4,
- "ai_utils.py::ai_usage": 2,
- "auth.py::staff_portal_tokens": 1,
- "auth.py::two_fa_challenges": 1,
- "auth.py::users": 21,
- "auth_routes.py::users": 4,
- "backoffice_ap.py::bo_files": 1,
- "backoffice_ap.py::bo_invoices": 3,
- "credentials.py::webhooks": 1,
- "dashboard.py::reviews": 1,
- "delayed.py::delayed_actions": 1,
- "demo_seed.py::inventory_history": 1,
- "demo_seed.py::menu_items": 1,
- "demo_seed.py::users": 1,
- "demo_store/build.py::menu_items": 1,
- "demo_store/build.py::schedule_history": 1,
- "demo_store/build.py::users": 1,
- "demo_store/intel.py::ai_visibility_runs": 1,
- "drafter.py::reviews": 1,
- "dsr/deliver.py::dsr_deliveries": 1,
- "dsr/predictions.py::dsr_predictions": 2,
- "dsr/store.py::dsr_reports": 6,
- "email_intake.py::fintech_files": 1,
- "event_intel/engine.py::demand_signals": 1,
- "event_memory.py::event_outcomes": 1,
- "fair_workweek.py::fww_access_offers": 2,
- "fair_workweek.py::good_faith_estimates": 1,
- "fintech_invoices.py::fintech_files": 2,
- "fintech_invoices.py::fintech_invoice_lines": 2,
- "fintech_invoices.py::fintech_invoices": 5,
- "forecast_log.py::forecast_log": 2,
- "guest_email.py::guest_contacts": 1,
- "guest_email.py::guest_newsletters": 2,
- "guest_marketing.py::guest_campaign_recipients": 1,
- "guest_marketing.py::guest_campaigns": 3,
- "guest_marketing.py::guest_contacts": 10,
- "guest_marketing.py::guest_optin_requests": 1,
- "guest_marketing.py::sms_optin_invites": 2,
- "intelligence/feedback.py::intel_rec_events": 1,
- "inventory_ledger.py::menu_items": 3,
- "inventory_sync.py::ingredients": 1,
- "issues.py::ops_issues": 12,
- "job_queue.py::jobs": 6,
- "mobile_api.py::users": 5,
- "models.py::ai_visibility_runs": 1,
- "models.py::ask_cavnar_conversations": 3,
- "models.py::email_log": 1,
- "models.py::labor_daily_history": 1,
- "models.py::reviews": 3,
- "models.py::schedule_history": 1,
- "models.py::schedule_shares": 1,
- "models.py::staff_availability": 1,
- "models.py::staff_notes": 2,
- "models.py::users": 3,
- "notify.py::alert_contacts": 5,
- "notify.py::alert_holds": 1,
- "notify.py::alert_log": 1,
- "notify.py::alert_storm_caps": 1,
- "ops.py::job_failures": 1,
- "ops.py::schedule_history": 1,
- "ops.py::schedule_versions": 4,
- "outcomes.py::recommendation_outcomes": 6,
- "people.py::person_aliases": 1,
- "people.py::person_questions": 1,
- "people.py::staff_pairs": 2,
- "policy_notice.py::users": 1,
- "push.py::device_tokens": 6,
- "push.py::live_activity_tokens": 2,
- "rec_ledger.py::rec_distrust": 1,
- "rec_ledger.py::rec_events": 1,
- "schedule_benchmark.py::schedule_history": 1,
- "schedule_note_rules.py::schedule_note_rules": 1,
- "schedule_publish.py::schedule_history": 1,
- "schedule_publish.py::schedule_notices": 2,
- "schedule_versions.py::schedule_standing_patterns": 1,
- "security.py::users": 1,
- "shift_requests.py::shift_change_requests": 7,
- "staff_comms.py::staff_announcement_recipients": 1,
- "staff_comms.py::staff_running_late": 2,
- "staff_comms.py::staff_threads": 2,
- "staff_consent.py::staff_consents": 1,
- "staff_pwa.py::web_push_subscriptions": 1,
- "staff_reminders.py::staff_notices": 1,
- "standby_insurance.py::standby_slots": 2,
- "strategy_jobs.py::ops_issues": 1,
- "task_sheets.py::task_assignments": 2,
- "task_sheets.py::task_sheet_lines": 1,
- "webhooks.py::webhooks": 3
+ "admin_events.py::bug_reports": {
+  "n": 3,
+  "why": "admin-only: reached from @admin_required routes (admin_routes) that act across restaurants by design (/admin/api/bug-reports/<id>/status) and mobile_api.report_bug marking the report it just stored"
+ },
+ "admin_routes.py::users": {
+  "n": 4,
+  "why": "admin-only: reached from @admin_required routes (admin_routes) that act across restaurants by design (deactivate/reactivate client also require is_admin=0; own username/2FA use current_user['id'])"
+ },
+ "ai_reads.py::ai_claims": {
+  "n": 2,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (record_claims re-reads a claim matched under restaurant_id; score_due scans due claims)"
+ },
+ "ai_reads.py::ai_reads": {
+  "n": 1,
+  "why": "record_read supersedes the previous read it found WHERE restaurant_id=? for the same subject"
+ },
+ "ai_utils.py::ai_usage": {
+  "n": 2,
+  "why": "platform AI ledger: log_blocked bumps the row it just matched by reason; _reprice_legacy_rows is a boot backfill"
+ },
+ "attendance.py::attendance_events": {
+  "n": 2,
+  "why": "record() updates the row it just read WHERE restaurant_id=? AND employee_key=? (attendance.py:160-170)"
+ },
+ "auth.py::memberships": {
+  "n": 4,
+  "why": "the membership row resolved for this restaurant/login first (verify_membership_pin, _write_claim, delete_own_staff_account, delete_own_login)"
+ },
+ "auth.py::schedule_shares": {
+  "n": 1,
+  "why": "_expire_share_links expires rows it selected for the restaurant/person being unlinked"
+ },
+ "auth.py::staff_portal_tokens": {
+  "n": 1,
+  "why": "get_join_code updates the restaurant's own portal token row it just read WHERE restaurant_id=?"
+ },
+ "auth.py::trusted_devices": {
+  "n": 1,
+  "why": "trusted_device_ok stamps the device row it just matched by the login's own id and token hash"
+ },
+ "auth.py::two_fa_challenges": {
+  "n": 2,
+  "why": "the challenge row matched by its pending-token hash (the credential) a line above"
+ },
+ "auth.py::users": {
+  "n": 22,
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id); team edits (set_team_role/revoke_team_member) check WHERE id=? AND restaurant_id=? first; set_user_role/admin_set_role/clear_user_two_factor are admin-only or boot"
+ },
+ "auth_routes.py::users": {
+  "n": 3,
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id) (_do_update_email current_user; Google/Apple SSO link the row matched by verified email/provider id)"
+ },
+ "availability_changes.py::staff_availability_changes": {
+  "n": 1,
+  "why": "_apply updates a change it read WHERE restaurant_id=? (decide/_apply path)"
+ },
+ "backoffice_ap.py::bo_files": {
+  "n": 1,
+  "why": "read_file(restaurant_id, ...) updates the bo_files row it inserted for that restaurant (file_id from its own INSERT)"
+ },
+ "backoffice_ap.py::bo_invoices": {
+  "n": 3,
+  "why": "save_invoices / _migrate_entry_keys update rows they selected WHERE restaurant_id=?"
+ },
+ "billing_jobs.py::owed_sends": {
+  "n": 5,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (owed-send claim/finish over rows the billing job selected)"
+ },
+ "credentials.py::webhooks": {
+  "n": 1,
+  "why": "boot migration / backfill over its own rows (init_* / migrate_*), no request reaches it (encrypt_webhook_secrets compare-and-set on each row's own secret)"
+ },
+ "dashboard.py::reviews": {
+  "n": 1,
+  "why": "local single-user demo app (python3 dashboard.py, its own Flask app, never registered in hosted_dashboard)"
+ },
+ "delayed.py::delayed_actions": {
+  "n": 6,
+  "why": "cancel() is scoped WHERE id=? AND restaurant_id=? and its siblings come from _pending_week_sends(conn, restaurant_id, week); queue_schedule_send/_run_one/reap_interrupted act on rows the scheduler or the same restaurant's scoped read produced"
+ },
+ "demo_seed.py::inventory_history": {
+  "n": 1,
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "demo_seed.py::menu_items": {
+  "n": 1,
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "demo_seed.py::users": {
+  "n": 1,
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "demo_store/build.py::menu_items": {
+  "n": 1,
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "demo_store/build.py::schedule_history": {
+  "n": 1,
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "demo_store/build.py::users": {
+  "n": 1,
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "demo_store/intel.py::ai_visibility_runs": {
+  "n": 1,
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "drafter.py::reviews": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (recheck_draft_flags at boot re-checks drafted rows it selected per restaurant)"
+ },
+ "dsr/deliver.py::dsr_deliveries": {
+  "n": 2,
+  "why": "DSR pipeline-internal: row_id is the delivery row the pipeline claimed for its restaurant"
+ },
+ "dsr/predictions.py::dsr_predictions": {
+  "n": 2,
+  "why": "DSR grading job over predictions it selected WHERE restaurant_id=?"
+ },
+ "dsr/store.py::dsr_reports": {
+  "n": 9,
+  "why": "DSR pipeline-internal: report_id is the pipeline's own row (dsr/pipeline, block jobs); routes reach reports only through get_report_by_id(report_id, restaurant_id=...)"
+ },
+ "email_intake.py::email_intake": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (prune_unrouted retention delete, subquery by status/age)"
+ },
+ "email_intake.py::fintech_files": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (expire_file_content retention over rows it selected)"
+ },
+ "event_intel/engine.py::demand_signals": {
+  "n": 1,
+  "why": "sync_restaurant deletes rows it selected WHERE restaurant_id=? for that sync"
+ },
+ "event_memory.py::event_outcomes": {
+  "n": 2,
+  "why": "rekey_record: row_id from the rekey job's own WHERE restaurant_id=? scan"
+ },
+ "fair_workweek.py::fww_access_offers": {
+  "n": 3,
+  "why": "sync_access_offers updates offers it selected WHERE restaurant_id=?"
+ },
+ "fair_workweek.py::good_faith_estimates": {
+  "n": 1,
+  "why": "acknowledge_estimate updates the estimate it read WHERE restaurant_id=? (and the employee's own) a line above"
+ },
+ "fintech_invoices.py::fintech_files": {
+  "n": 3,
+  "why": "ingest_file/_replace_content act on the file row ingest_file inserted for restaurant_id; purge_file checks WHERE id=? AND restaurant_id=? first (admin action)"
+ },
+ "fintech_invoices.py::fintech_invoice_lines": {
+  "n": 2,
+  "why": "_store_invoice/_backfill_units update lines of an invoice already resolved for restaurant_id"
+ },
+ "fintech_invoices.py::fintech_invoices": {
+  "n": 6,
+  "why": "init backfill (boot), _store_invoice on the invoice matched WHERE restaurant_id=?, purge_file/_merge_duplicates after their restaurant-scoped file/invoice reads"
+ },
+ "food_cost_intelligence.py::inventory_history": {
+  "n": 1,
+  "why": "weekly_snapshot updates the row it just read WHERE restaurant_id=? for that week"
+ },
+ "forecast_log.py::forecast_log": {
+  "n": 3,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (score_due over due rows)"
+ },
+ "gmb.py::reviews": {
+  "n": 1,
+  "why": "retire_unlisted_reviews: ids from this restaurant's own reviews (WHERE restaurant_id=?) missing from its listing"
+ },
+ "goals.py::owner_goals": {
+  "n": 1,
+  "why": "mark_achieved: goals read WHERE restaurant_id=? by the goals job"
+ },
+ "guest_email.py::guest_contacts": {
+  "n": 1,
+  "why": "_add_recipients stamps tokens on this restaurant's subscribers (subscribers(restaurant_id))"
+ },
+ "guest_email.py::guest_newsletters": {
+  "n": 3,
+  "why": "retry_failed/send_to_new_subscribers check _owned_newsletter(conn, restaurant_id, id) first; _send_batch is fed only owned or job-claimed ids"
+ },
+ "guest_marketing.py::guest_campaign_queue": {
+  "n": 4,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (_drain/_finish_row on queue rows of a campaign created or claimed for the restaurant)"
+ },
+ "guest_marketing.py::guest_campaign_recipients": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (visit attribution over a campaign's own recipients)"
+ },
+ "guest_marketing.py::guest_campaigns": {
+  "n": 6,
+  "why": "campaign ids from _enqueue(restaurant_id, ...) or the send job's scan; cancel_campaign checks WHERE id=? AND restaurant_id=? first"
+ },
+ "guest_marketing.py::guest_contacts": {
+  "n": 10,
+  "why": "_upsert_contact/_undo_stop/follow-ups update a contact they matched WHERE restaurant_id=? AND phone/email first; boot backfill; purge job"
+ },
+ "guest_marketing.py::guest_optin_requests": {
+  "n": 2,
+  "why": "request_public_optin marks the request it just inserted; purge_unanswered_contacts is a retention job"
+ },
+ "guest_marketing.py::sms_optin_invites": {
+  "n": 2,
+  "why": "the invite matched by the inbound text's phone (Twilio webhook, signature-checked) a line above"
+ },
+ "history_rollups.py::guest_newsletters": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (newsletter result stamping)"
+ },
+ "history_rollups.py::reviews": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (erase_removed_reviews retention)"
+ },
+ "intelligence/feedback.py::intel_rec_events": {
+  "n": 2,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (label/provenance rejudging in the intelligence engine)"
+ },
+ "inventory.py::inventory_history": {
+  "n": 1,
+  "why": "get_claude_insights updates the row it read WHERE restaurant_id=? for that week"
+ },
+ "inventory_ledger.py::menu_items": {
+  "n": 3,
+  "why": "_store_discovered updates the menu item it matched WHERE restaurant_id=? (existing)"
+ },
+ "inventory_sync.py::ingredients": {
+  "n": 1,
+  "why": "apply_inventory: ingredient ids resolved from this restaurant's own ingredients"
+ },
+ "issues.py::ops_issues": {
+  "n": 15,
+  "why": "notify/escalate jobs over their own rows; acknowledge() via the issue's token (the credential); _resolve/reassign are scoped or gated by get_issue(restaurant_id, issue_id)"
+ },
+ "job_queue.py::jobs": {
+  "n": 15,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (the durable queue's claim/lease/finish by its own row id and lease owner)"
+ },
+ "labor_live.py::live_labor_moves": {
+  "n": 3,
+  "why": "act/dismiss/reverse check get_move(restaurant_id, move_id) (WHERE id=? AND restaurant_id=?) before _decide/reverse"
+ },
+ "marketing.py::marketing_content_log": {
+  "n": 1,
+  "why": "_log_content_row updates the row it matched WHERE restaurant_id=? (target)"
+ },
+ "marketing_links.py::marketing_links": {
+  "n": 1,
+  "why": "resolve(): the row matched by the public link token (the credential) a line above"
+ },
+ "marketing_publish.py::marketing_content_log": {
+  "n": 1,
+  "why": "_log_published updates the row it matched WHERE restaurant_id=? (existing)"
+ },
+ "marketing_publish.py::marketing_scheduled_posts": {
+  "n": 2,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (scheduled-post publish claim/finish)"
+ },
+ "marketing_voice.py::marketing_model_drafts": {
+  "n": 1,
+  "why": "record_final stamps the draft it matched WHERE restaurant_id=? (matched)"
+ },
+ "mobile_api.py::users": {
+  "n": 4,
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id) (Apple sign-in, forgot/reset password on the row matched by verified email/token)"
+ },
+ "models.py::ai_visibility_runs": {
+  "n": 2,
+  "why": "update/attach on the run id the AI visibility job just created for the restaurant"
+ },
+ "models.py::ask_cavnar_conversations": {
+  "n": 4,
+  "why": "save_ask_message verifies get_ask_conversation(restaurant_id, id) first or uses its own new id; _evict deletes ids it selected per restaurant"
+ },
+ "models.py::email_log": {
+  "n": 1,
+  "why": "boot migration / backfill over its own rows (init_* / migrate_*), no request reaches it"
+ },
+ "models.py::intel_rec_events": {
+  "n": 1,
+  "why": "delete_restaurant's tombstoning of the deleted restaurant's own rows (admin offboarding)"
+ },
+ "models.py::labor_daily_history": {
+  "n": 1,
+  "why": "stamp_seed_provenance over rows it selected WHERE restaurant_id=?"
+ },
+ "models.py::labor_history": {
+  "n": 1,
+  "why": "save_labor_snapshot updates the row it read WHERE restaurant_id=? for that period"
+ },
+ "models.py::reviews": {
+  "n": 8,
+  "why": "fetch/analysis/draft pipelines on ids they selected per restaurant (save_reviews twins, analyser, drafter); mark_posted after the scoped read in client_api._attempt_google_post; approve_response only from the local dashboard.py"
+ },
+ "models.py::schedule_history": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (backfill_history_hours)"
+ },
+ "models.py::schedule_shares": {
+  "n": 3,
+  "why": "share rows selected for the restaurant/person (seen-in-app, expire) or boot migration"
+ },
+ "models.py::staff_availability": {
+  "n": 1,
+  "why": "touch_staff_availability updates the row it read WHERE restaurant_id=?"
+ },
+ "models.py::staff_contacts": {
+  "n": 1,
+  "why": "set_staff_contact updates the row it found among WHERE restaurant_id=? rows"
+ },
+ "models.py::staff_notes": {
+  "n": 3,
+  "why": "_write_parts after a WHERE restaurant_id=? read; update_staff_note_part reads WHERE id=? AND restaurant_id=?; delete_staff_note compares restaurant_id when given and is otherwise admin-only"
+ },
+ "models.py::two_fa_backup_codes": {
+  "n": 1,
+  "why": "verify_and_consume_backup_code consumes the code row it matched for this login"
+ },
+ "models.py::users": {
+  "n": 4,
+  "why": "delete_restaurant (admin offboarding) and reset/set-password tokens on the row matched by id or token hash"
+ },
+ "notify.py::alert_contacts": {
+  "n": 5,
+  "why": "sync_alert_contacts on rows read WHERE restaurant_id=?; delete_alert_contact only from admin routes that check the contact is the restaurant's"
+ },
+ "notify.py::alert_holds": {
+  "n": 4,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (alert hold claim/send/fold)"
+ },
+ "notify.py::alert_log": {
+  "n": 1,
+  "why": "deliver_alert stamps the alert row it just inserted"
+ },
+ "notify.py::alert_storm_caps": {
+  "n": 2,
+  "why": "storm-cap counter on the cap row it read; lift_storm_cap is admin-only"
+ },
+ "ops.py::inventory_history": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (retention prune)"
+ },
+ "ops.py::job_failures": {
+  "n": 1,
+  "why": "boot migration / backfill over its own rows (init_* / migrate_*), no request reaches it"
+ },
+ "ops.py::schedule_history": {
+  "n": 3,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (retention thinning/compaction/pruning)"
+ },
+ "ops.py::schedule_versions": {
+  "n": 4,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (retention thinning/compaction)"
+ },
+ "outcomes.py::recommendation_outcomes": {
+  "n": 7,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (evaluate/recheck/accrue over due trackers); apply_checkin reads WHERE id=? AND restaurant_id=? first; init backfill"
+ },
+ "people.py::people": {
+  "n": 5,
+  "why": "every pid comes from _Index(conn, restaurant_id) (this restaurant's roster) or a row read WHERE restaurant_id=?"
+ },
+ "people.py::person_aliases": {
+  "n": 1,
+  "why": "_alias updates an alias found in this restaurant's _Index"
+ },
+ "people.py::person_merges": {
+  "n": 1,
+  "why": "unmerge_people reads the merge WHERE id=? AND restaurant_id=? first"
+ },
+ "people.py::person_questions": {
+  "n": 6,
+  "why": "answer_question reads WHERE id=? AND restaurant_id=?; unmerge/withdraw on question ids read for the restaurant"
+ },
+ "people.py::staff_pairs": {
+  "n": 2,
+  "why": "_repoint_all on pair rows selected WHERE restaurant_id=?"
+ },
+ "person_note_holds.py::staff_note_holds": {
+  "n": 1,
+  "why": "remove_hold reads WHERE id=? AND restaurant_id=? first"
+ },
+ "pg_shadow.py::pg_shadow_outbox": {
+  "n": 2,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (shadow outbox drain)"
+ },
+ "policy_notice.py::users": {
+  "n": 1,
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id)"
+ },
+ "pos_schedule_push.py::pos_schedule_pushes": {
+  "n": 3,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (push queue claim/finish; enqueue updates the row it read WHERE restaurant_id=?)"
+ },
+ "predictability_pay.py::compliance_pay_ledger": {
+  "n": 1,
+  "why": "export_csv stamps the rows it just exported WHERE restaurant_id=?"
+ },
+ "push.py::device_tokens": {
+  "n": 7,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (APNs delivery bookkeeping on the token row being delivered to)"
+ },
+ "push.py::live_activity_tokens": {
+  "n": 3,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (delivery bookkeeping / removal of tokens selected for the activity)"
+ },
+ "push.py::push_outbox": {
+  "n": 3,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (push outbox claim/finish/reap)"
+ },
+ "rec_ledger.py::rec_distrust": {
+  "n": 1,
+  "why": "_register_distrust updates the open row it read WHERE restaurant_id=?"
+ },
+ "rec_ledger.py::rec_events": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (repair_sync_replays)"
+ },
+ "request_autonomy.py::shift_change_requests": {
+  "n": 4,
+  "why": "reverse() reads WHERE id=? AND restaurant_id=? first"
+ },
+ "request_autonomy.py::shift_offers": {
+  "n": 1,
+  "why": "reverse_offer reads WHERE id=? AND restaurant_id=? AND created_by=? first"
+ },
+ "review_signals.py::review_requests": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (match_review_requests per restaurant)"
+ },
+ "schedule_benchmark.py::schedule_history": {
+  "n": 1,
+  "why": "offline benchmark tool (scripts / admin), never a tenant request"
+ },
+ "schedule_calibration.py::schedule_calibration_runs": {
+  "n": 1,
+  "why": "revert reads the run WHERE restaurant_id=? first"
+ },
+ "schedule_learning.py::schedule_edit_answers": {
+  "n": 1,
+  "why": "answer_edit_question reads WHERE restaurant_id=? AND history_id=? first"
+ },
+ "schedule_memory.py::schedule_memory": {
+  "n": 5,
+  "why": "owner_answer reads WHERE restaurant_id=? AND memory_key=?; _write on rows read for the restaurant"
+ },
+ "schedule_note_rules.py::schedule_note_rules": {
+  "n": 3,
+  "why": "remove_rule reads WHERE id=? AND restaurant_id=? first; add_rule/add_time_rule on rows read for the restaurant"
+ },
+ "schedule_publish.py::schedule_history": {
+  "n": 1,
+  "why": "_release reads WHERE id=? AND restaurant_id=? first"
+ },
+ "schedule_publish.py::schedule_notices": {
+  "n": 8,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (notice enqueue/claim/finish)"
+ },
+ "schedule_versions.py::schedule_edit_answers": {
+  "n": 1,
+  "why": "adopt_admin_saves on ids it selected for the restaurant"
+ },
+ "schedule_versions.py::schedule_standing_patterns": {
+  "n": 12,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (refresh/read weeks per restaurant); make_rule/owner_said_pattern/confirm_standing on a row read WHERE restaurant_id=?"
+ },
+ "security.py::users": {
+  "n": 1,
+  "why": "freeze_restaurant (admin incident action) over that restaurant's users"
+ },
+ "shift_requests.py::shift_change_requests": {
+  "n": 18,
+  "why": "every row is loaded WHERE id=? AND restaurant_id=? (or inserted for it) before these writes; sweeps (expire_past, escalate_unclaimed, flush_notices) are jobs"
+ },
+ "shift_requests.py::shift_offers": {
+  "n": 3,
+  "why": "respond_offer reads WHERE id=? AND restaurant_id=? first; _close_offers on that request's offers"
+ },
+ "social_routes.py::marketing_content_log": {
+  "n": 1,
+  "why": "refresh_post_metrics(restaurant_id) updates rows it selected WHERE restaurant_id=?"
+ },
+ "staff_comms.py::staff_announcement_recipients": {
+  "n": 1,
+  "why": "ack reads WHERE announcement_id=? AND membership_id=? AND restaurant_id=? first"
+ },
+ "staff_comms.py::staff_running_late": {
+  "n": 2,
+  "why": "report_late updates the row it read/inserted for the employee's restaurant"
+ },
+ "staff_comms.py::staff_threads": {
+  "n": 2,
+  "why": "the employee's/manager's thread read WHERE restaurant_id=? first"
+ },
+ "staff_consent.py::staff_consents": {
+  "n": 3,
+  "why": "answer/revoke read WHERE id=? AND restaurant_id=? first; void job"
+ },
+ "staff_insights.py::staff_calendar_links": {
+  "n": 2,
+  "why": "calendar_feed: the link row matched by its secret token (the credential)"
+ },
+ "staff_knowledge.py::staff_certs": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (cert reminders per restaurant)"
+ },
+ "staff_pwa.py::web_push_subscriptions": {
+  "n": 3,
+  "why": "send_to_user: the login's own subscriptions"
+ },
+ "staff_reminders.py::staff_notices": {
+  "n": 2,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (staff notice delivery)"
+ },
+ "standby_insurance.py::standby_slots": {
+  "n": 5,
+  "why": "respond/withdraw read WHERE id=? AND restaurant_id=? first; dispatch/settle are jobs"
+ },
+ "strategy_jobs.py::ops_issues": {
+  "n": 1,
+  "why": "_loss_issue_current updates the open issue it read WHERE restaurant_id=?"
+ },
+ "studio_offload.py::jobs": {
+  "n": 1,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (retention prune)"
+ },
+ "task_sheets.py::task_assignments": {
+  "n": 3,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (re-resolve/evaluate assignments selected per restaurant)"
+ },
+ "task_sheets.py::task_sheet_lines": {
+  "n": 3,
+  "why": "update_line reads WHERE id=? AND restaurant_id=?; reorder_lines only ids already on _sheet(conn, restaurant_id, sheet_id)"
+ },
+ "task_sheets.py::task_sheets": {
+  "n": 2,
+  "why": "_bump/update_sheet after _sheet(conn, restaurant_id, sheet_id) (WHERE id=? AND restaurant_id=?)"
+ },
+ "time_off.py::staff_time_off": {
+  "n": 1,
+  "why": "cancel_approved updates the employee's own request read WHERE restaurant_id=? first"
+ },
+ "webhooks.py::webhook_outbox": {
+  "n": 2,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (webhook outbox claim/finish)"
+ },
+ "webhooks.py::webhooks": {
+  "n": 5,
+  "why": "save_webhook updates the row it read WHERE restaurant_id=?; _deliver bookkeeping on the webhook being delivered"
+ }
 }

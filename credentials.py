@@ -57,6 +57,8 @@ CREDENTIAL_NAME = re.compile(r"(token|secret|api_key|apikey|password)", re.I)
 PREFIX = "enc:v1:"
 _warned = False
 _fernet_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("credentials._fernet_cache", _fernet_cache)
 
 
 def key_configured():
@@ -473,6 +475,7 @@ POS_CREDENTIALS_SCHEMA = """CREATE TABLE IF NOT EXISTS pos_credentials (
 # revoke clears them at once.
 LEGACY_TOKEN_KEEP_DAYS = 7
 _plain_cache = {}
+_process_caches.register("credentials._plain_cache", _plain_cache)
 _PLAIN_CACHE_MAX = 256
 
 
