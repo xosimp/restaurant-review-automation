@@ -286,8 +286,9 @@ def _sending_allowed() -> bool:
     """Only where the scheduler may run: Railway, or ALLOW_LOCAL_SCHEDULER=1.
     A laptop has production's Resend key and a copy of real clients."""
     try:
+        import config
         import scheduler
-        return bool(scheduler.scheduling_allowed())
+        return bool(scheduler.scheduling_allowed()) and config.outbound_sends_allowed()
     except Exception as e:
         log.warning(f"scheduling_allowed unavailable ({e}); not sending")
         return False

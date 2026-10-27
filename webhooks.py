@@ -214,6 +214,12 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH, event_id=None):
     once, connected to the vetted address, no redirect followed; a URL that
     now resolves somewhere private is refused and not retried."""
     import net_safety
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # A customer's own endpoint, never from staging (A05-06). Nothing
+        # recorded: no delivery happened, and a failure count would disable
+        # the endpoint in a copy of the data.
+        return {"ok": False, "status": 0, "attempts": 0, "error": _config_gate.sends_refused_reason()}
     event_id = event_id or new_event_id()
     payload_str = json.dumps({
         "id":            event_id,

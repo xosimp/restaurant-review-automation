@@ -695,6 +695,10 @@ def post_reply(restaurant_id: int, review_name: str, reply_text: str) -> dict:
     """
     if not review_name:
         return {"ok": False, "error": "No review name — review was fetched before GMB was connected"}
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # A public reply on a real listing, never from staging (A05-06).
+        return {"ok": False, "error": _config_gate.sends_refused_reason()}
 
     access_token = get_valid_token(restaurant_id)
     if not access_token:
@@ -1065,6 +1069,10 @@ def create_local_post(restaurant_id: int, summary: str, cta_type: str = None,
     # the combined parent.
     parent = f"{r.gmb_account_id}/{r.gmb_location_id}"
     from ai_guard import safe_error as _safe_error
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # A public post on a real listing, never from staging (A05-06).
+        return {"ok": False, "error": _config_gate.sends_refused_reason()}
     try:
         resp = requests.post(
             f"https://mybusiness.googleapis.com/v4/{parent}/localPosts",

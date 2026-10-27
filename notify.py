@@ -529,6 +529,11 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             # The showcase demo (Halsted & Rye) never texts anyone.
             return _done(SmsResult(False, status="blocked", error="demo store: texts are never sent",
                                    permanent=True))
+    # Never from staging or another non-production environment, whatever
+    # Twilio keys it holds (config.outbound_sends_allowed — release-safety
+    # audit 10/26/26 A05-06). No sms_log row: nothing happened.
+    if not config.outbound_sends_allowed():
+        return _done(SmsResult(False, status="blocked", error=config.sends_refused_reason(), permanent=True))
     # Every text, a verification code included (re-audit 10/20/26 R7-09: a
     # sign-in code to a premium-rate number abroad, looped by anyone with the
     # owner's password, is toll fraud billed to the platform).
