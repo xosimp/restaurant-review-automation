@@ -155,6 +155,36 @@ def test_same_inputs_same_week_from_the_solver_first_draft(drafts, case):
         [(u["date"], u["role"], u["shift_start"]) for u in again["unassigned"]]
 
 
+def test_every_solve_of_a_draft_runs_on_a_work_budget_with_its_workers_interleaved(monkeypatch):
+    """What makes the production solve (4 workers) deterministic, checked on
+    every solve a draft makes — Stage 1, Stage 2's phases, the fixed-week
+    evaluations: a deterministic work budget, the wall clock only a larger
+    emergency cap, one fixed seed, and several workers interleaved in a
+    fixed order (without interleave_search, 4 workers race and the week
+    changes run to run). The nightly determinism run uses one worker, so
+    this is where the multi-worker setting is held."""
+    import schedule_cpsat_runtime as rt
+    import schedule_shapes as shp
+    monkeypatch.setattr(cs, "WORKERS", 4)
+    monkeypatch.setattr(shp, "WORKERS", 4)
+    seen, real = [], rt.run
+
+    def capture(solver, model, isolate=True):
+        p = solver.parameters
+        seen.append((p.num_workers, p.interleave_search, p.max_deterministic_time, p.max_time_in_seconds,
+                     p.random_seed))
+        return real(solver, model, isolate=isolate)
+    monkeypatch.setattr(rt, "run", capture)
+    s = bench.synthetic(20, 1)
+    got = _draft(s)
+    assert got["rows"] and len(seen) >= 3
+    assert any(w == 4 for w, *_x in seen)                       # the searches ran on four workers
+    for workers, interleaved, budget, cap, seed in seen:
+        assert budget > 0 and cap > budget, seen                # a work budget; the clock only above it
+        assert interleaved == (workers > 1), seen
+        assert seed == cs.SEED, seen
+
+
 # ── a cut is reported by the clock alone ──────────────────────────────────
 
 def _answered(status, wall, det=None, budget=3.02, cap=None):
