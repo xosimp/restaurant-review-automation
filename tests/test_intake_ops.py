@@ -660,3 +660,26 @@ def test_unsigned_mail_with_a_new_distributor_or_a_forged_signature_stays_held(d
     assert out["status"] == "done" and out["files"][0]["vouched"] is True
     stranger2 = stranger.replace(b"55501", b"55502")
     assert _unsigned_email(db, monkeypatch, rid, "u5", stranger2, auth=FINTECH_1015)["status"] == "held_auth"
+
+
+FINTECH_1020 = {"spf": "pass", "dkim": "gray", "dmarc": "fail"}
+
+
+def test_fintechs_spf_pass_mail_takes_the_file_check_like_its_unsigned_mail(db, monkeypatch):
+    """Owner, 10/27/26 (approved): from 10/20/26 Fintech's mail read SPF pass
+    with DKIM gray and DMARC fail - an unaligned pass, no weaker than gray -
+    and the gray-only rule held six daily files unread. It now takes the same
+    file check: a good file is read, a stranger's stays held, and an SPF or
+    DKIM FAIL is held whatever the file says."""
+    assert email_intake._unsigned_dmarc_fail(FINTECH_1020) is True
+    assert email_intake._unsigned_dmarc_fail({"spf": "pass", "dkim": "fail", "dmarc": "fail"}) is False
+    assert email_intake._unsigned_dmarc_fail({"spf": "fail", "dkim": "pass", "dmarc": "fail"}) is False
+    rid = _rid(db)
+    _route(db, rid)
+    fi.ingest_file(rid, "first.txt", _printout("10/09/2026"), db_path=db)
+    good = _printout("10/20/2026").replace(b"543113065", b"101153120")
+    out = _unsigned_email(db, monkeypatch, rid, "s1", good, auth=FINTECH_1020)
+    assert out["status"] == "done" and out["files"][0]["vouched"] is True
+    stranger = _printout("10/20/2026").replace(b"Chicago Beverage System, Inc dba Windy City", b"Acme Liquor Wholesale") \
+        .replace(b"543113065", b"55520")
+    assert _unsigned_email(db, monkeypatch, rid, "s2", stranger, auth=FINTECH_1020)["status"] == "held_auth"
