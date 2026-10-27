@@ -246,7 +246,7 @@ body{flex-direction:column}
   </div>
   <div class="form-wrap">
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    {% if request.args.get('reset') %}<div class="note good">✓ Password updated — sign in with your new password.</div>{% endif %}
+    {% if request.args.get('reset') %}<div class="note good">✓ Password updated — sign in with your email address (or username) and your new password.</div>{% endif %}
     <form method="POST">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="field">

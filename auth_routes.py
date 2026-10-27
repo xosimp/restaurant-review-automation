@@ -190,6 +190,19 @@ def forgot_password():
             token = create_reset_token(email)
             if token:
                 reset_url = f"https://dashboard.cavnar.ai/reset-password/{token}"
+                # The login's username, said in the email (owner, 10/27/26:
+                # Anthony reset his password, then signed in as "anthony" -
+                # his login is "aabbott" - and read it as the reset failing).
+                import html as _html_fp
+                from models import get_conn as _gc_fp
+                _c_fp = _gc_fp()
+                try:
+                    _u_fp = _c_fp.execute("SELECT username FROM users WHERE email=? AND is_active=1",
+                                          (email,)).fetchone()
+                finally:
+                    _c_fp.close()
+                _who_fp = (f" Then sign in with your username <b>{_html_fp.escape(_u_fp[0])}</b> or this email address."
+                           if _u_fp and _u_fp[0] else " Then sign in with this email address.")
                 # Through emails.deliver — the flood guard and email_log a
                 # direct SDK send skipped (MOD-EML-4). Password reset is
                 # exempt from suppression there, as it should be.
@@ -203,7 +216,7 @@ def forgot_password():
                       <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:24px">
                       <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Reset your password</h2>
                       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:24px">
-                        Click the button below to reset your password. This link expires in 1 hour.
+                        Click the button below to reset your password. This link expires in 1 hour.{_who_fp}
                       </p>
                       <a href="{reset_url}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Reset password →</a>
                       <p style="font-size:12px;color:#7a736a;margin-top:24px">If you didn't request this, ignore this email — your password won't change.</p>
