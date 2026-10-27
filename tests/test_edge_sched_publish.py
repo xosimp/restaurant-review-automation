@@ -216,9 +216,22 @@ def test_a_successful_send_stamps_published_at_and_versions_it(db, monkeypatch):
 # ── SCHED-29: two publishes at once ───────────────────────────────────────
 
 def test_two_concurrent_publishes_email_each_employee_once(db, monkeypatch):
+    """Two Sends of one week at the same moment: staff are told once.
+
+    Staged where the guarantee is (blind re-audit 10/26/26 B2 — the old
+    barrier sat on client_api.publish_blockers, which publish never calls:
+    0 waits, two unsynchronised threads, and a skip reason CI accepted):
+    both Sends reach the week's claim (schedule_publish._claim) together,
+    and the one that wins is held inside its gate until the other's claim
+    has been refused — so the loser asks while the winner holds the claim
+    and is still checking, the moment a claim moved after the gate, or no
+    claim at all, would let both stamp and send. Never skipped: a stage that
+    cannot be set fails."""
+    import schedule_publish as sp
     rid = _restaurant(db)
     hid = _save(db, rid, W1, _week_csv(W1))
     _contacts(db, rid, "Ana", "Bob")
+    overrides = overrides_for(rid, hid)
     sent, lock = [], threading.Lock()
 
     def record(**kw):
@@ -226,23 +239,46 @@ def test_two_concurrent_publishes_email_each_employee_once(db, monkeypatch):
             sent.append(kw["employee_name"])
         return emails.SendResult(True)
     monkeypatch.setattr(emails, "send_staff_schedule_email", record)
-    barrier = threading.Barrier(2)
-    real_blockers = client_api.publish_blockers
+    at_claim = threading.Barrier(2, timeout=30)
+    claims, loser_refused = [], threading.Event()
+    real_claim, real_review = sp._claim, sp.publish_review
 
-    def racing_blockers(*a, **k):
-        out = real_blockers(*a, **k)
+    def staged_claim(rid_, sid, mode, *a, **k):
+        if mode == "publish":
+            at_claim.wait()                          # both Sends reach the claim together
+        got = real_claim(rid_, sid, mode, *a, **k)
+        if mode == "publish":
+            with lock:
+                claims.append(got)
+            if not got:
+                loser_refused.set()
+        return got
+
+    def staged_review(*a, **k):
+        # The winner, inside its gate, until the loser's claim was refused.
+        if not loser_refused.wait(30):
+            raise AssertionError("the second Send never asked for the claim while the first held it")
+        return real_review(*a, **k)
+    monkeypatch.setattr(sp, "_claim", staged_claim)
+    monkeypatch.setattr(sp, "publish_review", staged_review)
+    answers, errors = [], []
+
+    def send(i):
         try:
-            barrier.wait(timeout=30)
-        except threading.BrokenBarrierError:
-            pass
-        return out
-    monkeypatch.setattr(client_api, "publish_blockers", racing_blockers)
-    threads = [threading.Thread(target=client_api._publish_schedule, args=(rid, hid),
-                                kwargs={"actor": {"username": f"m{i}"}, "acknowledge": True, "override_reasons": overrides_for(rid, hid)}) for i in range(2)]
+            answers.append(client_api._publish_schedule(rid, hid, actor={"username": f"m{i}"}, acknowledge=True,
+                                                        override_reasons=overrides))
+        except BaseException as e:                   # surfaced below, never swallowed
+            errors.append(e)
+    threads = [threading.Thread(target=send, args=(i,)) for i in range(2)]
     [t.start() for t in threads]
     [t.join(60) for t in threads]
-    if barrier.broken:
-        pytest.skip("the race window was not staged (a thread missed the barrier under load)")
+    assert not errors, errors
+    assert not at_claim.broken and len(claims) == 2, "the race was not staged"
+    assert sorted(claims) == [False, True], claims
+    statuses = sorted(st for _p, st in answers)
+    assert statuses == [200, 409], answers
+    loser = next(p for p, st in answers if st == 409)
+    assert loser.get("in_progress"), loser
     assert sorted(sent) == ["Ana", "Bob"], sent
 
 

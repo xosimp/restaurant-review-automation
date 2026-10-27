@@ -116,6 +116,35 @@ def test_independent_checks_find_what_the_engine_must_never_let_through():
     assert got["unmanaged_open_minutes"] >= 180
 
 
+def test_the_independent_manager_check_counts_past_close_and_before_open_beyond_the_allowances():
+    """Blind re-audit 10/26/26 (B2): the check counted only the open hours,
+    so closers left 90 minutes past close with no manager — exactly what a
+    regression dropping the closing manager's extension produces — passed
+    the benchmark's independent invariant."""
+    spec = sb._spec("late", "Late", "unit", [("Max", "Manager", {}), ("Ann", "Crew", {}), ("Bo", "Crew", {})],
+                    [("Monday", "Max", "Manager", "4:00pm", "11:00pm")],
+                    {d: "4:00pm" for d in sb.DAYS}, {d: "11:00pm" for d in sb.DAYS}, {d: 1000 for d in sb.DAYS})
+    # The manager to close at 11pm, the closers to 12:30am: 90 minutes alone.
+    rows = [_row(WEEK[0], "Max", "Manager", "4:00pm", "11:00pm"), _row(WEEK[0], "Ann", "Crew", "4:00pm", "12:30am")]
+    got = sb._independent(rows, spec, None, WEEK)
+    assert got["unmanaged_open_minutes"] == 90
+    assert "manager" in sb.failed_invariants({"status": "done", "independent_total": 0, "deterministic": True,
+                                              "unmanaged_open_minutes": got["unmanaged_open_minutes"]})
+    # Within the closing manager's stay (60 minutes): not a gap.
+    rows[1] = _row(WEEK[0], "Ann", "Crew", "4:00pm", "12:00am")
+    assert sb._independent(rows, spec, None, WEEK)["unmanaged_open_minutes"] == 0
+    # Prep before an opening manager in an hour before the 4pm open: not a gap;
+    # before one who arrives at the open, it is.
+    rows = [_row(WEEK[0], "Bo", "Crew", "1:30pm", "11:00pm"), _row(WEEK[0], "Max", "Manager", "3:00pm", "11:00pm")]
+    assert sb._independent(rows, spec, None, WEEK)["unmanaged_open_minutes"] == 0
+    rows[1] = _row(WEEK[0], "Max", "Manager", "4:00pm", "11:00pm")
+    assert sb._independent(rows, spec, None, WEEK)["unmanaged_open_minutes"] == 150
+    # The spec's own allowances, when it sets them: no closing stay at all.
+    spec["compliance"] = {"closing_manager_stays_minutes": 0}
+    rows = [_row(WEEK[0], "Max", "Manager", "4:00pm", "11:00pm"), _row(WEEK[0], "Ann", "Crew", "4:00pm", "11:30pm")]
+    assert sb._independent(rows, spec, None, WEEK)["unmanaged_open_minutes"] == 30
+
+
 def test_unfilled_is_the_usual_crew_left_unstaffed_and_a_busy_days_hole_costs_more():
     spec = sb._spec("t", "T", "unit", [("A", "Server", {}), ("B", "Server", {})],
                     [("Monday", "A", "Server", "11:00am", "1:00pm"), ("Friday", "A", "Server", "11:00am", "1:00pm"),

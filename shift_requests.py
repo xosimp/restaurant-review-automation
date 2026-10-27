@@ -954,8 +954,11 @@ def drop_warning(restaurant_id, req, db_path=DB_PATH, rows=None, constraints=Non
     holds a cover to (schedule audit 10/10/26 BUGSLIFE-13); only the manager
     rule used to be asked (RULES-15), so the only cook's Sunday-lunch drop
     opened with no word. `kind` is the breach's (no_manager,
-    coverage_floor, keyholder_until_close, ...). Never raises: a question it
-    can't answer is (None, None)."""
+    coverage_floor, keyholder_until_close, ...). Never raises — but a
+    question it can't answer is never "no problem": it is (DROP_UNCHECKED
+    sentence, DROP_UNCHECKED), and every caller refuses to approve on it
+    (blind re-audit 10/26/26 B2: it returned (None, None), and decide() and
+    the automatic approval let a manager's drop go with no cover)."""
     try:
         import schedule_engine as _se
         import schedule_rules as _rules
@@ -992,15 +995,168 @@ def drop_warning(restaurant_id, req, db_path=DB_PATH, rows=None, constraints=Non
             return f"approving it leaves {day} {mdy(d)} with no manager on — name a manager to cover it", kind
         return f"approving it leaves {day} {mdy(d)} with {_se._breach_reason(w)} — name who covers it", kind
     except Exception as exc:
-        print(f"[shift_requests] could not check the rules for request {req.get('id')}: {exc}")
-        return None, None
+        import ops
+        ops.capture(exc, job="shift_request_rules",
+                    context=f"restaurant_id={restaurant_id} request={req.get('id')} drop check", kind="request")
+        return DROP_UNCHECKED_TEXT, DROP_UNCHECKED
+
+
+# drop_warning's answer when the rules could not be read: never "no problem".
+DROP_UNCHECKED = "unchecked"
+DROP_UNCHECKED_TEXT = ("we couldn't check whether a manager stays on the floor without this shift — try again in "
+                       "a minute")
 
 
 def drop_manager_gap(restaurant_id, req, db_path=DB_PATH):
     """The manager-rule sentence of drop_warning, or None (RULES-15) — kept
-    for the callers that name only the manager rule."""
+    for the callers that name only the manager rule. A drop whose rules
+    could not be read says so: the decider is never told nothing."""
     text, kind = drop_warning(restaurant_id, req, db_path)
+    if kind == DROP_UNCHECKED:
+        return "we couldn't check whether a manager stays on the floor without it — check before you approve"
     return text if kind == "no_manager" else None
+
+
+# ── the manager rule on the live weeks (blind re-audit 10/26/26 B2) ───────
+# A drop that leaves part of the day with no manager on is refused without a
+# named cover (STRESS-16). Time off, an availability change, a deactivation,
+# a floor-manager flag cleared — the same event in practice — were never
+# judged: Saturday dinner ran with no manager and nothing named the rule.
+# Each of them is judged here, against every live published week from
+# today, before it is written.
+
+# Words that name the decider themselves rather than a person on the roster.
+SELF_COVER_WORDS = frozenset({"me", "myself", "owner", "the owner", "i", "i do", "i will"})
+
+
+def self_cover_refused(user, covered_by):
+    """The sentence refusing `covered_by` when it names the decider
+    ("me", "owner") and the decider is support or an admin acting through
+    view-as — they can't run the restaurant's floor; a manager must be
+    named. None otherwise (the account holder and a manager may name
+    themselves, as a drop's cover always could)."""
+    said = " ".join(str(covered_by or "").split()).casefold()
+    if not said or said not in SELF_COVER_WORDS or not acting_admin(user):
+        return None
+    return "Name the manager who runs the floor — support can't cover a shift for the restaurant."
+
+
+def acting_admin(user) -> bool:
+    """Whether `user` is Cavnar AI's support or an admin — their own login or
+    acting through view-as, full control or not: whoever they are, they are
+    not on the restaurant's floor."""
+    u = user if isinstance(user, dict) else {}
+    behalf = u.get("on_behalf_of") if isinstance(u.get("on_behalf_of"), dict) else {}
+    return bool(u.get("acting_admin_id") or u.get("acting_admin_role") or u.get("is_admin")
+                or str(u.get("role") or "").strip().lower() == "support"
+                or behalf.get("authority") == "admin" or behalf.get("acting_admin_id"))
+
+
+def _gap_words(gaps) -> str:
+    """"Saturday 10/10/26 5:00pm to 11:00pm" for the first gaps, and how
+    many more."""
+    import schedule_rules as _rules
+    from time_utils import mdy
+    out = []
+    for g in gaps[:3]:
+        day = datetime.strptime(g["date"], "%Y-%m-%d").strftime("%A")
+        out.append(f"{day} {mdy(g['date'])} {_rules._fmt_minutes(g['start'] % 1440)} to "
+                   f"{_rules._fmt_minutes(g['end'] % 1440)}")
+    more = len(gaps) - len(out)
+    return ", ".join(out) + (f" and {more} more" if more > 0 else "")
+
+
+def _new_manager_gaps(before_rows, after_rows, c_before, c_after, dates) -> list:
+    """[{date, start, end}] — the stretches of `dates` with no manager on in
+    `after_rows` under `c_after` that `before_rows` under `c_before` did not
+    already have (a gap that grows is new across its whole stretch)."""
+    import schedule_rules as _rules
+    if not (c_before.managers or c_before.acting_managers):
+        return []                           # no manager on the roster at all: the roster check says so
+    before = _rules.manager_gaps(before_rows, c_before, dates=dates)
+    if c_after.managers or c_after.acting_managers:
+        after = _rules.manager_gaps(after_rows, c_after, dates=dates)
+    else:
+        # Nobody left who manages: manager_gaps says nothing then (the
+        # roster check does) — but every minute anyone is on is unmanaged.
+        import schedule_time as _stime
+        after = {}
+        for d in sorted(dates):
+            spans = [sp for sp in (_stime.span(r) for r in after_rows if r.get("date") == d
+                                   and (r.get("employee") or "").strip()) if sp]
+            if spans:
+                after[d] = [(s, e, None) for s, e in _rules.manager_need(c_after, d, spans)]
+    out = []
+    for d in sorted(after):
+        was = before.get(d) or []
+        for s, e, _i in after[d]:
+            if not any(bs <= s and e <= be for bs, be, _j in was):
+                out.append({"date": d, "start": int(s), "end": int(e)})
+    return out
+
+
+def live_manager_gaps(restaurant_id, name, off=None, roster_change=None, today=None, db_path=None) -> list:
+    """[{date, start, end}] — every stretch of a live published week, from
+    today on, that would have no manager on the floor once `name` is off
+    the shifts in `off` ([{date, shift_start}] of theirs — time off, an
+    availability cut) and/or the roster reads as `roster_change` would
+    leave it (staff_settings.planned_change — deactivated, no longer a
+    floor manager, training to manage, a weekday off). [] when nothing gets
+    worse. Raises when a week or its rules can't be read: callers refuse on
+    that, never approve on no answer."""
+    db = db_path or _models.DB_PATH
+    today = _today(restaurant_id, today)
+    iso = today.isoformat()
+    mine = {_key(x) for x in _spellings(restaurant_id, name, db_path)} | {_key(name)}
+    off_keys = {(str(r.get("date") or "")[:10], str(r.get("shift_start") or "")) for r in (off or ())}
+    weeks = _models.live_weeks(restaurant_id, lo=iso, db_path=db)
+    by_week = _ss.rows_by_week([w["id"] for w in weeks], "live", db_path=db_path) if weeks else {}
+    seen, out = set(), []
+    for w in weeks:                         # newest live copy first: a day two copies cover is the newer's
+        rows = by_week.get(int(w["id"])) or []
+        dates = {r["date"] for r in rows if r.get("date") and r["date"] >= iso and r["date"] not in seen}
+        if not dates:
+            continue
+        seen |= dates
+        if not any(_key(r.get("employee")) in mine and r["date"] in dates for r in rows):
+            continue                        # only their own shifts can change who manages them
+        c = _week_constraints(restaurant_id, rows)
+        c_after = _week_constraints(restaurant_id, rows, roster_change=dict(roster_change, name=name)) \
+            if roster_change else c
+        after = [r for r in rows if not (_key(r.get("employee")) in mine
+                                         and (r["date"], str(r.get("shift_start") or "")) in off_keys)]
+        out += _new_manager_gaps(rows, after, c, c_after, dates)
+    return sorted(out, key=lambda g: (g["date"], g["start"]))
+
+
+def hold_manager_rule(restaurant_id, name, what, covered_by=None, off=None, roster_change=None, today=None,
+                      db_path=None):
+    """The owner's highest rule held over a change to the live weeks, before
+    it is written: None when `what` ("approving Ana's time off") leaves
+    every minute of the published weeks with a manager on. When it would
+    not, ManagerGapRefused (the gap said) unless the decider named who runs
+    the floor instead (`covered_by`, the drop rule's own override) — then
+    the sentence to tell the managers. ShiftRequestError when the weeks or
+    their rules can't be read: refused, never allowed on no answer. `off`
+    may be a callable returning the rows, so reading them is judged too."""
+    try:
+        rows_off = off() if callable(off) else off
+        gaps = live_manager_gaps(restaurant_id, name, off=rows_off, roster_change=roster_change, today=today,
+                                 db_path=db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="shift_request_rules", context=f"restaurant_id={restaurant_id} live manager check",
+                    kind="request")
+        raise ShiftRequestError("We couldn't check the manager rule against the published schedule just now — "
+                                "try again in a minute. Nothing changed.")
+    if not gaps:
+        return None
+    said = f"{what} leaves {_gap_words(gaps)} with no manager on the published schedule"
+    said = said[:1].upper() + said[1:]
+    floor = (covered_by or "").strip()[:120]
+    if not floor:
+        raise ManagerGapRefused(said + " — name a manager to cover it, or who runs the floor instead")
+    return f"{said}; {floor} runs the floor instead"
 
 
 def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None, note=None, db_path=DB_PATH,
@@ -1071,6 +1227,11 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
     # (RULES-15 asked the manager rule alone; BUGSLIFE-13): said with the
     # answer and to the managers, never silently.
     gap, gap_kind = drop_warning(restaurant_id, row, db_path) if approve else (None, None)
+    if gap_kind == DROP_UNCHECKED:
+        # The rules could not be read: refused, like a swap or a cover that
+        # couldn't be checked (_swap_legal) — never approved on no answer.
+        raise ShiftRequestError("We couldn't check the rules for this drop just now — try again in a minute. "
+                                "Nothing changed.")
     floor = (covered_by or "").strip()[:120] or None
     if gap and gap_kind == "no_manager" and not floor:
         # The owner's highest rule (STRESS-16): never on a warning alone.
@@ -2400,12 +2561,16 @@ def colleague_agreed(restaurant_id, request_id, actor, db_path=DB_PATH, now=None
                          now=now)
 
 
-def _week_constraints(restaurant_id, rows):
-    """schedule_rules.Constraints for the week `rows` are (every date in it)."""
+def _week_constraints(restaurant_id, rows, roster_change=None):
+    """schedule_rules.Constraints for the week `rows` are (every date in it);
+    `roster_change` reads one person as a settings save not yet written
+    would leave them (build_constraints)."""
     import schedule_rules as _rules
     dates = sorted({r["date"] for r in rows if r.get("date")})
-    return _rules.build_constraints(restaurant_id, dates,
-                                    [datetime.strptime(x, "%Y-%m-%d").strftime("%A") for x in dates])
+    days = [datetime.strptime(x, "%Y-%m-%d").strftime("%A") for x in dates]
+    if roster_change:
+        return _rules.build_constraints(restaurant_id, dates, days, roster_change=roster_change)
+    return _rules.build_constraints(restaurant_id, dates, days)
 
 
 def swap_rows(rows, req):
@@ -2965,11 +3130,72 @@ def escalate_unclaimed(restaurant_id, db_path=DB_PATH, now=None, hours=OPEN_SHIF
     return n
 
 
+def manager_watch(restaurant_id, db_path=None, now=None) -> int:
+    """Today's and tomorrow's live rows judged by the manager rule with the
+    rules as they stand now (blind re-audit 10/26/26 B2) — the backstop for
+    every change to who can work that nothing judged when it was made: a
+    role changed in Team, the open hours moved, a cut the staff app filed.
+    Each stretch still ahead with no manager on is told to the managers
+    once (a durable claim per date and stretch). Returns how many were
+    told. Raises when the week can't be read (the watch counts it failed)."""
+    import ops
+    import schedule_rules as _rules
+    db = db_path or _models.DB_PATH
+    now = _now(restaurant_id, now)
+    days = [now.date().isoformat(), (now.date() + timedelta(days=1)).isoformat()]
+    weeks = _models.live_weeks(restaurant_id, lo=days[0], hi=days[1], db_path=db)
+    if not weeks:
+        return 0
+    by_week = _ss.rows_by_week([w["id"] for w in weeks], "live", db_path=db_path)
+    told, seen = 0, set()
+    for w in weeks:
+        rows = by_week.get(int(w["id"])) or []
+        dates = {r["date"] for r in rows if r.get("date") in days and r["date"] not in seen}
+        if not dates:
+            continue
+        seen |= dates
+        c = _week_constraints(restaurant_id, rows)
+        for d, lst in sorted(_rules.manager_gaps(rows, c, dates=dates).items()):
+            past = now.hour * 60 + now.minute if d == days[0] else -1
+            items = [{"date": d, "start": int(s), "end": int(e)} for s, e, _i in lst if e > past]
+            if not items:
+                continue
+            sig = ",".join(f"{g['start']}-{g['end']}" for g in items)
+            if not ops.claim_period("live_manager_gap", f"{restaurant_id}:{d}:{sig}"):
+                continue
+            said = _floor_said(restaurant_id, int(w["id"]), d, db)
+            _tell_managers(restaurant_id, "No manager on",
+                           f"No manager on the published schedule {_gap_words(items)}"
+                           + (f" — {said} said they run the floor; check that still holds." if said
+                              else " — put a manager on it, or say who runs the floor."), db)
+            told += 1
+    return told
+
+
+def _floor_said(restaurant_id, history_id, day, db_path) -> str:
+    """Who the owner already said runs the floor on `day`: a manager gap sent
+    past at publish (schedule_publish_overrides.covered_by) or a drop
+    approved with who runs the floor (floor_covered_by). "" for nobody."""
+    conn = get_conn(db_path)
+    try:
+        names = [r[0] for r in conn.execute(
+            "SELECT covered_by FROM schedule_publish_overrides WHERE restaurant_id=? AND history_id=? "
+            "AND key LIKE ? AND COALESCE(covered_by, '') <> ''", (restaurant_id, history_id,
+                                                                  f"rule:no_manager:{day}:%")).fetchall()]
+        names += [r[0] for r in conn.execute(
+            "SELECT floor_covered_by FROM shift_change_requests WHERE restaurant_id=? AND date=? "
+            "AND COALESCE(floor_covered_by, '') <> ''", (restaurant_id, day)).fetchall()]
+    finally:
+        conn.close()
+    return " and ".join(sorted({" ".join(str(n).split()) for n in names if str(n or "").strip()}))
+
+
 def run_open_shift_watch(db_path=None):
     """Hourly: for each restaurant with a live shift request, expire the
     ones whose shift has passed and tell the deciders about open shifts
-    still unclaimed close to their start. Bounded and resumable
-    (scheduler.resumable_sweep with its own cursor)."""
+    still unclaimed close to their start; and for each with a live week on
+    today or tomorrow, the manager rule's backstop (manager_watch). Bounded
+    and resumable (scheduler.resumable_sweep with its own cursor)."""
     import threading
     import scheduler as _sched
     db = db_path or _models.DB_PATH
@@ -2977,6 +3203,14 @@ def run_open_shift_watch(db_path=None):
     try:
         ids = sorted({r[0] for r in conn.execute(
             "SELECT DISTINCT restaurant_id FROM shift_change_requests WHERE status IN " + _LIVE_SQL).fetchall()})
+        # Live weeks reaching today or tomorrow anywhere (a day either side of
+        # the server's date covers every restaurant's own clock).
+        lo = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+        hi = (datetime.utcnow().date() + timedelta(days=2)).isoformat()
+        live = {r[0] for r in conn.execute(
+            "SELECT DISTINCT restaurant_id FROM schedule_history WHERE published_at IS NOT NULL "
+            "AND superseded_by IS NULL AND substr(COALESCE(week_end, week_start),1,10) >= ? "
+            "AND substr(week_start,1,10) <= ?", (lo, hi)).fetchall()}
     finally:
         conn.close()
     # Approved availability cuts whose date has come go into force here too
@@ -2986,21 +3220,25 @@ def run_open_shift_watch(db_path=None):
         due = set(_avc.restaurants_due(db))
     except Exception:
         _avc, due = None, set()
-    ids = sorted(set(ids) | due)
-    tally = {"attempted": 0, "failed": 0, "expired": 0, "escalated": 0}
+    asked = set(ids) | due
+    ids = sorted(asked | live)
+    tally = {"attempted": 0, "failed": 0, "expired": 0, "escalated": 0, "manager_gaps": 0}
     lock = threading.Lock()
 
     def _one(rid):
         with lock:
             tally["attempted"] += 1
         try:
-            e = expire_past(rid, db_path=db)
-            # Requests a week moved under and notices a caller left unsent
-            # (ARCH-9): the safety net for every write path.
-            reconcile(rid, db_path=db)
-            u = escalate_unclaimed(rid, db_path=db)
+            e = u = 0
+            if rid in asked:
+                e = expire_past(rid, db_path=db)
+                # Requests a week moved under and notices a caller left unsent
+                # (ARCH-9): the safety net for every write path.
+                reconcile(rid, db_path=db)
+                u = escalate_unclaimed(rid, db_path=db)
             if rid in due and _avc is not None:
                 _avc.apply_due(rid, db_path=db)
+            g = manager_watch(rid, db_path=db) if rid in live else 0
         except Exception:
             with lock:
                 tally["failed"] += 1
@@ -3008,11 +3246,13 @@ def run_open_shift_watch(db_path=None):
         with lock:
             tally["expired"] += e
             tally["escalated"] += u
+            tally["manager_gaps"] += g
 
     _done, ran_out = _sched.resumable_sweep(OPEN_SHIFT_WATCH_CURSOR_KEY, ids, _one, OPEN_SHIFT_WATCH_MAX_SECONDS,
                                             workers=1, job="open_shift_watch")
     return {"attempted": tally["attempted"], "ok": tally["attempted"] - tally["failed"], "failed": tally["failed"],
-            "skipped": 0, "hit_bound": bool(ran_out), "expired": tally["expired"], "escalated": tally["escalated"]}
+            "skipped": 0, "hit_bound": bool(ran_out), "expired": tally["expired"], "escalated": tally["escalated"],
+            "manager_gaps": tally["manager_gaps"]}
 
 
 # ── telling people (SCHED-21) ──────────────────────────────────────────────

@@ -1890,6 +1890,13 @@ NOT_SENT_BY_IOS = {
     ("/mobile/api/labor/shift-requests/<int:request_id>/decide", "note"): _WEB_TOO,
     ("/mobile/api/labor/shift-requests/<int:request_id>/offer", "note"): _WEB_TOO,
     ("/mobile/api/labor/time-off/<int:request_id>/decide", "note"): _WEB_TOO,
+    # Who runs the floor when a change leaves a published minute with no
+    # manager on (409 needs_cover, blind re-audit 10/26/26 B2): the web
+    # asks for it; the iPhone shows the gap and the change waits.
+    ("/mobile/api/labor/time-off/<int:request_id>/decide", "covered_by"): _WEB_ONLY + " (409 needs_cover)",
+    ("/mobile/api/labor/availability-changes/<int:change_id>/decide", "covered_by"): _WEB_ONLY + " (409 needs_cover)",
+    ("/mobile/api/labor/staff-settings", "covered_by"): _WEB_ONLY + " (409 needs_cover)",
+    ("/mobile/api/labor/availability", "covered_by"): _WEB_ONLY + " (409 needs_cover)",
     ("/mobile/api/labor/staff-contacts", "phone"): _WEB_TOO + " (both send employee_name and email)",
     ("/mobile/api/labor/staff-contacts", "pos_id"): _WEB_TOO,
     ("/mobile/api/labor/staff-settings", "desired_hours"): _WEB_TOO + " (the employee's own, /staff/api/preferences)",

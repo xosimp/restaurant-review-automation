@@ -26,6 +26,3 @@ needs two complete days of this month before today
 run too close to the restaurant's local midnight
 # The default database path is absolute in some environments.
 default DB_PATH is absolute in this environment
-# The Studio's concurrent-save race (A02-04, WS5 restages it so it no
-# longer skips; remove this line when that lands).
-the race window was not staged

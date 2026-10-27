@@ -632,6 +632,12 @@ class Restaurant:
     two_fa_pending: str             = None
     two_fa_method: str              = "email"  # "email" or "sms" — which channel a verification code goes to; set once setup verifies, not at send-test time
     timezone: str                   = "America/Chicago"  # IANA name; all per-restaurant "today"/trend math uses this
+    # When somebody set or confirmed that zone (UTC): any write of `timezone`
+    # through update_restaurant stamps it — the owner's or an admin's
+    # settings, a create with a zone given, the POS's own at connect. NULL is
+    # the column's Chicago default nobody chose; data_health.timezone_problem
+    # flags it (blind re-audit 10/26/26 B2).
+    timezone_confirmed_at: Optional[str] = None
     onboarding_dismissed: int       = 0
     internal_notes: Optional[str]   = None
     service_tier: str               = "trial"   # trial / starter_reviews / starter_labor / starter_inventory / starter_marketing / full
@@ -1705,6 +1711,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "weather_cached_at", "TEXT"),
         ("restaurants", "weather_hourly_json", "TEXT"),
         ("restaurants", "geocode_failed_at", "TEXT"),
+        ("restaurants", "timezone_confirmed_at", "TEXT"),
         # Morning brief (audit #18): on by default — it is the owner's own
         # phone, and a brief that has to be discovered in settings is a brief
         # nobody gets. Hour is restaurant-local.
@@ -6100,7 +6107,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "brand_name","brand_color","brand_logo_url",
         "section_count","foh_sections_json","daypart_split","daypart_boundary","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at","weather_hourly_json",
-        "geocode_failed_at", "aivis_city_json",
+        "geocode_failed_at", "aivis_city_json", "timezone_confirmed_at",
         "alert_hold_during_service", "preshift_nudge_hour",
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
         "auto_draft_schedule", "external_scheduling_tool", "auto_draft_weekday", "auto_order_weekday",
@@ -6114,6 +6121,11 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         fields["monthly_revenue_target"] = monthly_from_weekly(fields.pop("weekly_revenue_target"))
     updates = {k: v for k, v in fields.items() if k in allowed}
     _check_bar_targets(updates)
+    if "timezone" in updates and "timezone_confirmed_at" not in updates:
+        # Any write of the zone is somebody setting it (the dataclass and the
+        # column default Chicago, which nobody chose): data_health stops
+        # flagging it (blind re-audit 10/26/26 B2).
+        updates["timezone_confirmed_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     if "auto_draft_weekday" in updates and "auto_draft_weekday_chosen" not in updates:
         # Any write of the draft day is a choice — the owner's picker, an
         # undo, an admin's edit — and is never replaced by the spread
@@ -7300,6 +7312,7 @@ def _restaurant_from_row(row) -> Restaurant:
         weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
         weather_hourly_json=row["weather_hourly_json"] if "weather_hourly_json" in row.keys() else None,
         geocode_failed_at=row["geocode_failed_at"]     if "geocode_failed_at" in row.keys() else None,
+        timezone_confirmed_at=row["timezone_confirmed_at"] if "timezone_confirmed_at" in row.keys() else None,
         aivis_city_json=row["aivis_city_json"]         if "aivis_city_json" in row.keys() else None,
         preshift_nudge_hour=(row["preshift_nudge_hour"] if "preshift_nudge_hour" in row.keys()
                              and row["preshift_nudge_hour"] is not None else 0),
@@ -9615,6 +9628,7 @@ _INPUT_STAMPS = (
 # demand reads it.
 _INPUTS_VOLATILE = frozenset({
     "last_fetched_at", "weather_cached_at", "geocode_failed_at", "aivis_city_json", "inventory_updated_at",
+    "timezone_confirmed_at",
     "competitor_updated_at", "competitor_intel", "ig_token", "ig_token_expires", "fb_token_expires", "fb_page_token",
     "web_analytics_synced_at", "gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_revoked_at",
     "toast_access_token", "toast_token_expires", "toast_last_synced", "square_access_token", "square_last_synced",

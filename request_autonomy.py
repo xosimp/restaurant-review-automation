@@ -281,8 +281,10 @@ def judge(restaurant_id, req, now=None, db_path=DB_PATH) -> dict:
             out["refusals"].append("that shift is no longer on the week")
             return out
         warn, _k = _srq.drop_warning(restaurant_id, req, db_path, rows=rows, constraints=c)
-        if warn:
-            out["refusals"].append(warn)
+        if warn or _k:
+            # A breach, or rules that could not be read (DROP_UNCHECKED):
+            # either way a manager decides it, never the automatic approval.
+            out["refusals"].append(warn or "the week's rules couldn't be checked")
             return out
         out["reasons"].append("the manager on the floor, the closers and every floor stay as they are")
         after = rows[:idx] + rows[idx + 1:]

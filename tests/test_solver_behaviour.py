@@ -221,6 +221,50 @@ def test_a_solve_the_wall_clock_ended_is_reported_whatever_its_deterministic_tim
     assert rt._wall_capped(clock_budget, cp.FEASIBLE) is False
 
 
+def test_a_memory_cut_is_reported_as_memory_only_never_as_a_clock_cut_too():
+    """Blind re-audit 10/26/26 (B2/B8): a solver process the system killed
+    answers UNKNOWN with no work done (det 0, wall 0), and the in-process
+    memory bound stops a solve with its work under budget — "work under
+    budget" read both as wall-clock cuts too, so every memory cut counted
+    twice (wall: and memory:) and the review said the server was busy."""
+    import schedule_cpsat_runtime as rt
+    from ortools.sat.python import cp_model as cp
+    killed = _answered(cp.UNKNOWN, wall=0.0, det=0.0, cap=8.0, budget=2.0)
+    killed.sp_info = {"isolated": True, "killed": True, "memory_capped": True, "fallback": False}
+    assert rt._wall_capped(killed, cp.UNKNOWN) is False
+    bound = _answered(cp.FEASIBLE, wall=1.1, det=0.7, cap=8.0, budget=2.0)
+    bound.sp_info = {"isolated": False, "memory_capped": True, "fallback": False}
+    assert rt._wall_capped(bound, cp.FEASIBLE) is False
+    # The same figures with memory not implicated: work under budget is the
+    # clock's cut, as before (the loaded-box integration fix stands).
+    clock = _answered(cp.FEASIBLE, wall=1.1, det=0.7, cap=8.0, budget=2.0)
+    clock.sp_info = {"isolated": False, "memory_capped": False, "fallback": False}
+    assert rt._wall_capped(clock, cp.FEASIBLE) is True
+
+
+def test_a_killed_solver_process_reads_as_a_memory_cut(monkeypatch):
+    """run() on a solver process the system killed: memory_capped, killed,
+    and not a wall cut — the solve's own stats then say memory alone."""
+    import schedule_cpsat_runtime as rt
+    from ortools.sat.python import cp_model as cp
+    m = cp.CpModel()
+    xs = [m.NewBoolVar(f"x{i}") for i in range(4)]
+    m.Add(sum(xs) >= 1)
+    s = cp.CpSolver()
+    s.parameters.max_deterministic_time = 2.0
+    s.parameters.max_time_in_seconds = 8.0
+    monkeypatch.setattr(rt, "isolation", lambda: "process")
+    monkeypatch.setattr(rt, "ISOLATE_MIN_VARS", 1)
+
+    def killed(solver, model):
+        solver.sp_info = {"isolated": True, "killed": True, "limit_mb": 600, "note": "killed (signal 9)"}
+        return None
+    monkeypatch.setattr(rt, "_run_in_process", killed)
+    st = rt.run(s, m)
+    assert st == cp.UNKNOWN and s.sp_info["memory_capped"] is True
+    assert rt._wall_capped(s, st) is False
+
+
 def test_a_draft_the_wall_clock_cuts_says_so_in_its_stats():
     """wall_cap 0.3 s on the (30,3) synthetic restaurant: Stage 1 alone needs
     seconds, so the clock ends it on any box — and the draft must say so

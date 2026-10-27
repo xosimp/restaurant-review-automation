@@ -110,7 +110,11 @@ def _open(rid, name, date, start, today=TODAY):
 
 
 def _racing_legality(monkeypatch):
+    """The two claims' legality checks meet before either writes; the
+    barrier's `reached` counts the checks that met it (a stage nothing
+    reached fails the test, never skips it — blind re-audit 10/26/26 B2)."""
     barrier = threading.Barrier(2)
+    barrier.reached = 0
     real = se.replacement_is_legal
     calls = []
     lock = threading.Lock()
@@ -124,6 +128,8 @@ def _racing_legality(monkeypatch):
             calls.append(1)
             first = len(calls) <= 2
         if first:
+            with lock:
+                barrier.reached += 1
             try:
                 barrier.wait(timeout=30)
             except threading.BrokenBarrierError:
@@ -158,8 +164,7 @@ def test_two_people_claiming_the_same_open_shift_at_once_gives_one_success(db, m
     req = _open(rid, "Ana", W1[2], "11:00am")
     barrier = _racing_legality(monkeypatch)
     results = _claim_in_threads([("Cara", rid, req["id"], "Cara"), ("Dev", rid, req["id"], "Dev")])
-    if barrier.broken:
-        pytest.skip("the race window was not staged (a thread missed the barrier under load)")
+    assert not barrier.broken and barrier.reached == 2, "the race was not staged"
     assert sorted(v == "covered" for v in results.values()) == [False, True], results
 
 
@@ -169,8 +174,7 @@ def test_two_claims_of_different_open_shifts_both_persist(db, monkeypatch):
     r1, r2 = _open(rid, "Ana", W1[1], "11:00am"), _open(rid, "Ben", W1[1], "5:00pm")
     barrier = _racing_legality(monkeypatch)
     results = _claim_in_threads([("A", rid, r1["id"], "Cara"), ("B", rid, r2["id"], "Dev")])
-    if barrier.broken:
-        pytest.skip("the race window was not staged (a thread missed the barrier under load)")
+    assert not barrier.broken and barrier.reached == 2, "the race was not staged"
     assert set(results.values()) == {"covered"}, results
     tuesday = {(r["shift_start"], r["employee"]) for r in _csv_rows(db, hid) if r["date"] == W1[1]}
     assert tuesday == {("11:00am", "Cara"), ("5:00pm", "Dev")}

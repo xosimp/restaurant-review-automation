@@ -380,8 +380,18 @@ def _wall_capped(solver, status) -> bool:
     "deterministic time under 95% of the budget" test never fired and a
     clock-cut week was recorded as an ordinary deterministic one (release-
     safety audit 10/26/26 A02-01). A budget-ended solve that took 95% of a
-    cap 4x its budget is reported too: the box was that close to cutting it."""
+    cap 4x its budget is reported too: the box was that close to cutting it.
+
+    A solve the memory bound ended, or whose solver process the system
+    killed (`sp_info` memory_capped / killed — run()), is a memory cut and
+    only that: it is never also counted as a clock cut (blind re-audit
+    10/26/26 B2/B8 — a killed child reads det 0, so "work under budget" called
+    every memory kill a wall cut too, and the owner read "the server was
+    busy" for an out-of-memory solve)."""
     if _cp is None or status in (_cp.OPTIMAL, _cp.INFEASIBLE, _cp.MODEL_INVALID):
+        return False
+    info = getattr(solver, "sp_info", None) or {}
+    if info.get("memory_capped") or info.get("killed"):
         return False
     try:
         budget = float(solver.parameters.max_deterministic_time or 0)

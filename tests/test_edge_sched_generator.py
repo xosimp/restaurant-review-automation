@@ -393,17 +393,19 @@ def test_two_generate_presses_at_the_same_moment_start_one_job(db, monkeypatch):
     app = _mobile_app(db)
     headers = _bearer(db, rid)
     monkeypatch.setattr(se, "_run_schedule_job", lambda *a, **k: None)
+    # Staged at the one write that makes it single-flight (ops.claim_async_job,
+    # SCHED-25): both presses reach it together, past every check before it.
+    # The barrier used to sit on ops.active_job, which this path no longer
+    # calls — 0 waits, a race never staged (blind re-audit 10/26/26 B2).
     barrier = threading.Barrier(2)
-    real_active = ops.active_job
+    reached = []
+    real_claim = ops.claim_async_job
 
-    def racing_active(*a, **k):
-        got = real_active(*a, **k)
-        try:
-            barrier.wait(timeout=30)
-        except threading.BrokenBarrierError:
-            pass
-        return got
-    monkeypatch.setattr(ops, "active_job", racing_active)
+    def racing_claim(*a, **k):
+        reached.append(1)
+        barrier.wait(timeout=30)
+        return real_claim(*a, **k)
+    monkeypatch.setattr(ops, "claim_async_job", racing_claim)
     results = []
 
     def press():
@@ -411,8 +413,7 @@ def test_two_generate_presses_at_the_same_moment_start_one_job(db, monkeypatch):
     threads = [threading.Thread(target=press) for _ in range(2)]
     [t.start() for t in threads]
     [t.join(60) for t in threads]
-    if barrier.broken:
-        pytest.skip("the race window was not staged (a thread missed the barrier under load)")
+    assert not barrier.broken and len(reached) == 2, "the race was not staged"
     conn = models.get_conn(db)
     jobs = conn.execute("SELECT COUNT(*) FROM async_jobs WHERE restaurant_id=? AND kind='schedule'", (rid,)).fetchone()[0]
     conn.close()

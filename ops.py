@@ -950,17 +950,24 @@ def period_claimed(job: str, period: str) -> bool:
         return _claims_fail_closed(e)
 
 
-def release_period(job: str, period: str) -> None:
+def release_period(job: str, period: str, stamp: str = None) -> None:
     """Give back a claim_period claim, so the next tick can try the work
     again. For jobs that claim BEFORE working (so two ticks cannot run it at
-    once) but must not lose the period when the work then fails."""
+    once) but must not lose the period when the work then fails. With
+    `stamp` (claimed_at exactly as the claimer read it) only that claim is
+    given back: a claim another run has since taken over is left standing
+    (blind re-audit 10/26/26 B2 — a slow run's release deleted its taker's
+    claim, and a third run could start beside the taker)."""
     key = f"{job}:{period}"
     _claim_fallback.discard(key)
     try:
         from models import get_conn
         conn = get_conn()
         try:
-            conn.execute("DELETE FROM job_period_claims WHERE job_key=?", (key,))
+            if stamp is None:
+                conn.execute("DELETE FROM job_period_claims WHERE job_key=?", (key,))
+            else:
+                conn.execute("DELETE FROM job_period_claims WHERE job_key=? AND claimed_at=?", (key, stamp))
             conn.commit()
         finally:
             conn.close()
@@ -2490,8 +2497,9 @@ def _dsr_missing_pages(missing, db_path=None) -> bool:
     except Exception as e:
         log.warning(f"DSR fleet count unavailable: {e}")
         return True
-    fleet = len(seen | {int(m.get("restaurant_id") or 0) for m in missing})
-    return len(missing) > DSR_MISSING_PAGE_SHARE * fleet
+    stores = {int(m.get("restaurant_id") or 0) for m in missing}       # a store with three nights is one store
+    fleet = len(seen | stores)
+    return len(stores) > DSR_MISSING_PAGE_SHARE * fleet
 
 
 def _dsr_missing(db_path=None):
@@ -2774,15 +2782,20 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     if out["dsr_missing"] and _dsr_missing_pages(out["dsr_missing"], db_path):
         out["dsr_missing_paged"] = True
         warn_kinds.add("dsr_missing")
-        names = ", ".join(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"][:4])
+        # One line per store, however many of its nights (the list carries
+        # every night not final in the lookback — blind re-audit 10/26/26 B2).
+        stores = list(dict.fromkeys(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"]))
+        names = ", ".join(stores[:4])
+        n_nights, n_stores = len(out["dsr_missing"]), len(stores)
         # A night still provisional (it went out without its sales and never
         # became final — Audit #23 A6-20) is said as such, apart from a
         # missing one (Audit #25 A07-11: the line read "missing" for both).
         prov = sum(1 for m in out["dsr_missing"] if m.get("status") == "provisional")
-        split = (f" ({len(out['dsr_missing']) - prov} missing, {prov} still provisional — sent without its sales "
+        split = (f" ({n_nights - prov} missing, {prov} still provisional — sent without its sales "
                  "and never final)") if prov else ""
-        problems.append(f"Daily Sales Report missing past its deadline for {len(out['dsr_missing'])} "
-                        f"restaurant{'s' if len(out['dsr_missing']) != 1 else ''}{split}: {names}.")
+        problems.append(f"Daily Sales Report missing past its deadline for {n_stores} "
+                        f"restaurant{'s' if n_stores != 1 else ''}"
+                        + (f" ({n_nights} nights)" if n_nights != n_stores else "") + f"{split}: {names}.")
     if out["messaging"]:
         warn_kinds.add("messaging")
     problems.extend(f"Messaging: {m}" for m in out["messaging"])

@@ -199,6 +199,12 @@ def create_client(current_user):
             location_name=(data.get("location_name") or "").strip() or None,
             timezone=timezone,
         ))
+        if (data.get("timezone") or "").strip():
+            # The zone the admin chose, stamped as chosen (update_restaurant):
+            # the Chicago default nobody chose is what Data Health flags
+            # (blind re-audit 10/26/26 B2).
+            from models import update_restaurant as _upd_tz
+            _upd_tz(rid, {"timezone": timezone})
         try:
             create_user(
                 restaurant_id=rid,

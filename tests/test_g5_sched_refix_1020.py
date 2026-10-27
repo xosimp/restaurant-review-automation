@@ -338,7 +338,8 @@ def test_a_named_cover_is_put_on_the_gap_and_an_owner_covering_themselves_is_not
          "cover_candidates": ["Maria Lopez", "Gm"]}
     review = {"blockers": [b, {"key": "rule:rest_gap:x", "date": "2026-11-03"}]}
     specs = sp.cover_specs(review, {b["key"]: {"covered_by": "maria  lopez"}})
-    assert specs == [{"date": "2026-11-03", "start": 960, "end": 1080, "name": "Maria Lopez"}]
+    assert specs == [{"date": "2026-11-03", "start": 960, "end": 1080, "name": "Maria Lopez",
+                      "candidates": ["Maria Lopez", "Gm"]}]
     assert sp.cover_specs(review, {b["key"]: {"covered_by": "me"}}) == []
     rows = [{"date": "2026-11-02", "employee": "Maria Lopez", "role": "Floor Manager", "shift_start": "9:00am",
              "shift_end": "5:00pm"},

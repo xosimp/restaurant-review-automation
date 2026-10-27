@@ -510,7 +510,7 @@ JOBS = {
     "open_shift_watch": dict(
         cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
         label="Open shifts",
-        description="Expire shift requests whose shift has passed; follow the week they are about; tell deciders about open shifts still unclaimed 12 hours before they start; put approved availability changes in force on their date",
+        description="Expire shift requests whose shift has passed; follow the week they are about; tell deciders about open shifts still unclaimed 12 hours before they start; put approved availability changes in force on their date; tell the managers of any stretch today or tomorrow on a published week with no manager on (the manager rule's backstop, once per stretch)",
         target=("shift_requests", "run_open_shift_watch"), max_minutes=15),
     "auto_draft_schedule": dict(
         cadence="hourly (6am local on each restaurant's draft day)", sla_minutes=_H, sends=True, runnable=True,
