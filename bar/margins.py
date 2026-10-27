@@ -205,25 +205,32 @@ def glasses_per_bottomless(restaurant_id, item_name, db_path=None, days=90):
 
 
 def bucket_size(restaurant_id, db_path=None, days=90):
-    """How many beers a bucket is at this restaurant: the beers rung as
-    "<beer>`Bucket" lines over the bucket price lines' quantity, rounded, in
-    the last `days` of the POS archive; None when it can't be read (no
-    buckets rung, or a count outside 2-12)."""
+    """How many beers a bucket is at this restaurant: per check, the beers
+    rung as "<beer>`Bucket" lines over its bucket price lines' quantity; the
+    most common whole count across checks (a check whose beers rang without
+    the `Bucket mark reads 0 or 1 and an average dragged EJ's 5 to 4 - owner,
+    10/27/26), the larger on a tie. None when it can't be read (no bucket
+    rung with its beers, or a count outside 2-12)."""
     from datetime import date, timedelta
     since = (date.today() - timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
     try:
-        row = conn.execute(
-            "SELECT SUM(CASE WHEN item_name LIKE ? THEN qty ELSE 0 END), "
+        rows = conn.execute(
+            "SELECT ticket_id, SUM(CASE WHEN item_name LIKE ? THEN qty ELSE 0 END), "
             "SUM(CASE WHEN item_name NOT LIKE ? AND LOWER(item_name) LIKE ? THEN qty ELSE 0 END) "
-            "FROM pos_ticket_lines WHERE restaurant_id=? AND business_date>=? AND kind='sale'",
-            ("%`Bucket", "%`%", "%bucket%", int(restaurant_id), since)).fetchone()
+            "FROM pos_ticket_lines WHERE restaurant_id=? AND business_date>=? AND kind='sale' "
+            "GROUP BY ticket_id", ("%`Bucket", "%`%", "%bucket%", int(restaurant_id), since)).fetchall()
     finally:
         conn.close()
-    beers, buckets = (float(row[0] or 0), float(row[1] or 0)) if row else (0.0, 0.0)
-    if buckets <= 0:
+    counts = {}
+    for _t, beers, buckets in rows:
+        beers, buckets = float(beers or 0), float(buckets or 0)
+        if buckets > 0 and beers >= 2 * buckets:
+            n = round(beers / buckets)
+            counts[n] = counts.get(n, 0) + 1
+    if not counts:
         return None
-    n = round(beers / buckets)
+    n = max(counts, key=lambda k: (counts[k], k))
     return n if 2 <= n <= 12 else None
 
 
