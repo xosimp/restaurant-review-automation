@@ -1265,13 +1265,13 @@ def _claim_notices(chunk, db_path=None) -> dict:
         conn.execute(f"UPDATE schedule_notices SET status='sending', claimed_at=?, attempts=attempts+1 "
                      f"WHERE id IN ({marks}) AND {_due_sql('schedule_notices')}",
                      [token] + ids + [_utc(now), _utc(now - _td(minutes=NOTICE_LEASE_MINUTES))])
-        got = conn.execute(f"SELECT id, employee_name, send_started_at FROM schedule_notices "
+        got = conn.execute(f"SELECT id, restaurant_id, employee_name, send_started_at FROM schedule_notices "
                            f"WHERE id IN ({marks}) AND status='sending' AND claimed_at=?", ids + [token]).fetchall()
         started = [r for r in got if r["send_started_at"]]
         if started:
             conn.executemany("UPDATE schedule_notices SET status='failed', last_error=?, next_attempt_at=NULL, "
-                             "claimed_at=NULL WHERE id=? AND status='sending' AND claimed_at=?",
-                             [(INTERRUPTED_SEND_LINE, int(r["id"]), token) for r in started])
+                             "claimed_at=NULL WHERE id=? AND restaurant_id=? AND status='sending' AND claimed_at=?",
+                             [(INTERRUPTED_SEND_LINE, int(r["id"]), int(r["restaurant_id"]), token) for r in started])
         conn.commit()
     finally:
         conn.close()
@@ -1317,7 +1317,7 @@ def _deliver_claimed(n, ctx, out, base_url, db_path=None, token=None) -> None:
         except Exception as e:
             _ops.capture(e, job="schedule_publish_reach", context=f"restaurant_id={n['restaurant_id']}")
             c["reach"][n["employee_name"]] = {"push_user_id": None, "sms": None, "email": None}
-    if not _stamp_send_started(n["id"], token, db_path):
+    if not _stamp_send_started(n["restaurant_id"], n["id"], token, db_path):
         # Another deliverer holds the notice now (this claim's lease ran
         # out): it is theirs to send, never a second copy from here.
         out["attempted"] -= 1
@@ -1335,7 +1335,7 @@ def _deliver_claimed(n, ctx, out, base_url, db_path=None, token=None) -> None:
     out[status].append(item)
 
 
-def _stamp_send_started(notice_id, token, db_path=None) -> bool:
+def _stamp_send_started(restaurant_id, notice_id, token, db_path=None) -> bool:
     """Mark a claimed notice's send as started, over this deliverer's own
     claim (`token`), before the provider is called: whatever happens to this
     process after, the notice is never sent a second time by a pass that
@@ -1346,8 +1346,9 @@ def _stamp_send_started(notice_id, token, db_path=None) -> bool:
         return True
     conn = get_conn(db_path)
     try:
-        n = conn.execute("UPDATE schedule_notices SET send_started_at=? WHERE id=? AND status='sending' "
-                         "AND claimed_at=?", (_utc(), int(notice_id), token)).rowcount
+        n = conn.execute("UPDATE schedule_notices SET send_started_at=? WHERE id=? AND restaurant_id=? "
+                         "AND status='sending' AND claimed_at=?",
+                         (_utc(), int(notice_id), int(restaurant_id), token)).rowcount
         conn.commit()
     finally:
         conn.close()

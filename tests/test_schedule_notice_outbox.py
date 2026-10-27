@@ -165,8 +165,9 @@ def test_a_deliverer_whose_claim_was_taken_over_sends_nothing(outbox):
     _set(rid, claimed_at=LONG_AGO)                               # its lease ran out; another pass takes it
     second = sp._claim_notices([{"id": nid}])
     assert list(second) == [nid] and second[nid] != first[nid]
-    assert sp._stamp_send_started(nid, first[nid]) is False     # the slow one may not send
-    assert sp._stamp_send_started(nid, second[nid]) is True
+    assert sp._stamp_send_started(rid, nid, first[nid]) is False     # the slow one may not send
+    assert sp._stamp_send_started(rid, nid, second[nid]) is True
+    assert sp._stamp_send_started(rid + 1, nid, second[nid]) is False   # never another restaurant's row
 
 
 def test_a_database_made_before_the_send_stamp_gets_its_columns_at_boot(tmp_path):
