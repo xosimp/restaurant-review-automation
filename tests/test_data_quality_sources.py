@@ -159,10 +159,26 @@ def test_the_boot_backfill_rewrites_missing_sales_zeros_once_and_leaves_pos_evid
     assert models.backfill_missing_sales_null(db_path=db_path) == 0     # idempotent
 
 
-def test_the_backfill_runs_at_boot():
-    import inspect
-    src = inspect.getsource(models.init_db)
-    assert "backfill_missing_sales_null(db_path=db_path)" in src
+def test_the_backfill_runs_at_boot(db_path):
+    """Once per database since the release-safety round (10/26/26 A05-08):
+    a boot that has not recorded it rewrites the legacy $0 day; one that has
+    leaves a day written since alone."""
+    import contextlib
+    import io
+    import sqlite3
+    rid = _rid(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, sales, labor_cost, labor_pct) "
+                 "VALUES (?, '2026-01-05', 0, 400, 0)", (rid,))
+    conn.execute("DELETE FROM data_migrations WHERE name='missing_sales_null_ca3_f3'")
+    conn.commit()
+    conn.close()
+    with contextlib.redirect_stdout(io.StringIO()):
+        models.init_db(db_path)
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("SELECT sales FROM labor_daily_history WHERE restaurant_id=?", (rid,)).fetchone()[0] is None
+    assert conn.execute("SELECT 1 FROM data_migrations WHERE name='missing_sales_null_ca3_f3'").fetchone()
+    conn.close()
 
 
 # ── G2 / CA3 F12: labor_pct_28d is sales-weighted; reviews_30d None w/o source ─
