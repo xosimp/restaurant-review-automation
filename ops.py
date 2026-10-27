@@ -2920,17 +2920,25 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         f"{rq['latency_minutes']} minutes (SLO {rq['p95_slo_ms']} ms, {rq['latency_requests']} "
                         "requests) — the slow routes are in the console's request rollups.")
     # The iPhone app failing to read the server's answers (client_compat,
-    # release-safety audit #25 A06-04): past CLIENT_DECODE_ALERT_DEVICES
-    # distinct devices in an hour, a response changed shape under a shipped
-    # build. A warning keyed on the routes, so a new route breaking pages again.
+    # release-safety audit #25 A06-04): past CLIENT_DECODE_ALERT_USERS
+    # distinct SIGNED-IN users in an hour, a response changed shape under a
+    # shipped build. One fixed warning kind, never keyed on the reported
+    # routes (the client's words): a new route string used to be a new page
+    # key past the cooldown (blind re-audit 10/27/26). A MOBILE_MIN_BUILD
+    # above every installed build is re-checked here and named until fixed.
     out["client_decode"] = None
     try:
         import client_compat as _cc_sla
         out["client_decode"] = _cc_sla.decode_failure_surge(db_path=db_path)
         decode_line = _cc_sla.surge_problem(out["client_decode"])
         if decode_line:
-            warn_kinds.add("client_decode:" + ",".join(r["route"] for r in out["client_decode"]["routes"][:4]))
+            warn_kinds.add("client_decode")
             problems.append(decode_line)
+        _cc_sla.check_min_build(db_path=db_path)
+        min_line = _cc_sla.min_build_problem()
+        if min_line:
+            warn_kinds.add("mobile_min_build")
+            problems.append(min_line)
     except Exception as e:
         log.warning(f"client decode reports unavailable to the platform check: {e}")
     # The fleet's POS (scale audit 10/19/26 OPS-6): a provider failing for
@@ -2977,6 +2985,9 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     except Exception as e:
         log.warning(f"the fleet POS reading unavailable to the platform check: {e}")
     out["problems"] = problems
+    # What a warning page would be keyed on (the set of kinds, never a
+    # reported string — blind re-audit 10/27/26), read by the console and tests.
+    out["warn_kinds"] = sorted(warn_kinds)
     if not problems or not send:
         return out
     try:

@@ -86,6 +86,30 @@ def test_reads_send_the_token_as_cookie_and_bearer():
     assert ok and seen == {"cookie": "session_token=tok", "auth": "Bearer tok"}
 
 
+def test_the_mobile_read_names_an_app_build_so_a_cutoff_never_fails_the_smoke():
+    """Once MOBILE_HEADERLESS_CUTOFF is set, a headerless /mobile/api/me is
+    426: the smoke would fail every deploy and say "roll back" (blind
+    re-audit 10/27/26). It names itself as a build above any minimum."""
+    from datetime import date
+
+    import client_compat as cc
+    env = {"MOBILE_HEADERLESS_CUTOFF": "2000-01-01", "MOBILE_MIN_BUILD": "5000"}
+
+    def mobile(h):
+        if cc.update_refusal("/mobile/api/me", "GET", h, today=date(2026, 11, 2), environ=env):
+            return 426, {"Content-Type": "application/json"}, b'{"ok": false, "update_required": true}'
+        return 200, {"Content-Type": "application/json"}, b'{"ok": true}'
+
+    web = (200, {"Content-Type": "application/json"}, b"{}")
+    ok, detail = smoke.check_reads(_fake({"/api/home/brief": web, "/mobile/api/me": mobile}), "tok")
+    assert ok, detail
+    # ...and a headerless read really is refused under that setting.
+    assert mobile({"Authorization": "Bearer tok"})[0] == 426
+    # The smoke's build is never kept as an installed one.
+    app = cc.from_headers(smoke.SMOKE_APP_HEADERS)
+    assert app is not None and app.is_smoke and app.build > 5000
+
+
 SCRIPT = r'''
 import json, os, sqlite3, sys
 vol, sha = sys.argv[1], sys.argv[2]

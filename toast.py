@@ -1424,6 +1424,10 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
     employees, shifts, skipped, failed, error}."""
     if not schedule_write_enabled():
         return {"ok": False, "external": True, "error": SCHEDULE_WRITE_EXTERNAL, "skipped": []}
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # A live store's schedule, never from staging (blind re-audit 10/27/26).
+        return {"ok": False, "skipped": [], "error": _config_gate.refused_send("toast_schedule")}
     from models import get_restaurant
     body, skipped = _schedule_body(restaurant_id, shifts)
     if not body:

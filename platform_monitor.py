@@ -1427,9 +1427,22 @@ def system_report(db_path=None) -> dict:
         import client_compat
         report["mobile_clients"] = {"installed": client_compat.installed_builds(db_path),
                                     "decode_failures_24h": client_compat.decode_failure_surge(hours=24,
-                                                                                               db_path=db_path)}
+                                                                                               db_path=db_path),
+                                    # Compatibility telemetry (blind re-audit 10/27/26): reports per build
+                                    # over a week, beside the header/headerless split in `installed`.
+                                    "decode_by_build_7d": client_compat.decode_reports_by_build(db_path=db_path)}
     except Exception as e:
         report["mobile_clients"] = {"error": str(e)[:120]}
+    # Which deployment this is, and the sends its gate refused in this
+    # process (config.refused_send — blind re-audit 10/27/26).
+    try:
+        import config as _config_env
+        report["deployment"] = {"env": _config_env.deploy_env(), "problem": _config_env.environment_problem(),
+                                "outbound_sends_allowed": _config_env.outbound_sends_allowed(),
+                                "sends_refused": _config_env.refused_sends(),
+                                "stripe_api_version": (os.getenv("STRIPE_API_VERSION") or "").strip() or None}
+    except Exception as e:
+        report["deployment"] = {"error": str(e)[:120]}
     report["warnings"] = system_warnings(report)
     return report
 
@@ -1471,7 +1484,23 @@ def system_warnings(report) -> list:
     db = report.get("database") or {}
     if isinstance(db.get("write"), dict) and db["write"].get("state") == "failed":
         w.append("The database cannot take a write.")
+    dep = report.get("deployment") or {}
+    if dep.get("problem") == "env_not_production":
+        w.append(f"This deployment's environment is {dep.get('env')!r}, not production, and CAVNAR_ENV is unset: "
+                 "the scheduler stands down and every send is refused. Set CAVNAR_ENV=production (or rename the "
+                 "environment) if this is production; CAVNAR_ENV=staging if it is staging.")
+    refused = dep.get("sends_refused") or {}
+    if refused and dep.get("outbound_sends_allowed") is False:
+        n = sum(int(v.get("count") or 0) for v in refused.values())
+        w.append(f"{n} send{'s were' if n != 1 else ' was'} refused by the environment gate in this process "
+                 f"({', '.join(sorted(refused))}) — right for staging, an outage for production.")
+    if os.getenv("STRIPE_SECRET_KEY") and not dep.get("stripe_api_version") and "error" not in dep:
+        w.append("STRIPE_API_VERSION is not set: every Stripe call follows the SDK's own API version, which a "
+                 "stripe bump in the lock changes silently. Set it to the account's version (Stripe dashboard → "
+                 "Developers → API version).")
     installed = (report.get("mobile_clients") or {}).get("installed") or {}
+    if installed.get("min_build_problem"):
+        w.append(installed["min_build_problem"])
     if installed.get("below_minimum"):
         n = installed["below_minimum"]
         w.append(f"{n} signed-in iPhone app session{'s run' if n != 1 else ' runs'} a build below "

@@ -14,6 +14,7 @@ and DocuSign secrets, ADMIN_USERNAME, …); this is for the shared ones.
 """
 import logging
 import os
+import threading
 
 DEFAULT_BASE_URL = "https://dashboard.cavnar.ai"
 DEFAULT_SENDER = "will@cavnar.ai"
@@ -187,6 +188,73 @@ def sends_refused_reason() -> str:
             "(CAVNAR_ENV / RAILWAY_ENVIRONMENT_NAME is not production; ALLOW_NONPROD_SENDS=1 overrides)")
 
 
+# Every send the gate refused in this process, by channel: {channel: {count,
+# first_at, last_at}} (blind re-audit 10/27/26). A refused send used to leave
+# no trace at all — no ledger row, no log — so a production whose
+# environment name was not exactly "production" went silent with nothing to
+# show for it. /health and the console read `refused_sends()`.
+_REFUSED_SENDS = {}
+_REFUSED_LOCK = threading.Lock()
+
+
+def refused_send(channel) -> str:
+    """Records one send refused by the environment gate on `channel`
+    ("email", "sms", "push", "rpower_schedule", "meta_post" …) — a counter,
+    and a warning in the log on the first refusal per channel and every
+    hundredth after — and returns sends_refused_reason() for the caller's
+    answer. Every refusing send point calls this, never the reason alone."""
+    from datetime import datetime as _dt, timezone as _tz
+    channel = str(channel or "send")[:40]
+    now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+    with _REFUSED_LOCK:
+        row = _REFUSED_SENDS.setdefault(channel, {"count": 0, "first_at": now, "last_at": now})
+        row["count"] += 1
+        row["last_at"] = now
+        n = row["count"]
+    reason = sends_refused_reason()
+    if n == 1 or n % 100 == 0:
+        logging.getLogger("config").warning("send refused (%s, %d in this process): %s", channel, n, reason)
+    return reason
+
+
+def refused_sends() -> dict:
+    """{channel: {count, first_at, last_at}} for this process (a copy)."""
+    with _REFUSED_LOCK:
+        return {k: dict(v) for k, v in _REFUSED_SENDS.items()}
+
+
+def environment_problem() -> str:
+    """"" when this deployment's name is as meant; else the /health problem
+    code: "env_not_production" — on Railway, an environment that is not
+    named production while CAVNAR_ENV does not say so on purpose. Its
+    scheduler stands down and every send is refused, which is right for a
+    staging (set CAVNAR_ENV=staging there to say so) and a silent outage
+    for a production renamed or mistyped (blind re-audit 10/27/26)."""
+    if not railway_marked() or (os.getenv("CAVNAR_ENV") or "").strip():
+        return ""
+    return "" if deploy_env() == "production" else "env_not_production"
+
+
+def report_environment_at_boot(logger=None) -> dict:
+    """Logs which deployment this is and what it may do — deploy_env(),
+    scheduling_allowed(), outbound_sends_allowed() — once, at boot
+    (hosted_dashboard, worker.py), as an ERROR when environment_problem()
+    has one. Returns what it logged."""
+    logger = logger or logging.getLogger("config")
+    state = {"env": deploy_env(), "scheduling_allowed": scheduling_allowed(),
+             "outbound_sends_allowed": outbound_sends_allowed(), "problem": environment_problem()}
+    if state["problem"]:
+        logger.error("DEPLOYMENT ENVIRONMENT: Railway names this environment %r and CAVNAR_ENV is unset, so it is "
+                     "NOT production: the scheduler stands down and every email, text, push, POS write and post "
+                     "is refused. If this is production, rename the environment to production or set "
+                     "CAVNAR_ENV=production; if it is staging, set CAVNAR_ENV=staging to say so.", state["env"])
+    else:
+        logger.warning("deployment environment %r: scheduling %s, outbound sends %s", state["env"],
+                       "allowed" if state["scheduling_allowed"] else "off",
+                       "allowed" if state["outbound_sends_allowed"] else "off")
+    return state
+
+
 def build_sha() -> str:
     """The commit this process runs, as Railway (RAILWAY_GIT_COMMIT_SHA) or
     an emergency deploy (GIT_COMMIT) names it; "" when neither does."""
@@ -292,7 +360,7 @@ def stripe_api(key=None):
     # any environment.
     if not outbound_sends_allowed() and str(stripe.api_key or "").startswith(("sk_live_", "rk_live_")):
         stripe.api_key = ""
-        raise RuntimeError("Stripe: a live key is refused here — " + sends_refused_reason())
+        raise RuntimeError("Stripe: a live key is refused here — " + refused_send("stripe"))
     if not getattr(stripe, "_cavnar_bounded", False):
         http_client = getattr(stripe, "http_client", None)
         client_cls = getattr(stripe, "RequestsClient", None) or getattr(http_client, "RequestsClient", None)

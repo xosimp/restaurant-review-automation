@@ -5096,6 +5096,12 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
     import demo_store
     if demo_store.is_simulated(restaurant_id):
         return {"ok": False, "error": "This is a demo store: a schedule is never pushed to a POS from it."}
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # A live store's schedule, never from staging or a restore drill,
+        # whatever queued pos_schedule_push rows the copy carried (blind
+        # re-audit 10/27/26; A05-06). Nothing was sent.
+        return {"ok": False, "skipped": [], "error": _config_gate.refused_send("rpower_schedule")}
     token, base = _ctx(restaurant_id)
     payload, by_employee, skipped = _schedule_payload(restaurant_id, base, shifts, job_codes)
     if not by_employee:

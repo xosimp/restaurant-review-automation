@@ -9676,9 +9676,12 @@ def mobile_client_errors():
     client_error_reports, deduplicated and capped per device, per address
     and in total (client_compat.record_report). A live session's token, of
     either tier, attributes it; none is needed — a sign-in that cannot be
-    decoded must still be heard — and a dead one never answers 401 here."""
+    decoded must still be heard — and a dead one never answers 401 here.
+    Only a signed-in report counts toward the operator's alert, and a route
+    the server has no rule for is refused (blind re-audit 10/27/26)."""
     import client_compat
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    data = data if isinstance(data, dict) else {}
     token = _bearer_token()
     user = None
     if token:
@@ -9688,7 +9691,8 @@ def mobile_client_errors():
         route=data.get("route"), method=data.get("method"), status=data.get("status"),
         coding_path=data.get("coding_path"), description=data.get("description"), kind=data.get("kind"),
         device_id=data.get("device_id"), user=user, ip=_get_client_ip(),
-        client=client_compat.from_headers(request.headers))
+        client=client_compat.from_headers(request.headers),
+        known=client_compat.known_route(data.get("route"), data.get("method")))
     return jsonify(**payload), status
 
 

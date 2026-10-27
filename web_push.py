@@ -131,7 +131,7 @@ def send(subscription: dict, message: dict, ttl=DEFAULT_TTL, urgency="normal") -
     import config as _config_gate
     if not _config_gate.outbound_sends_allowed():
         # Staging and other non-production environments (A05-06).
-        return {"ok": False, "status": None, "gone": False, "error": _config_gate.sends_refused_reason()}
+        return {"ok": False, "status": None, "gone": False, "error": _config_gate.refused_send("web_push")}
     if not enabled():
         return {"ok": False, "status": None, "gone": False, "error": "Web Push is not configured"}
     if not endpoint_allowed(endpoint):

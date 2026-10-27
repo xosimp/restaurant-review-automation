@@ -1118,6 +1118,13 @@ try:
     # also re-seeds, so a service added to SERVICES appears without a deploy.
     from status_manager import seed_default_services as _seed_status
     _seed_status()
+    # Which deployment this is and what it may do, in the log at every boot;
+    # an ERROR when Railway names an environment that is not production and
+    # CAVNAR_ENV does not say so (config.environment_problem, also on
+    # /health) — and a MOBILE_MIN_BUILD above every installed build is
+    # ignored, loudly (client_compat.check_min_build; blind re-audit 10/27/26).
+    config.report_environment_at_boot(_boot_log)
+    client_compat.check_min_build()
     # What's new: release notes kept in whats_new.ENTRIES reach the table
     # with the push that ships them (missing titles only).
     import whats_new as _wn_boot

@@ -1217,7 +1217,7 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
     # safety audit 10/26/26 A05-06): its copy of the tokens is real phones.
     import config as _config_gate
     if not _config_gate.outbound_sends_allowed():
-        return {"ok": False, "error": _config_gate.sends_refused_reason()}
+        return {"ok": False, "error": _config_gate.refused_send("push")}
     priority = priority_of(alert_type)
     aps = {"alert": {"title": title, "body": body}, "sound": "default"}
     level = _INTERRUPTION.get(priority)
@@ -2003,7 +2003,7 @@ def _apns_post(apns_token, environment, payload, push_type, priority, topic, col
     reached). Never raises."""
     import config as _config_gate
     if not _config_gate.outbound_sends_allowed():
-        return False, 0, _config_gate.sends_refused_reason(), environment
+        return False, 0, _config_gate.refused_send("apns"), environment
     # UTF-8 as is: "\u00e9" escapes cost six bytes of APNs' 4 KB for one
     # letter (re-audit 10/8/26 #13).
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")

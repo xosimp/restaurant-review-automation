@@ -137,7 +137,12 @@ def world(db_path, monkeypatch):
     rid = create_restaurant(Restaurant(name="Compat Grill", owner_email="owner@compat.test"), db_path=db_path)
     uid = auth.create_user(rid, "compatowner", "owner@compat.test", "Compat-pass-2026", db_path=db_path)
     app = Flask(__name__)
-    app.register_blueprint(mobile_api.mobile_bp)
+    import staff_routes
+    import strategy_routes
+    for bp in (mobile_api.mobile_bp, strategy_routes.strategy_mobile_bp, staff_routes.staff_bp):
+        before = getattr(bp, "_got_registered_once", False)
+        app.register_blueprint(bp)
+        bp._got_registered_once = before
     cc.install(app)
     cc.install(app)          # idempotent
     return {"db": db_path, "rid": rid, "uid": uid, "client": app.test_client(), "app": app}
@@ -173,18 +178,28 @@ def test_the_full_app_wires_the_gate():
     """hosted_dashboard installs it: booted in a throwaway volume (no keys,
     no network), a build under MOBILE_MIN_BUILD gets 426 on a real route and
     a headerless request reaches the route's own answer."""
-    vol = tempfile.mkdtemp(prefix="cavnar-compat-")
-    out = subprocess.run([sys.executable, "-c", _BOOT_SCRIPT, vol], cwd=ROOT, capture_output=True, text=True,
-                         timeout=180)
-    line = [l for l in out.stdout.splitlines() if l.startswith("RESULT ")]
-    assert out.returncode == 0 and line, out.stdout[-1500:] + "\n" + out.stderr[-2500:]
-    got = json.loads(line[-1][len("RESULT "):])
-    assert got == {"low": 426, "ok": 401, "headerless": 401, "web": 302}, got
+    def boot(force):
+        vol = tempfile.mkdtemp(prefix="cavnar-compat-")
+        out = subprocess.run([sys.executable, "-c", _BOOT_SCRIPT, vol, force], cwd=ROOT, capture_output=True,
+                             text=True, timeout=180)
+        line = [l for l in out.stdout.splitlines() if l.startswith("RESULT ")]
+        assert out.returncode == 0 and line, out.stdout[-1500:] + "\n" + out.stderr[-2500:]
+        return json.loads(line[-1][len("RESULT "):]), out.stdout + out.stderr
+    # MOBILE_MIN_BUILD_FORCE: the minimum as set (a fresh volume has no
+    # session that ever named a build).
+    got, _err = boot("1")
+    assert got == {"low": 426, "ok": 401, "headerless": 401, "web": 302, "ignored": False}, got
+    # Unforced, the boot finds no installed build that could meet it: ignored,
+    # loudly, and nobody is turned away (blind re-audit 10/27/26).
+    got, err = boot("")
+    assert got == {"low": 401, "ok": 401, "headerless": 401, "web": 302, "ignored": True}, got
+    assert "MOBILE_MIN_BUILD=4100 is ignored" in err, err[-2000:]
 
 
 _BOOT_SCRIPT = r'''
 import json, os, socket, sqlite3, sys
 vol = sys.argv[1]
+os.environ["MOBILE_MIN_BUILD_FORCE"] = sys.argv[2]
 sqlite3.connect(os.path.join(vol, "reviews.db")).close()
 os.environ.update(RAILWAY_VOLUME_MOUNT_PATH=vol, RUN_SCHEDULER_IN_WEB="0", ANTHROPIC_API_KEY="",
                   RESEND_API_KEY="", TWILIO_AUTH_TOKEN="", STRIPE_SECRET_KEY="", SECRET_KEY="test-secret",
@@ -204,6 +219,7 @@ out = {
     "ok": c.get("/mobile/api/me", headers={"X-Cavnar-App": "1.0 (4100)", "X-Cavnar-Platform": "ios"}).status_code,
     "headerless": c.get("/mobile/api/me").status_code,
     "web": c.get("/").status_code,
+    "ignored": bool(h.client_compat._MIN_BUILD_CHECK.get("ignored")),
 }
 print("RESULT " + json.dumps(out))
 '''
@@ -301,6 +317,41 @@ def test_a_report_needs_no_session_and_a_dead_one_never_signs_the_phone_out(worl
     assert row["restaurant_id"] is None and row["user_id"] is None
 
 
+def test_a_route_the_server_has_no_rule_for_is_refused(world):
+    """A report names a route the server really has (blind re-audit
+    10/27/26): made-up routes were each a new page key."""
+    for route in ("/mobile/api/CALL-555-0100-NOW", "/mobile/api/zz1", "/staff/api/not-a-thing"):
+        r = world["client"].post("/mobile/api/client-errors", json=dict(REPORT, route=route))
+        assert r.status_code == 400, route
+    assert _rows(world["db"]) == []
+    # A real rule answers, whatever method the report says (a 405 path is a route).
+    for route, method in (("/mobile/api/home", "GET"), ("/mobile/api/home", "POST"),
+                          ("/staff/api/shifts", "GET"), ("/mobile/api/dsr/2026-10-25?x=1", "GET")):
+        assert cc.known_route(route, method, app=world["app"]), route
+    assert not cc.known_route("/api/home/brief", "GET", app=world["app"])
+    assert cc.known_route("/mobile/api/anything", "GET") is True        # outside an app nothing is checked
+
+
+def test_anonymous_reports_have_their_own_smaller_budget(world, monkeypatch):
+    c = world["client"]
+    monkeypatch.setattr(cc, "ANON_IP_HOURLY", 2)
+    for i in range(2):
+        assert c.post("/mobile/api/client-errors", json=dict(REPORT, device_id=f"A{i}")).status_code == 200
+    assert c.post("/mobile/api/client-errors", json=dict(REPORT, device_id="A9")).status_code == 429
+    # A signed-in report from the same address is not held by the anonymous cap.
+    token = _bearer(world)
+    assert c.post("/mobile/api/client-errors", json=dict(REPORT, device_id="S1"),
+                  headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    monkeypatch.setattr(cc, "ANON_IP_HOURLY", 100)
+    monkeypatch.setattr(cc, "ANON_GLOBAL_HOURLY", 3)
+    assert c.post("/mobile/api/client-errors", json=dict(REPORT, device_id="A3")).status_code == 200
+    assert c.post("/mobile/api/client-errors", json=dict(REPORT, device_id="A4")).status_code == 429
+    # A signed-in user has a budget of its own, whatever device ids it sends.
+    monkeypatch.setattr(cc, "USER_HOURLY", 1)
+    assert c.post("/mobile/api/client-errors", json=dict(REPORT, device_id="S2", route="/mobile/api/home"),
+                  headers={"Authorization": f"Bearer {token}"}).status_code == 429
+
+
 def test_the_same_failure_within_the_hour_is_one_row_and_a_device_is_capped(world, monkeypatch):
     c = world["client"]
     for _ in range(3):
@@ -340,20 +391,75 @@ def test_the_route_is_ungated_by_module_and_reached_before_any_sign_in():
     assert cc.REPORT_PATH in cc.EXEMPT_PATHS
 
 
-def test_more_devices_than_the_threshold_in_an_hour_is_a_platform_check_line(world, monkeypatch):
+def _users(world, n):
+    """`n` signed-in logins of the restaurant, each with its own session."""
+    tokens = []
+    for i in range(n):
+        uid = auth.create_user(world["rid"], f"compatmgr{i}", f"mgr{i}@compat.test", "Compat-pass-2026",
+                               db_path=world["db"])
+        tokens.append(auth.create_session(uid, device_type="ios", restaurant_id=world["rid"], db_path=world["db"]))
+    return tokens
+
+
+def test_anonymous_reports_never_page_however_many_device_ids_they_send(world, monkeypatch):
+    """Four POSTs from one address with four made-up device ids paged the
+    operator (blind re-audit 10/27/26). Only signed-in users count."""
     c = world["client"]
-    for i in range(4):
-        c.post("/mobile/api/client-errors", json=dict(REPORT, device_id=f"D{i}"), headers=_h("1.0 (4210)"))
+    for i in range(6):
+        assert c.post("/mobile/api/client-errors", json=dict(REPORT, device_id=f"attacker-{i}"),
+                      headers=_h("1.0 (4210)")).status_code == 200
     surge = cc.decode_failure_surge(threshold=3, db_path=world["db"])
-    assert surge["devices"] == 4 and surge["over"] is True
-    assert surge["routes"][0]["route"] == "/mobile/api/dsr/:id" and surge["routes"][0]["devices"] == 4
+    assert surge["devices"] == 6 and surge["anonymous_devices"] == 6
+    assert surge["users"] == 0 and surge["over"] is False
+    assert cc.surge_problem(surge) is None
+    # One signed-in user with many device ids is still one user.
+    token = _bearer(world)
+    for i in range(5):
+        c.post("/mobile/api/client-errors", json=dict(REPORT, device_id=f"same-user-{i}"),
+               headers={"Authorization": f"Bearer {token}"})
+    assert cc.decode_failure_surge(threshold=3, db_path=world["db"])["users"] == 1
+    monkeypatch.setattr(cc, "ALERT_USERS", 3)
+    out = ops.check_platform_sla(send=False, db_path=world["db"], write_ok=True)
+    assert out["client_decode"]["over"] is False
+    assert not any("could not read the server's answer" in p for p in out["problems"])
+
+
+def test_more_signed_in_users_than_the_threshold_is_one_fixed_line_with_counts(world, monkeypatch):
+    c = world["client"]
+    evil = dict(REPORT, coding_path="$.Your account is locked. Text 555-0100 to restore it",
+                description="Text 555-0100 now")
+    for i, token in enumerate(_users(world, 4)):
+        assert c.post("/mobile/api/client-errors", json=dict(evil, device_id=f"D{i}"),
+                      headers={"Authorization": f"Bearer {token}", **_h("1.0 (4210)")}).status_code == 200
+    surge = cc.decode_failure_surge(threshold=3, db_path=world["db"])
+    assert surge["users"] == 4 and surge["restaurants"] == 1 and surge["over"] is True
+    assert surge["routes"][0]["route"] == "/mobile/api/dsr/:id" and surge["routes"][0]["users"] == 4
     line = cc.surge_problem(surge)
-    assert "4 devices" in line and "/mobile/api/dsr/:id" in line and REPORT["coding_path"] in line
+    assert "4 signed-in users at 1 restaurant" in line and "on 1 route" in line
+    # Never the client's words: no route, coding path or description.
+    for reported in ("/mobile/api/dsr", "555-0100", "locked", "Text"):
+        assert reported not in line, reported
     assert cc.surge_problem(cc.decode_failure_surge(threshold=10, db_path=world["db"])) is None
-    monkeypatch.setattr(cc, "ALERT_DEVICES", 3)
+    monkeypatch.setattr(cc, "ALERT_USERS", 3)
     out = ops.check_platform_sla(send=False, db_path=world["db"], write_ok=True)
     assert out["client_decode"]["over"] is True
-    assert any("could not read the server's answer on 4 devices" in p for p in out["problems"])
+    assert any("could not read the server's answer for 4 signed-in users" in p for p in out["problems"])
+
+
+def test_the_page_key_is_fixed_whatever_routes_are_reported(world, monkeypatch):
+    """A new route string used to be a new warn key, past the 24-hour
+    cooldown: the kind is now the fixed `client_decode`."""
+    c = world["client"]
+    tokens = _users(world, 4)
+    monkeypatch.setattr(cc, "ALERT_USERS", 3)
+    kinds = []
+    for route in ("/mobile/api/home", "/mobile/api/labor", "/staff/api/shifts"):
+        for i, token in enumerate(tokens):
+            c.post("/mobile/api/client-errors", json=dict(REPORT, route=route, device_id=f"{route}{i}"),
+                   headers={"Authorization": f"Bearer {token}"})
+        out = ops.check_platform_sla(send=False, db_path=world["db"], write_ok=True)
+        kinds.append([k for k in out["warn_kinds"] if "client_decode" in k])
+    assert kinds == [["client_decode"]] * 3, kinds
 
 
 def test_the_reports_are_a_registered_ledger():
@@ -383,3 +489,85 @@ def test_the_bug_report_names_the_build_the_request_came_from(world, monkeypatch
                              headers={"Authorization": f"Bearer {token}", **_h("1.0 (4210)")})
     assert r.status_code == 200
     assert stored["client_app"] == "ios 1.0 (4210)"
+
+
+# ── a MOBILE_MIN_BUILD nothing installed can meet (blind re-audit 10/27/26) ─
+
+def test_a_minimum_above_every_installed_build_is_ignored_unless_forced():
+    assert cc.min_build_verdict(4300, 4300) == (4300, None)
+    assert cc.min_build_verdict(4100, 4300) == (4100, None)
+    enforced, why = cc.min_build_verdict(43000, 4300)          # a digit too many
+    assert enforced is None and "43000" in why and "4300" in why and "MOBILE_MIN_BUILD_FORCE" in why
+    assert cc.min_build_verdict(4350, 4300, margin=100) == (4350, None)
+    assert cc.min_build_verdict(43000, 4300, force=True) == (43000, None)
+    # No session ever sent a build: nothing shows the minimum can be met.
+    enforced, why = cc.min_build_verdict(4100, None)
+    assert enforced is None and "no live session" in why
+    assert cc.min_build_verdict(None, 4300) == (None, None)
+
+
+def test_the_check_reads_the_installed_builds_and_the_gate_stops_refusing(world, monkeypatch):
+    with world["app"].test_request_context("/mobile/api/login", headers=_h("1.0 (4210)")):
+        token = _bearer(world)
+    assert cc.newest_seen_build(world["db"]) == 4210
+    # The process's own database: what the gate and the platform check read.
+    monkeypatch.setattr(models, "DB_PATH", world["db"])
+    monkeypatch.setattr(cc, "_MIN_BUILD_CHECK", {})
+    monkeypatch.setenv("MOBILE_MIN_BUILD", "42100")
+    verdict = cc.check_min_build()
+    assert verdict["ignored"] is True and verdict["newest"] == 4210 and cc.min_build() is None
+    assert "42100" in cc.min_build_problem()
+    c = world["client"]
+    r = c.get("/mobile/api/me", headers={"Authorization": f"Bearer {token}", **_h("1.0 (4210)")})
+    assert r.status_code == 200, "an ignored minimum refuses nobody"
+    # The platform check names it (one fixed kind) and re-checks it.
+    out = ops.check_platform_sla(send=False, write_ok=True)
+    assert "mobile_min_build" in out["warn_kinds"] and any("42100" in p for p in out["problems"])
+    assert any("42100" in w for w in __import__("platform_monitor").system_warnings(
+        {"mobile_clients": {"installed": cc.installed_builds(world["db"])}}))
+    # Forced: enforced as set.
+    monkeypatch.setenv("MOBILE_MIN_BUILD_FORCE", "1")
+    assert cc.check_min_build()["ignored"] is False and cc.min_build() == 42100
+    assert c.get("/mobile/api/me", headers={"Authorization": f"Bearer {token}", **_h("1.0 (4210)")}).status_code == 426
+    # A sane minimum is enforced once checked.
+    monkeypatch.delenv("MOBILE_MIN_BUILD_FORCE")
+    monkeypatch.setenv("MOBILE_MIN_BUILD", "4210")
+    assert cc.check_min_build()["ignored"] is False and cc.min_build() == 4210 and cc.min_build_problem() is None
+    # A verdict read from another database never decides for the process.
+    monkeypatch.setenv("MOBILE_MIN_BUILD", "99999")
+    monkeypatch.setattr(cc, "_MIN_BUILD_CHECK", {"raw": 99999, "ignored": True, "db": "/elsewhere.db", "why": "x"})
+    assert cc.min_build() == 99999 and cc.min_build_problem() is None
+
+
+def test_the_smoke_build_is_never_kept_as_an_installed_one(world):
+    with world["app"].test_request_context("/mobile/api/me", headers={"X-Cavnar-App": "smoke (999999999)",
+                                                                       "X-Cavnar-Platform": "ios"}):
+        assert cc.request_client_app() is None
+        token = _bearer(world)
+    assert _client_app(world["db"], "sessions", "token=?", auth.hash_session_token(token)) is None
+    assert cc.newest_seen_build(world["db"]) is None
+    # ...and its build is above any minimum, so the gate serves it.
+    assert _refusal("/mobile/api/me", {"X-Cavnar-App": "smoke (999999999)", "X-Cavnar-Platform": "ios"},
+                    MOBILE_MIN_BUILD=4100, MOBILE_HEADERLESS_CUTOFF="2000-01-01") is None
+
+
+# ── compatibility telemetry ─────────────────────────────────────────────────
+
+def test_the_console_counts_headerless_sessions_and_reports_per_build(world):
+    for label in ("1.0 (4210)", "1.1 (4300)"):
+        with world["app"].test_request_context("/mobile/api/login", headers=_h(label)):
+            _bearer(world)
+    _bearer(world)
+    _bearer(world)                                         # two builds from before the header
+    got = cc.installed_builds(world["db"])
+    assert got["header_sessions"] == 2 and got["headerless_sessions"] == 2 and got["headerless_share_pct"] == 50.0
+    c = world["client"]
+    token = _bearer(world)
+    c.post("/mobile/api/client-errors", json=REPORT, headers={"Authorization": f"Bearer {token}", **_h("1.1 (4300)")})
+    c.post("/mobile/api/client-errors", json=dict(REPORT, device_id="X", route="/mobile/api/home"),
+           headers=_h("1.1 (4300)"))
+    c.post("/mobile/api/client-errors", json=dict(REPORT, device_id="Y"))
+    by = {r["client_app"]: r for r in cc.decode_reports_by_build(db_path=world["db"])}
+    assert by["ios 1.1 (4300)"]["reports"] == 2 and by["ios 1.1 (4300)"]["routes"] == 2
+    assert by["ios 1.1 (4300)"]["users"] == 1
+    assert by["no build header"]["reports"] == 1

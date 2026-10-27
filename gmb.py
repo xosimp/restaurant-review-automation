@@ -698,7 +698,7 @@ def post_reply(restaurant_id: int, review_name: str, reply_text: str) -> dict:
     import config as _config_gate
     if not _config_gate.outbound_sends_allowed():
         # A public reply on a real listing, never from staging (A05-06).
-        return {"ok": False, "error": _config_gate.sends_refused_reason()}
+        return {"ok": False, "error": _config_gate.refused_send("google_reply")}
 
     access_token = get_valid_token(restaurant_id)
     if not access_token:
@@ -759,6 +759,11 @@ def delete_reply(restaurant_id: int, review_name: str) -> dict:
     """
     if not review_name:
         return {"ok": False, "error": "No review name on file for this review"}
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # Retracting a public reply is a write to a real listing too, never
+        # from staging (blind re-audit 10/27/26).
+        return {"ok": False, "error": _config_gate.refused_send("google_reply_delete")}
 
     access_token = get_valid_token(restaurant_id)
     if not access_token:
@@ -974,6 +979,10 @@ def update_gbp_listing(restaurant_id: int, fields: dict) -> dict:
 
     if not mask_parts:
         return {"ok": False, "error": "No fields to update"}
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # The public listing itself, never from staging (blind re-audit 10/27/26).
+        return {"ok": False, "error": _config_gate.refused_send("google_listing")}
 
     try:
         resp = requests.patch(
@@ -1072,7 +1081,7 @@ def create_local_post(restaurant_id: int, summary: str, cta_type: str = None,
     import config as _config_gate
     if not _config_gate.outbound_sends_allowed():
         # A public post on a real listing, never from staging (A05-06).
-        return {"ok": False, "error": _config_gate.sends_refused_reason()}
+        return {"ok": False, "error": _config_gate.refused_send("google_post")}
     try:
         resp = requests.post(
             f"https://mybusiness.googleapis.com/v4/{parent}/localPosts",

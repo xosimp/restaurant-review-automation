@@ -828,6 +828,22 @@ def health_snapshot(db_path=None):
     if any(not v.get("unique") for v in missing_ix.values()):
         problems.append("index_missing")
 
+    # The deployment's name (blind re-audit 10/27/26): on Railway, an
+    # environment not named production while CAVNAR_ENV does not say so is
+    # one whose scheduler and every send stand down — a staging that should
+    # say CAVNAR_ENV=staging, or a production renamed. Degraded, so the
+    # uptime monitor sees it; the sends it refused are counted beside it.
+    import config as _config_env
+    env_problem = _config_env.environment_problem()
+    if env_problem:
+        problems.append(env_problem)
+    refused = _config_env.refused_sends()
+    notes = []
+    if os.getenv("STRIPE_SECRET_KEY") and not (os.getenv("STRIPE_API_VERSION") or "").strip():
+        # A note, not a problem: every Stripe call follows the SDK's own API
+        # version, which a lock bump changes silently (config.stripe_api).
+        notes.append("stripe_api_version_unset")
+
     payload = {"status": "degraded" if problems else "ok", "problems": problems,
                "db": "ok",
                "database": {"write": write["state"], "write_ms": write["ms"], "journal": journal,
@@ -842,6 +858,10 @@ def health_snapshot(db_path=None):
                "jobs_overdue": [j["job"] for j in overdue]}
     if missing_ix:
         payload["indexes_missing"] = sorted(missing_ix)
+    if refused:
+        payload["sends_refused"] = {k: v["count"] for k, v in sorted(refused.items())}
+    if notes:
+        payload["notes"] = notes
     if sched.get("beat_age_minutes") is not None:
         payload["scheduler_heartbeat_age_minutes"] = round(sched["beat_age_minutes"], 1)
     if sched.get("loop_completed_age_minutes") is not None:
