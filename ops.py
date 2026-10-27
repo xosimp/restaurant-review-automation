@@ -3268,21 +3268,25 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     # 10/19/26); a new job joining the set pages at once.
     urgent = _has_urgent(out, state, write_ok=out["write_ok"])
     core = _has_urgent(dict(out, jobs_overdue=[]), state, write_ok=out["write_ok"])
-    if urgent and not core:
-        overdue = out["jobs_overdue"]
-        cd = int(max(60, min(24 * 60, min(float(j.get("max_hours") or 1) for j in overdue) * 60)))
-        res = page_operator("platform_sla_overdue:" + ",".join(sorted(str(j["job"]) for j in overdue)),
-                            "Cavnar AI: the platform needs you", problems, cooldown_minutes=cd, pager_events=events)
-    elif urgent:
-        # Keyed on the urgent conditions, never one constant (re-audit B7):
-        # a new urgent condition pages at once; the same set hourly.
-        crit = sorted(k[len(PAGER_CONDITION_PREFIX):] for k, sev in conds.items() if sev == "critical")
-        res = page_operator("platform_sla_alert:" + ",".join(crit), "Cavnar AI: the platform needs you", problems,
-                            pager_events=events)
-    else:
-        res = page_operator("platform_sla_warn:" + ",".join(sorted(warn_kinds)),
-                            "Cavnar AI: the platform needs you", problems,
-                            cooldown_minutes=PLATFORM_WARN_COOLDOWN_MINUTES, pager_events=events)
+    _page_local.sla_events = events
+    try:
+        if urgent and not core:
+            overdue = out["jobs_overdue"]
+            cd = int(max(60, min(24 * 60, min(float(j.get("max_hours") or 1) for j in overdue) * 60)))
+            res = page_operator("platform_sla_overdue:" + ",".join(sorted(str(j["job"]) for j in overdue)),
+                                "Cavnar AI: the platform needs you", problems, cooldown_minutes=cd)
+        elif urgent:
+            # Keyed on the urgent conditions, never one constant (re-audit
+            # B7): a new urgent condition pages at once; the same set hourly.
+            crit = sorted(k[len(PAGER_CONDITION_PREFIX):] for k, sev in conds.items() if sev == "critical")
+            res = page_operator("platform_sla_alert:" + ",".join(crit), "Cavnar AI: the platform needs you",
+                                problems)
+        else:
+            res = page_operator("platform_sla_warn:" + ",".join(sorted(warn_kinds)),
+                                "Cavnar AI: the platform needs you", problems,
+                                cooldown_minutes=PLATFORM_WARN_COOLDOWN_MINUTES)
+    finally:
+        _page_local.sla_events = None
     out["alerted"] = bool(res.get("sent"))
     return out
 
@@ -3515,6 +3519,11 @@ def page_operator(key, subject, lines, cooldown_minutes=PLATFORM_ALERT_COOLDOWN_
     'cooldown'}. `pager_events` [(key, summary, severity)]: the paging
     service gets one event per condition instead of one for `key` (the
     platform check's "sla:" conditions, each resolved when it clears)."""
+    if pager_events is None:
+        # check_platform_sla hands its conditions over through the thread
+        # (sla_events), so page_operator's signature — which tests and
+        # callers stand in for — is unchanged for them.
+        pager_events = getattr(_page_local, "sla_events", None)
     with _page_lock:
         if _cooldown_active(key, cooldown_minutes):
             return {"sent": False, "reason": "cooldown", "channels": {}}
