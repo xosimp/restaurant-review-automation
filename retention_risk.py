@@ -73,6 +73,8 @@ FEATURES = ("hours_cut", "unwanted_share", "drops", "missed_share", "promises_br
 # The fitted model per restaurant and day (a per-process cache, safe per
 # worker): a generation and the Studio read it without refitting.
 _MODEL_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("retention_risk._MODEL_CACHE", _MODEL_CACHE)
 _MODEL_LOCK = threading.Lock()
 
 

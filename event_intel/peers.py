@@ -48,6 +48,8 @@ SIDES = ("home", "away")
 # segment and database, never by viewer: every viewer of a segment shares it.
 _MEMO_SECONDS = 60
 _memo = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("event_intel.peers._memo", _memo)
 _hooked = [False]
 
 

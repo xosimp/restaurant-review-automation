@@ -7103,6 +7103,8 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
 REQUIREMENT_MODEL_TTL = 15 * 60
 REQUIREMENT_MODEL_ENTRIES = 2048
 _REQUIREMENT_MODEL_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("schedule_engine._REQUIREMENT_MODEL_CACHE", _REQUIREMENT_MODEL_CACHE)
 _REQUIREMENT_MODEL_LOCK = threading.Lock()
 
 
@@ -8359,6 +8361,7 @@ STUDIO_CACHE_PER_RESTAURANT = int(os.getenv("STUDIO_CACHE_PER_RESTAURANT", "3"))
 STUDIO_SCORER_DATES = 96
 import collections as _collections_studio
 _studio_cache = _collections_studio.OrderedDict()
+_process_caches.register("schedule_engine._studio_cache", _studio_cache)
 _studio_live = {}
 _studio_lock = threading.Lock()
 _studio_counts = {"hits": 0, "misses": 0, "evictions": 0}

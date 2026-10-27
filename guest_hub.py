@@ -1000,6 +1000,8 @@ def run_followups(db_path=DB_PATH, now=None) -> dict:
 # ── the restaurant's own number and its replies ────────────────────────────
 
 _SENDER_CACHE = {"at": 0.0, "rows": {}}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("guest_hub._SENDER_CACHE", _SENDER_CACHE)
 
 
 def _senders(db_path=DB_PATH):

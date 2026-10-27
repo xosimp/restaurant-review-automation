@@ -1237,10 +1237,13 @@ class _HandleFinal:
             _release(conn, self.key, self.tid, self.tainted)
 
 
-def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
+def get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
     # None is the platform's own database (blind re-audit 10/11/26: callers
     # thread an optional db_path=None through — owner_rules did, and
     # sqlite3.connect(None) failed every generation's staff-note read).
+    # The default is None, not DB_PATH, so a bare get_conn() reads DB_PATH
+    # when it is CALLED (audit #25 A04-07): a default bound at definition
+    # time never followed a patched models.DB_PATH.
     if db_path is None:
         db_path = DB_PATH
     # Postgres behind the same door when DATABASE_URL names one (db_dialect —
@@ -5543,6 +5546,8 @@ def _notify_restaurant_change(restaurant_id):
 # restaurant is created outside update_restaurant).
 _TENANT_NAMES_TTL = 300
 _tenant_names_cache = {"key": None, "at": 0.0, "rows": ()}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("models._tenant_names_cache", _tenant_names_cache)
 # Names too generic to be read as another tenant ("Pizza", "The Bar"), and
 # the platform's own name.
 _TENANT_GENERIC_NAMES = {"other", "bar", "pub", "cafe", "café", "grill", "kitchen", "pizza", "tavern", "bistro",
@@ -14419,6 +14424,7 @@ LEARNING_TEST_NAME_WORDS = frozenset({"test", "tests", "testing", "qa", "demo", 
 LEARNING_TEST_NAME_PHRASES = ("cavnar ai",)
 _INTERNAL_HOMES_TTL = 60.0
 _internal_homes_cache = {}
+_process_caches.register("models._internal_homes_cache", _internal_homes_cache)
 
 
 def _learning_get(r, k):

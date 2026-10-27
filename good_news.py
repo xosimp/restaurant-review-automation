@@ -419,6 +419,8 @@ def _module_on(restaurant, module):
 # control. This is a pure cache — a second worker would start cold and
 # compute the same answer. It makes that constraint no worse.
 _NEWS_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("good_news._NEWS_CACHE", _NEWS_CACHE)
 _NEWS_TTL = 120
 _NEWS_MAX = 400
 

@@ -13,7 +13,16 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import DB_PATH, get_conn, boot_conn, add_missing_columns
+from models import DB_PATH, boot_conn, add_missing_columns
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # ── Schema extension ──────────────────────────────────────────────────────────
 
@@ -3220,6 +3229,8 @@ def otp_country_allowed(phone: str) -> bool:
 STAFF_OTP_PER_RESTAURANT_PLATFORM_DEFAULT = 4
 STAFF_OTP_SHARE_PER_STAFF_PCT_DEFAULT = 125
 _otp_platform_memo = {"at": 0.0, "n": 0}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("auth._otp_platform_memo", _otp_platform_memo)
 
 
 def _otp_join_restaurants(conn) -> int:

@@ -30,7 +30,16 @@ import threading
 import config
 import uuid
 
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 import schedule_time as _stime_scope
 
 log = logging.getLogger(__name__)
@@ -2102,6 +2111,8 @@ AUTO_DRAFT_SPREAD_MAX_MINUTES = int(os.getenv("AUTO_DRAFT_SPREAD_MAX_MINUTES", "
 # One generation's slot time when none has been measured yet (seconds).
 GENERATION_SECONDS_ASSUMED = 30.0
 _GEN_SECONDS_MEMO = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("strategy_jobs._GEN_SECONDS_MEMO", _GEN_SECONDS_MEMO)
 
 
 def generation_seconds_estimate() -> float:

@@ -41,6 +41,8 @@ from models import DB_PATH
 BUILD_TTL_SECONDS = 15 * 60
 _MEMO_MAX = 500
 _memo = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("preshift._memo", _memo)
 _memo_lock = threading.Lock()
 
 # The rush window: the hour with the largest share of a usual day's sales,

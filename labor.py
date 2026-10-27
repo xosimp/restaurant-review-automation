@@ -2206,6 +2206,8 @@ def _check_leader_rule(rule: dict, buckets: dict, scores: dict, close_times: dic
 # device, so an owner read different "Recommendations" on the phone and the
 # laptop for the same numbers. Bounded; process-local like the other caches.
 _NOTE_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("labor._NOTE_CACHE", _NOTE_CACHE)
 _NOTE_CACHE_MAX = 500
 
 

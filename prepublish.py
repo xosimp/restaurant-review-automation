@@ -188,6 +188,8 @@ def _plural(n, one, many=None) -> str:
 
 SECTIONS = ("all", "core", "explain")
 _CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("prepublish._CACHE", _CACHE)
 _CACHE_LOCK = threading.Lock()
 
 

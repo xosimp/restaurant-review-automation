@@ -153,6 +153,8 @@ PRIOR_HALF_LIFE_DAYS = 180
 # long per database, then read again.
 ORG_MAP_TTL_SECONDS = 300
 _org_cache = {"key": None, "at": 0.0, "map": None}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("intelligence.scoring._org_cache", _org_cache)
 
 
 def _full_org_map(db_path):

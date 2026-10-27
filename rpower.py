@@ -1906,6 +1906,8 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
 #     purged (purge_catalogs, nightly in ops.prune_ledgers).
 CATALOG_MAX_AGE_SECONDS = float(os.getenv("RPOWER_CATALOG_MAX_AGE_SECONDS", "86400"))
 _list_cache = _LRU(CACHE_MAX_KEYED)
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("rpower._list_cache", _list_cache)
 
 # What is kept of an employee record (A7-03). Every reader of the kept list
 # reads only these (employee_display_name, distinct_employee_names,
@@ -2244,6 +2246,7 @@ def sales_types(restaurant_id: int) -> dict:
 # the nightly jobs read several days in a row (9/29/26).
 SALES_TYPE_CACHE_SECONDS = 600
 _sales_type_cache = _LRU(CACHE_MAX_RESTAURANTS, per_store=1)
+_process_caches.register("rpower._sales_type_cache", _sales_type_cache)
 
 
 def clear_caches():
@@ -2507,6 +2510,7 @@ def _kept_types(restaurant_id, ids) -> dict:
 
 
 _kept_cache = _LRU(CACHE_MAX_KEYED)
+_process_caches.register("rpower._kept_cache", _kept_cache)
 
 
 def _quality_event(restaurant_id, key, sig, message, job="pos_sales_rules"):
@@ -2641,6 +2645,7 @@ def _loss_kind(row: dict, types: dict, rules=None):
 
 VOID_REASON_CACHE_SECONDS = 600
 _void_reason_cache = _LRU(CACHE_MAX_RESTAURANTS, per_store=1)
+_process_caches.register("rpower._void_reason_cache", _void_reason_cache)
 
 
 def void_reasons(restaurant_id: int) -> dict:
@@ -2867,6 +2872,7 @@ def fetch_sales_catalog(restaurant_id: int) -> dict:
 # a menu item. Checked against EJ's live menu: all 373 sold ids resolved.
 MENU_CACHE_SECONDS = 600
 _menu_cache = _LRU(CACHE_MAX_RESTAURANTS)
+_process_caches.register("rpower._menu_cache", _menu_cache)
 _NOT_ITEM_CATEGORY_RE = re.compile(r"discount|gratuit|gift\s*card|\bopen\b|\bretail\b", re.I)
 
 
@@ -3863,6 +3869,7 @@ def fetch_customers(restaurant_id: int) -> dict:
 # anywhere), shared by every store of one group on one credential.
 CUSTOMER_CACHE_SECONDS = 6 * 3600
 _customer_cache = _LRU(CACHE_MAX_KEYED * 4)
+_process_caches.register("rpower._customer_cache", _customer_cache)
 
 
 def fetch_customers_by_mid(restaurant_id: int, mids) -> dict:
@@ -3909,6 +3916,7 @@ def fetch_customers_by_mid(restaurant_id: int, mids) -> dict:
 
 PEOPLE_CACHE_SECONDS = 600
 _people_cache = _LRU(CACHE_MAX_RESTAURANTS)
+_process_caches.register("rpower._people_cache", _people_cache)
 
 
 def employee_names(restaurant_id: int) -> dict:
@@ -3918,6 +3926,7 @@ def employee_names(restaurant_id: int) -> dict:
 
 
 _job_cat_cache = _LRU(CACHE_MAX_RESTAURANTS)
+_process_caches.register("rpower._job_cat_cache", _job_cat_cache)
 
 
 def job_categories(restaurant_id: int) -> dict:
@@ -5075,9 +5084,11 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
 
 CATALOG_CACHE_SECONDS = 600
 _catalog_cache = _LRU(CACHE_MAX_KEYED)
+_process_caches.register("rpower._catalog_cache", _catalog_cache)
 
 
 _scope_cache = _LRU(CACHE_MAX_KEYED, per_store=2)
+_process_caches.register("rpower._scope_cache", _scope_cache)
 
 
 def _list_scope(restaurant_id: int, by_store: bool = False) -> str:
@@ -6031,6 +6042,7 @@ def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
 
 CLOSED_CACHE_SECONDS = 600
 _closed_cache = _LRU(CACHE_MAX_KEYED, per_store=8)
+_process_caches.register("rpower._closed_cache", _closed_cache)
 
 
 def day_closed_cached(restaurant_id: int, business_date) -> bool:

@@ -2571,6 +2571,8 @@ CHANGE_MEMO_SECONDS = 300
 CHANGE_KEPT_SPAN_HOURS = 36       # a kept change read older than this is not extended (A1-04)
 CHANGE_MEMO_MAX = 256             # restaurants remembered at once (bounded, R2)
 _change_memo = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("pos_archive._change_memo", _change_memo)
 
 
 def archive_started(restaurant_id, provider, db_path=DB_PATH, key=None) -> bool:

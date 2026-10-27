@@ -1016,6 +1016,8 @@ ANSWER_CACHE_SECONDS = 24 * 3600
 REFUSAL_CACHE_SECONDS = 3600
 ANSWER_CACHE_MAX = 500
 _ANSWER_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("staff_knowledge._ANSWER_CACHE", _ANSWER_CACHE)
 _ANSWER_LOCK = threading.Lock()
 
 

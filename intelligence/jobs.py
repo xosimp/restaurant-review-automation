@@ -134,6 +134,8 @@ def real_restaurant_ids(db_path=DB_PATH) -> set:
 # database — kind_stats asks per kind on a Home build.
 ELIGIBILITY_TTL_SECONDS = 60
 _excluded_cache = {"key": None, "at": 0.0, "ids": None}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("intelligence.jobs._excluded_cache", _excluded_cache)
 
 
 def excluded_learning_ids(db_path=DB_PATH) -> set:

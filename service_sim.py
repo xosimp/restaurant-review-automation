@@ -84,6 +84,8 @@ MAX_TICKET_MINUTES = {"kitchen": 90, "floor": 240}
 STAGES = {"kitchen": "line_cook", "floor": "server"}
 STAGE_WORDS = {"kitchen": ("ticket time", "cook"), "floor": ("table time", "server")}
 _CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("service_sim._CACHE", _CACHE)
 _CACHE_LOCK = threading.Lock()
 _CACHE_MAX = 64
 

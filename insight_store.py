@@ -680,6 +680,8 @@ def _text_subject(text):
 
 
 _SUBJECTS_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("insight_store._SUBJECTS_CACHE", _SUBJECTS_CACHE)
 _SUBJECTS_TTL = 600
 
 

@@ -45,6 +45,8 @@ VALUE_SWEEP_CURSOR = "value_figures"
 BUILD_TTL_SECONDS = 3600
 
 _build_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("intelligence.dashboard._build_cache", _build_cache)
 _build_lock = threading.Lock()
 
 

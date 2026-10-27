@@ -36,7 +36,16 @@ import time as _boot_time
 _BOOT_STARTED = _boot_time.monotonic()
 PORT = int(os.getenv("PORT", 5000))
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
-from models import get_conn, get_restaurant, get_review_stats, get_reviews_data, get_top_issues, get_sentiment_trend, is_full_tier, get_active_modules
+from models import get_restaurant, get_review_stats, get_reviews_data, get_top_issues, get_sentiment_trend, is_full_tier, get_active_modules
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from auth import get_session_user, create_user
 
 # ── Sentry error monitoring ───────────────────────────────────────────────────

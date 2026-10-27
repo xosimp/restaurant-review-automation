@@ -34,7 +34,16 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from notify import send_sms, _normalize_phone
 from ai_utils import create_with_retry, extract_text, get_client, model_for
 
@@ -917,6 +926,8 @@ JOIN_FLEET_PER_RESTAURANT_DEFAULT = 6          # GUEST_JOIN_FLEET_PER_RESTAURANT
 JOIN_RESTAURANT_HOURLY_DEFAULT = 40            # GUEST_JOIN_RESTAURANT_HOURLY_CAP
 JOIN_RESTAURANT_RESERVED_DEFAULT = 10          # GUEST_JOIN_RESTAURANT_RESERVED
 _join_fleet_memo = {"at": 0.0, "n": 0}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("guest_marketing._join_fleet_memo", _join_fleet_memo)
 
 
 def _join_marketing_restaurants(conn) -> int:
