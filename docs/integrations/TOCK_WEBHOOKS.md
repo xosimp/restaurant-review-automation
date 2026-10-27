@@ -8,6 +8,20 @@ on the thread "Support Help Request". Cc'd: Danny Wurst and Erik Baylis (ebaylis
 The reply asked for read-only webhook access for Simple EJ's Kitchen & Tap (prod rid 5). Tock will register these exact
 values, so the receivers must be built to match them. Do not rename them.
 
+## How events are applied (audit #25 A06-09, before go-live)
+
+- **Order.** Tock retries deliveries, so an event can arrive after a newer one. Each booking keeps the newest applied
+  event's own time (`tock_bookings.event_ms`, from the record's `updatedAt`/`modifiedAt`, else the event's
+  `occurredAt`/`timestamp`/`createdAt`); an older event is stored in `tock_events` and not applied — a late
+  "booked" never revives a cancelled party or its covers. `reprocess_tock` re-applies in event time, not arrival
+  order. When Tock confirms its format, check which field carries the change time and name it first in
+  `guest_hub._EVENT_TIME_BODY` / `_EVENT_TIME_EVENT` / `_EVENT_TIME_ENVELOPE`.
+- **Whose phone.** On a reservation or walk-in, a guest's phone, email and marketing flag are read from its guest
+  object only (or the booking's own top-level fields when there is none), never from a venue or staff object
+  elsewhere in the body. A guest-profile event's body is the guest, and is read whole.
+- **Still to do once the format is confirmed:** replace the alias lists in `guest_hub` with Tock's exact keys, add
+  one real payload (every guest detail replaced) to `tests/fixtures/providers/`, and run `guest_hub.reprocess_tock(5)`.
+
 ## Endpoints (one per webhook)
 
 | Webhook | Events requested | URL |
