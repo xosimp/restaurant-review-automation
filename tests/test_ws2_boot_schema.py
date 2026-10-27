@@ -1,5 +1,5 @@
 """Release-safety fix round 10/26/26, WS2 — one boot schema (A05-07, R20),
-run-once data migrations (A05-08) and the build-time reference schema
+run-once data migrations in data_migrations (A05-08) and the build-time reference schema
 (A05-09).
 
 models.boot_schema() is the whole boot DDL chain; hosted_dashboard,
@@ -32,7 +32,7 @@ def reference():
 def test_reference_schema_includes_the_tables_init_db_never_built(reference):
     for table in ("users", "sessions", "memberships", "two_fa_challenges", "webhooks", "webhook_deliveries",
                   "guest_contacts", "guest_campaign_queue", "device_tokens", "sales_audits", "boot_events",
-                  "schema_migrations"):
+                  "data_migrations"):
         assert table in reference, table
     # ...with their newest columns.
     assert {"email_change_pending", "email_change_attempts", "policy_notice_dismissed"} <= reference["users"]
@@ -186,15 +186,15 @@ def test_a_ledgered_rewrite_runs_on_a_database_that_never_had_it(db_path):
     conn = sqlite3.connect(db_path)
     rid = conn.execute("INSERT INTO restaurants (name, owner_email, temp_password) VALUES ('A','a@x.test','pw')"
                        ).lastrowid
-    conn.execute("DELETE FROM schema_migrations WHERE name='temp_password_scrub_a3'")
+    conn.execute("DELETE FROM data_migrations WHERE name='temp_password_scrub_a3'")
     conn.commit()
     conn.close()
     with contextlib.redirect_stdout(io.StringIO()):
         models.init_db(db_path)
     conn = sqlite3.connect(db_path)
     assert conn.execute("SELECT temp_password FROM restaurants WHERE id=?", (rid,)).fetchone()[0] is None
-    row = conn.execute("SELECT rows FROM schema_migrations WHERE name='temp_password_scrub_a3'").fetchone()
-    assert row and row[0] == 1
+    row = conn.execute("SELECT detail FROM data_migrations WHERE name='temp_password_scrub_a3'").fetchone()
+    assert row and row[0].startswith("rows=1")
     # ...and once recorded, a row written since is left alone.
     conn.execute("UPDATE restaurants SET temp_password='kept' WHERE id=?", (rid,))
     conn.commit()
@@ -218,7 +218,7 @@ def test_run_once_records_only_success(db_path):
     assert models.run_once("ws2_probe", lambda: calls.append(3), db_path=db_path) is False
     assert calls == [1, 2]
     row = [m for m in models.applied_migrations(db_path) if m["name"] == "ws2_probe"][0]
-    assert row["rows"] == 7
+    assert row["detail"].startswith("rows=7")
 
 
 def test_missing_sales_rewrite_no_longer_nulls_a_new_day_on_the_next_boot(db_path):

@@ -2840,7 +2840,7 @@ def init_db(db_path: str = DB_PATH):
         # Temporary passwords are no longer persisted (security audit A3):
         # they are emailed once and a fresh one is minted at contract
         # signing. Anything still stored is a plaintext login credential.
-        # Once per database (schema_migrations — release-safety audit
+        # Once per database (data_migrations — release-safety audit
         # 10/26/26 A05-08): nothing has written the column since.
         ("temp_password_scrub_a3",
          "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''"),
@@ -4880,12 +4880,12 @@ def init_db(db_path: str = DB_PATH):
     ]
     _pg_boot = _dialect.is_postgres(conn)
     try:
-        conn.execute(SCHEMA_MIGRATIONS_DDL)
+        conn.execute(DATA_MIGRATIONS_DDL)
         conn.commit()
         for m in migrations:
             if isinstance(m, tuple):
                 # (name, data rewrite): once per database, recorded in
-                # schema_migrations (release-safety audit 10/26/26 A05-08).
+                # data_migrations (release-safety audit 10/26/26 A05-08).
                 _run_once_sql(conn, m[0], m[1])
                 continue
             # "no such table": a few of these touch a table an init_* helper
@@ -5297,7 +5297,7 @@ def init_db(db_path: str = DB_PATH):
     grandfather_pos_guest_match(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
     # back to Cavnar's default, alerts off (Benchmarking re-audit #3). Once
-    # per seeding rule (schema_migrations, A05-08): a change to
+    # per seeding rule (data_migrations, A05-08): a change to
     # thresholds.seeded_targets ships with a new name here.
     run_once("seeded_targets_rule_v1", lambda: backfill_seeded_targets(db_path=db_path, raise_errors=True),
              db_path=db_path)
@@ -5415,29 +5415,31 @@ def _boot_backfill(boot_started, name, fn) -> bool:
 # ── Run-once boot data migrations (release-safety audit 10/26/26, A05-08) ───
 #
 # A data rewrite at boot (an UPDATE or DELETE that fixes legacy rows) runs
-# ONCE per database and records itself here, instead of re-running on every
-# boot forever: every boot's scan made each deploy's outage longer, and a
-# rewrite meant for legacy rows kept matching rows written since (a labor day
-# whose sales had not arrived yet turned "unknown" at the next deploy). The
-# name is the migration's identity: a rewrite whose rule changes ships under
-# a new name. tests/test_ws2_boot_schema.py boots twice and holds the second
-# boot to no rewrite outside its recorded list of recurring ones.
-SCHEMA_MIGRATIONS_DDL = """CREATE TABLE IF NOT EXISTS schema_migrations (
-    name        TEXT PRIMARY KEY,
-    applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    rows        INTEGER,
-    ms          INTEGER
-)"""
+# ONCE per database and records itself in the data_migrations ledger (fix
+# round E's, which a few migrations already used — one ledger, not two),
+# instead of re-running on every boot forever: every boot's scan made each
+# deploy's outage longer, and a rewrite meant for legacy rows kept matching
+# rows written since (a labor day whose sales had not arrived yet turned
+# "unknown" at the next deploy). The name is the migration's identity: a
+# rewrite whose rule changes ships under a new name. tests/
+# test_ws2_boot_schema.py boots twice and holds the second boot to no
+# rewrite outside its recorded list of recurring ones.
+DATA_MIGRATIONS_DDL = """CREATE TABLE IF NOT EXISTS data_migrations (
+            name        TEXT PRIMARY KEY,
+            applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            detail      TEXT
+        )"""
 
 
 def migration_applied(conn, name) -> bool:
-    row = conn.execute("SELECT 1 FROM schema_migrations WHERE name=?", (name,)).fetchone()
+    row = conn.execute("SELECT 1 FROM data_migrations WHERE name=?", (name,)).fetchone()
     return row is not None
 
 
 def _record_migration(conn, name, rows=None, ms=None):
-    conn.execute("INSERT OR IGNORE INTO schema_migrations (name, rows, ms) VALUES (?,?,?)",
-                 (name, None if rows is None else int(rows), None if ms is None else int(ms)))
+    detail = ", ".join(p for p in ((f"rows={int(rows)}" if isinstance(rows, int) and rows >= 0 else ""),
+                                   (f"{int(ms)} ms" if ms is not None else "")) if p) or None
+    conn.execute("INSERT OR IGNORE INTO data_migrations (name, detail) VALUES (?, ?)", (name, detail))
 
 
 def _run_once_sql(conn, name, sql) -> bool:
@@ -5456,14 +5458,14 @@ def _run_once_sql(conn, name, sql) -> bool:
 
 def run_once(name, fn, db_path=None) -> bool:
     """Run the data migration `fn()` once per database and record it in
-    schema_migrations. Returns whether it ran now. `fn` raising leaves it
+    data_migrations. Returns whether it ran now. `fn` raising leaves it
     unrecorded (the next boot tries again) and is logged, never raised — the
     stance every boot backfill already had."""
     import time as _t
     _log = logging.getLogger(__name__)
     conn = get_conn(db_path)
     try:
-        conn.execute(SCHEMA_MIGRATIONS_DDL)
+        conn.execute(DATA_MIGRATIONS_DDL)
         conn.commit()
         if migration_applied(conn, name):
             return False
@@ -5486,11 +5488,11 @@ def run_once(name, fn, db_path=None) -> bool:
 
 
 def applied_migrations(db_path=None) -> list:
-    """schema_migrations, newest first, for the console and the tests."""
+    """data_migrations, newest first, for the console and the tests."""
     conn = get_conn(db_path)
     try:
         return [dict(r) for r in conn.execute(
-            "SELECT name, applied_at, rows, ms FROM schema_migrations ORDER BY applied_at DESC, name").fetchall()]
+            "SELECT name, applied_at, detail FROM data_migrations ORDER BY applied_at DESC, name").fetchall()]
     except sqlite3.OperationalError:
         return []
     finally:
