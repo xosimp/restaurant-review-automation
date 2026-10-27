@@ -759,11 +759,20 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
                               reason="transient" if retryable else "rejected")
             if not retryable:
                 break
+            asked = _retry_after_seconds(resp) if resp.status_code in (429, 503) else None
         except Exception as e:
             last = SendResult(False, error=str(e)[:300], attempts=attempt, reason="transient")
+            asked = None
 
         if attempt < _MAX_ATTEMPTS:
             pause = _BACKOFF_BASE * (2 ** (attempt - 1))
+            if asked is not None:
+                # Resend said how long to wait (audit #25 A06-15): a retry
+                # inside that window is refused again, so the wait is at
+                # least that long — within what is left of the send budget,
+                # else the send stops here and is recorded failed (the bulk
+                # lane and the caller's own retry take it from there).
+                pause = max(pause, asked)
             if _SEND_BUDGET_SECONDS - spent - pause < _MIN_ATTEMPT_SECONDS:
                 break
             spent += pause
@@ -777,6 +786,32 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
                 subject, to_email, result.attempts, result.error)
     _record(restaurant_id, email_type, to_email, subject, result, log_send)
     return result
+
+
+def _retry_after_seconds(resp):
+    """Seconds a 429/503's Retry-After header asks for (delta-seconds or an
+    HTTP-date), or None when it says nothing usable."""
+    raw = None
+    try:
+        raw = (getattr(resp, "headers", None) or {}).get("Retry-After")
+    except Exception as e:
+        log.debug("Retry-After unreadable: %s", e)
+    raw = str(raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        from datetime import datetime as _dt, timezone as _tz
+        when = parsedate_to_datetime(raw)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=_tz.utc)
+        return max(0.0, (when - _dt.now(_tz.utc)).total_seconds())
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
 
 
 class EmailNotSent(RuntimeError):
