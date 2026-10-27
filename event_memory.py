@@ -257,7 +257,13 @@ def init_event_memory(db_path=DB_PATH):
     finally:
         conn.close()
     backfill_public_history(db_path)
-    retract_churn_events(db_path)
+    # Once per database (data_migrations — blind re-audit 10/27/26 B5 P3):
+    # a dated purge of what the old membership rule invented before
+    # EVIDENCE_RULE_FROM; record_market_snapshot writes by the evidence rule
+    # since, so nothing written later can match it.
+    import models as _models_once
+    _models_once.run_once("market_events_churn_retracted_v1",
+                          lambda: retract_churn_events(db_path, strict=True), db_path=db_path)
     rekey_record(db_path)
 
 
@@ -392,11 +398,11 @@ def rekey_record(db_path=DB_PATH) -> dict:
 EVIDENCE_RULE_FROM = "2026-09-30"
 
 
-def retract_churn_events(db_path=DB_PATH) -> int:
+def retract_churn_events(db_path=DB_PATH, strict=False) -> int:
     """Remove the market events the old membership rule invented, all
     observed before EVIDENCE_RULE_FROM: every "gone", and every "arrived"
-    with more than NEW_PLACE_MAX_REVIEWS reviews (or none reported). Idempotent, at boot. Returns rows
-    removed; never raises."""
+    with more than NEW_PLACE_MAX_REVIEWS reviews (or none reported). Idempotent; once per database at
+    boot (data_migrations). Returns rows removed; never raises unless `strict`."""
     try:
         conn = get_conn(db_path)
         try:
@@ -410,6 +416,8 @@ def retract_churn_events(db_path=DB_PATH) -> int:
             log.info("event_memory: %s market events from search churn retracted", n)
         return n or 0
     except Exception as e:
+        if strict:               # the boot's run-once: not recorded as done
+            raise
         log.warning("event_memory: churn retraction skipped: %s", e)
         return 0
 

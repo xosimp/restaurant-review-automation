@@ -4584,7 +4584,7 @@ def admin_api_rollout_list(current_user):
     """Every cohort rollout flag (rollout.py): percent, allow and deny lists,
     who set it, and any ROLLOUT_* environment override that wins over it."""
     import rollout
-    return jsonify(ok=True, flags=rollout.list_flags())
+    return jsonify(ok=True, flags=rollout.list_flags(), known=rollout.known_features())
 
 
 @admin_bp.route("/admin/api/rollout", methods=["POST"])

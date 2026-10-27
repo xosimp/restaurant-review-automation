@@ -107,10 +107,13 @@ def _remove(path):
         pass
 
 
-def _read_json(path):
+def _read_json(path, strict=False):
+    """The file's JSON dict, or None. `strict` in object storage: an
+    unreadable store raises marker_store.MarkerUnreadable (the guard fails
+    closed — blind re-audit 10/27/26 B5 P3)."""
     if _object_backed():
         import marker_store
-        return marker_store.read(os.path.basename(path))
+        return marker_store.read(os.path.basename(path), strict=strict)
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -142,9 +145,17 @@ def _parse(value):
 
 
 def frozen() -> dict:
-    """The freeze record (detected_at, db_seq, volume_seq, db_id), or None."""
+    """The freeze record (detected_at, db_seq, volume_seq, db_id), or None.
+    In object storage a store that cannot answer is a freeze too ({unreadable:
+    True, error}): "no freeze" there resumed briefs and alerts against a
+    rewound database during an outage (blind re-audit 10/27/26 B5 P3)."""
     if _object_backed():
-        return _read_json(freeze_path())
+        import marker_store
+        try:
+            return _read_json(freeze_path(), strict=True)
+        except marker_store.MarkerUnreadable as e:
+            log.error("restore guard: the freeze marker is unreadable (%s) - holding as frozen", e)
+            return {"unreadable": True, "error": str(e)[:200]}
     return _read_json(freeze_path()) if os.path.exists(freeze_path()) else None
 
 
@@ -170,7 +181,9 @@ def check_and_stamp(db_path=None) -> dict:
         conn = get_conn(db_path) if db_path else get_conn()
         try:
             db_id, db_seq = _parse(_db_value(conn))
-            mark = _read_json(epoch_path()) or {}
+            # Strict: an unreadable copy is NOT "no baseline" — re-baselining
+            # on it would stamp a restored database's counter as the truth.
+            mark = _read_json(epoch_path(), strict=True) or {}
             vol_id, vol_seq = mark.get("db_id"), int(mark.get("seq") or 0)
             if db_id and vol_id == db_id and db_seq < vol_seq:
                 record = {"detected_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), "db_id": db_id,

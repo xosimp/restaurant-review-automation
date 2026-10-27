@@ -3739,8 +3739,10 @@ _RETENTION_DAYS = {
     "webhook_outbox":     int(os.getenv("RETAIN_WEBHOOK_OUTBOX_DAYS", "30")),
     "morning_brief_deliveries": int(os.getenv("RETAIN_BRIEF_DELIVERIES_DAYS", "90")),
     "alert_storm_caps":   int(os.getenv("RETAIN_ALERT_STORM_CAPS_DAYS", "365")),
-    # The sign-in record: 90 days, auth.LOGIN_HISTORY_RETENTION_DAYS, which
-    # auth.prune_login_history also applies at boot. Its created_at index is
+    # The sign-in record: 90 days, auth.LOGIN_HISTORY_RETENTION_DAYS — this
+    # registry's nightly prune alone (the boot's own was dropped, blind
+    # re-audit 10/27/26; auth.prune_login_history stays for a by-hand run, on
+    # this window). Its created_at index is
     # auth.AUTH_INDEXES' idx_login_history_created (INT-2), made at boot with
     # the table — after this module's own boot init, so it is not made here.
     "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),

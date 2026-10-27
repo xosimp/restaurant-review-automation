@@ -166,21 +166,24 @@ def test_the_existing_send_points_record_their_refusals(env, monkeypatch, db_pat
 # ── a misnamed environment is visible ───────────────────────────────────────
 
 def test_environment_problem_only_for_an_unacknowledged_non_production_name(env):
+    # One check (config.environment_name_problem): a production-looking
+    # service whose name stands it down. A staging with no production sign
+    # is not a problem; one that looks like production must say so.
     assert config.environment_problem() == ""                       # a laptop
-    env(RAILWAY_ENVIRONMENT_NAME="production", RAILWAY_PROJECT_ID="p1")
+    env(RAILWAY_ENVIRONMENT_NAME="production", RAILWAY_PROJECT_ID="p1", CAVNAR_PRODUCTION_SERVICE="1")
     assert config.environment_problem() == ""
     env(RAILWAY_ENVIRONMENT_NAME="prod")                            # renamed, or mistyped
-    assert config.environment_problem() == "env_not_production"
+    assert config.environment_problem() == "not_production_env"
     env(CAVNAR_ENV="staging")                                       # said on purpose
     assert config.environment_problem() == ""
 
 
 def test_the_boot_logs_an_error_for_a_misnamed_environment(env, caplog):
-    env(RAILWAY_ENVIRONMENT_NAME="prod", RAILWAY_PROJECT_ID="p1")
+    env(RAILWAY_ENVIRONMENT_NAME="prod", RAILWAY_PROJECT_ID="p1", CAVNAR_PRODUCTION_SERVICE="1")
     log = logging.getLogger("test-boot")
     with caplog.at_level(logging.WARNING, logger="test-boot"):
         state = config.report_environment_at_boot(log)
-    assert state["problem"] == "env_not_production" and state["outbound_sends_allowed"] is False
+    assert state["problem"] == "not_production_env" and state["outbound_sends_allowed"] is False
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert errors and "'prod'" in errors[0].getMessage() and "CAVNAR_ENV=production" in errors[0].getMessage()
     caplog.clear()
@@ -193,15 +196,15 @@ def test_the_boot_logs_an_error_for_a_misnamed_environment(env, caplog):
 def test_health_shows_the_misnamed_environment_and_the_refused_sends(env, db_path, monkeypatch):
     import status_manager
     monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
-    env(RAILWAY_ENVIRONMENT_NAME="prod", RAILWAY_PROJECT_ID="p1")
+    env(RAILWAY_ENVIRONMENT_NAME="prod", RAILWAY_PROJECT_ID="p1", CAVNAR_PRODUCTION_SERVICE="1")
     config.refused_send("sms")
     payload, status = status_manager.health_snapshot(db_path)
     assert status == 200 and payload["status"] == "degraded"
-    assert "env_not_production" in payload["problems"]
+    assert "not_production_env" in payload["problems"]
     assert payload["sends_refused"] == {"sms": 1}
     env(CAVNAR_ENV="staging")
     payload, _ = status_manager.health_snapshot(db_path)
-    assert "env_not_production" not in payload["problems"]
+    assert "not_production_env" not in payload["problems"]
 
 
 def test_health_notes_an_unpinned_stripe_api_version(env, db_path, monkeypatch):
@@ -220,7 +223,7 @@ def test_the_console_warns_about_each(env, monkeypatch):
     import platform_monitor
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x")
     monkeypatch.delenv("STRIPE_API_VERSION", raising=False)
-    w = platform_monitor.system_warnings({"deployment": {"env": "prod", "problem": "env_not_production",
+    w = platform_monitor.system_warnings({"deployment": {"env": "prod", "problem": "not_production_env",
                                                          "outbound_sends_allowed": False,
                                                          "sends_refused": {"email": {"count": 2}},
                                                          "stripe_api_version": None}})

@@ -182,6 +182,31 @@ def test_release_lag_verdicts():
     assert release_lag.verdict("unknown", SHA, head_time, head_time)[0] is False
 
 
+def test_release_lag_measures_from_the_push_not_the_commit(monkeypatch):
+    """Blind re-audit 10/27/26 (B5 P3): a commit made two hours before its
+    push is not two hours late the moment it is pushed."""
+    from scripts import release_lag
+    assert release_lag.pushed_at(None, "main", SHA, "") == (None, "no --repo or GITHUB_TOKEN")
+    committed, pushed = 1_800_000_000.0, 1_800_000_000.0 + 2 * 3600
+    acts = [{"after": "f" * 40, "timestamp": "2027-01-15T08:00:00Z", "activity_type": "push"},
+            {"after": SHA, "timestamp": "2027-01-15T10:00:00+00:00", "activity_type": "push"}]
+    t = release_lag.push_time_from_activities(acts, SHA)
+    assert t is not None and release_lag.push_time_from_activities(acts, "0" * 40) is None
+    deps = [{"sha": SHA, "created_at": "2027-01-15T10:00:05Z"}, {"sha": SHA, "created_at": "2027-01-15T11:00:00Z"}]
+    assert release_lag.push_time_from_deployments(deps, SHA) - t == 5
+    # Thirty minutes after the push, two and a half hours after the commit: within the lag.
+    assert release_lag.verdict("000000000000", SHA, pushed, pushed + 30 * 60)[0] is True
+    assert release_lag.verdict("000000000000", SHA, committed, pushed + 30 * 60)[0] is False
+    # main() reads the push time when it can, and says when it fell back.
+    monkeypatch.setattr(release_lag, "deployed_build", lambda url: "000000000000")
+    monkeypatch.setattr(release_lag, "pushed_at", lambda repo, branch, sha, token: (pushed, "the push"))
+    monkeypatch.setattr(release_lag.time, "time", lambda: pushed + 30 * 60)
+    assert release_lag.main(["https://x.test", "--head-sha", SHA, "--head-time", str(committed),
+                             "--repo", "o/r"]) == 0
+    monkeypatch.setattr(release_lag, "pushed_at", lambda repo, branch, sha, token: (None, "no --repo"))
+    assert release_lag.main(["https://x.test", "--head-sha", SHA, "--head-time", str(committed)]) == 1
+
+
 def test_release_workflow_smokes_each_production_deploy_and_checks_lag_hourly():
     import yaml
     with open(os.path.join(ROOT, ".github", "workflows", "release.yml"), encoding="utf-8") as f:
@@ -195,5 +220,7 @@ def test_release_workflow_smokes_each_production_deploy_and_checks_lag_hourly():
     assert "scripts/smoke.py" in runs and "--expect-sha" in runs and "github.event.deployment.sha" in runs
     assert "--expect-env production" in runs
     assert any(s.get("env", {}).get("SMOKE_TOKEN") for s in smoke_job["steps"])
-    assert "scripts/release_lag.py" in " ".join(s.get("run", "") for s in lag_job["steps"])
+    lag_runs = " ".join(s.get("run", "") for s in lag_job["steps"])
+    assert "scripts/release_lag.py" in lag_runs and "--repo" in lag_runs
+    assert any(s.get("env", {}).get("GITHUB_TOKEN") for s in lag_job["steps"])
     assert wf["permissions"] == {"contents": "read", "deployments": "read"}

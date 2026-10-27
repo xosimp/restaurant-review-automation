@@ -112,41 +112,56 @@ def test_auth_alters_raise_unless_already_applied(db_path, monkeypatch):
 # ── run-once data migrations ─────────────────────────────────────────────────
 
 # Every-boot rewrites that live outside models.py's ledger today, by module,
-# each a candidate for models.run_once after its own verification (several
-# are ongoing guards, not legacy fixes: the 90-day login_history prune, the
-# lower-cased usernames). A NEW every-boot UPDATE or DELETE fails this test:
-# put it on the ledger (models.run_once / a (name, sql) entry in init_db's
-# list) or, if it truly must run on every boot, add it here with why.
+# each with WHY it still runs on every boot. A NEW every-boot UPDATE or
+# DELETE fails this test: put it on the ledger (models.run_once /
+# models.run_once_sql / a (name, sql) entry in init_db's list) or, if it truly
+# must run on every boot, add it here with why. The list may only shrink
+# (RECURRING_BOOT_WRITES_CEILING). Blind re-audit 10/27/26 (RF6, B5 P3)
+# moved the hot-table ones to the ledger — sessions, login_history (the
+# nightly retention prune alone), ai_usage, the legacy 2FA scrub,
+# demand_signals, market_events, capability_changes, email_suppressions,
+# membership_pin_attempts — after checking that no writer produces their
+# legacy shape any more. What is left, each a candidate for future cleanup
+# after additional verification of its writers:
 RECURRING_BOOT_WRITES = {
-    "DELETE FROM demand_signals WHERE source='post'": "demand_signals.init — post rows re-kinded",
-    "UPDATE OR IGNORE demand_signals SET kind='post'": "demand_signals.init",
-    "DELETE FROM login_history WHERE created_at <": "auth.init_auth — the 90-day prune (ongoing)",
-    "DELETE FROM market_events WHERE observed_on<'2026-09-30'": "event_memory — a dated legacy purge",
-    "DELETE FROM membership_pin_attempts WHERE membership_id NOT": "auth.init_auth — orphans (ongoing)",
-    "DELETE FROM sessions WHERE device_type='admin-view-as'": "auth.init_auth — orphaned view-as (ongoing)",
-    "UPDATE ai_usage SET": "ai_utils.init_ai_ops — legacy vendor/outcome/price_version backfills",
-    "UPDATE ask_cavnar_conversations SET user_id": "models._attribute_ownerless_ask_chats",
-    "UPDATE ask_cavnar_messages SET user_id": "models._attribute_ownerless_ask_chats",
-    "UPDATE ask_topics SET user_id": "models._attribute_ownerless_ask_chats",
-    "UPDATE capability_changes SET attribute": "models.init_capability_changes — labelled subjects",
-    "UPDATE email_suppressions SET scope='all'": "models.init_email_log",
-    "UPDATE fintech_invoice_lines SET restaurant_id": "fintech_invoices.init",
-    "UPDATE guest_contacts SET source='toast_invite'": "guest_marketing.init_guest_marketing",
-    "UPDATE guest_newsletter_recipients SET": "guest_marketing.init_guest_marketing",
-    "UPDATE labor_history SET kind='rolling_window'": "models — legacy labor windows",
-    "UPDATE rec_instances SET silenced_until": "rec_ledger.init_rec_ledger",
-    "UPDATE restaurants SET contract_signed_at": "billing_jobs.init_billing",
-    "UPDATE restaurants SET converted_at": "billing_jobs.init_billing",
-    "UPDATE restaurants SET two_fa_code=NULL": "auth.init_auth — legacy 2FA columns scrubbed (ongoing)",
-    "UPDATE schedule_shares SET expires_at=datetime(COALESCE(sent": "models — share expiry backfill",
-    "UPDATE sessions SET": "auth.init_auth — session stamps normalised / admin 12h (ongoing)",
-    "UPDATE users SET role='employee'": "auth.init_auth — PIN identities (ongoing)",
-    "UPDATE users SET username = LOWER(username)": "auth.init_auth — usernames lower-cased (ongoing)",
+    "UPDATE users SET role='employee'": "auth.init_auth — ONGOING guard (SEC-1): a users row written outside "
+                                        "create_user (a seed, a by-hand fix) for a PIN identity is an employee; "
+                                        "users is small",
+    "UPDATE users SET username = LOWER(username)": "auth.init_auth — ONGOING guard: a mixed-case username written "
+                                                   "outside create_user can never sign in; repaired on the next "
+                                                   "deploy (tests/test_auth.py holds it)",
+    "UPDATE ask_cavnar_conversations SET user_id": "models._attribute_ownerless_ask_chats — a caller may still "
+                                                   "save a login-less turn (user_id None); kept until every writer "
+                                                   "requires a login",
+    "UPDATE ask_cavnar_messages SET user_id": "models._attribute_ownerless_ask_chats — as above",
+    "UPDATE ask_topics SET user_id": "models._attribute_ownerless_ask_chats — as above",
+    "UPDATE fintech_invoice_lines SET restaurant_id": "fintech_invoices.init — small table; writer not yet verified",
+    "UPDATE guest_contacts SET source='toast_invite'": "guest_marketing.init_guest_marketing — the invite job's "
+                                                      "writer not yet verified to stamp source on every path",
+    "UPDATE guest_newsletter_recipients SET": "guest_marketing.init_guest_marketing — the send path's failure "
+                                              "classification not yet verified to cover every legacy shape",
+    "UPDATE labor_history SET kind='rolling_window'": "models — legacy labor windows; writer not yet verified",
+    "UPDATE rec_instances SET silenced_until": "rec_ledger.init_rec_ledger — ONGOING: re-applies the current "
+                                               "RECURRING_*_DAYS caps when they change; a row inside its cap is "
+                                               "untouched",
+    "UPDATE restaurants SET contract_signed_at": "billing_jobs.init_billing — small table; the signing path's "
+                                                "own stamp not yet verified",
+    "UPDATE restaurants SET converted_at": "billing_jobs.init_billing — as above, the first-payment stamp",
+    "UPDATE schedule_shares SET expires_at=datetime(COALESCE(sent": "models.migrate_schedule_shares — share "
+                                                                   "expiry backfill; writer not yet verified",
 }
+# The ratchet: this number only ever goes down.
+RECURRING_BOOT_WRITES_CEILING = 13
 
 # What init_db put on the ledger (A05-08): none of these may run again.
 LEDGERED = ("temp_password", "marketing_content_log SET reach=NULL", "DELETE FROM recipe_ingredients",
-            "labor_daily_history SET sales=NULL")
+            "labor_daily_history SET sales=NULL",
+            # blind re-audit 10/27/26 (RF6): moved off every boot
+            "UPDATE sessions SET", "DELETE FROM sessions WHERE device_type='admin-view-as'",
+            "UPDATE restaurants SET two_fa_code=NULL", "DELETE FROM login_history", "UPDATE ai_usage SET",
+            "DELETE FROM membership_pin_attempts", "DELETE FROM market_events", "demand_signals SET kind",
+            "DELETE FROM demand_signals", "UPDATE capability_changes SET attribute",
+            "UPDATE email_suppressions SET scope")
 
 
 def _traced_boot(path, monkeypatch):
@@ -176,11 +191,80 @@ def test_a_second_boot_runs_no_unrecorded_rewrite(db_path, monkeypatch):
     names = {m["name"] for m in models.applied_migrations(db_path)}
     assert {"temp_password_scrub_a3", "marketing_unmeasured_null_mb7", "recipe_pair_dedup",
             "seeded_targets_rule_v1", "missing_sales_null_ca3_f3"} <= names
+    assert set(RF6_RUN_ONCE) <= names, set(RF6_RUN_ONCE) - names
     ran = _traced_boot(db_path, monkeypatch)
     for stmt in ran:
         assert not any(k in stmt for k in LEDGERED), f"a ledgered rewrite ran again: {stmt[:120]}"
         assert any(stmt.startswith(p) for p in RECURRING_BOOT_WRITES), \
             f"a new every-boot data rewrite: {stmt[:120]} — put it on models.run_once"
+
+
+# The run-once names blind re-audit 10/27/26 (RF6) gave the rewrites it moved.
+RF6_RUN_ONCE = ("legacy_two_fa_scrub",
+                "session_rows_normalised_v1", "pin_attempt_orphans_swept_v1", "ai_usage_vendor_outcome_v1",
+                "ai_usage_price_version_v1", "market_events_churn_retracted_v1", "post_signals_migrated_v1",
+                "capability_rating_subject_split_v1", "email_suppression_scope_all_v1")
+
+
+def test_the_recurring_boot_writes_only_shrink():
+    assert len(RECURRING_BOOT_WRITES) <= RECURRING_BOOT_WRITES_CEILING, (
+        "a new every-boot data rewrite: put it on models.run_once / run_once_sql instead")
+
+
+def test_moved_rewrites_run_on_an_upgraded_database_and_never_again(db_path):
+    """The legacy shapes the moved rewrites fix, on a database that never
+    recorded them (an upgrade from before this round): fixed on the first
+    boot, recorded, and a row written in the legacy shape afterwards is left
+    alone by the next boot (it is not the boot's business any more)."""
+    conn = sqlite3.connect(db_path)
+    rid = conn.execute("INSERT INTO restaurants (name, owner_email, two_fa_code) VALUES ('A','a@x.test','123456')"
+                       ).lastrowid
+    uid = conn.execute("INSERT INTO users (restaurant_id, username, email, password_hash, role) "
+                       "VALUES (?, 'MixedCase', 'pin1@staff.invalid', 'x', 'client')", (rid,)).lastrowid
+    conn.execute("INSERT INTO sessions (token, user_id, expires_at) VALUES ('tok-rf6', ?, '2030-01-01T10:00:00+00:00')",
+                 (uid,))
+    conn.execute("INSERT INTO email_suppressions (email, reason, scope) VALUES ('s@x.test', 'bounce', NULL)")
+    conn.execute(f"DELETE FROM data_migrations WHERE name IN ({','.join('?' * len(RF6_RUN_ONCE))})", RF6_RUN_ONCE)
+    conn.commit()
+    conn.close()
+    with contextlib.redirect_stdout(io.StringIO()):
+        models.boot_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("SELECT two_fa_code FROM restaurants WHERE id=?", (rid,)).fetchone()[0] is None
+        assert conn.execute("SELECT username, role FROM users WHERE id=?", (uid,)).fetchone() == ("mixedcase",
+                                                                                                  "employee")
+        assert conn.execute("SELECT expires_at FROM sessions WHERE token='tok-rf6'").fetchone()[0] == \
+            "2030-01-01 10:00:00"
+        assert conn.execute("SELECT scope FROM email_suppressions WHERE email='s@x.test'").fetchone()[0] == "all"
+        names = {r[0] for r in conn.execute("SELECT name FROM data_migrations")}
+        assert set(RF6_RUN_ONCE) <= names, set(RF6_RUN_ONCE) - names
+        conn.execute("UPDATE sessions SET expires_at='2031-01-01T10:00:00+00:00' WHERE token='tok-rf6'")
+        conn.commit()
+    finally:
+        conn.close()
+    with contextlib.redirect_stdout(io.StringIO()):
+        models.boot_schema(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        # A legacy-shaped row written since is not the boot's business any more.
+        assert conn.execute("SELECT expires_at FROM sessions WHERE token='tok-rf6'").fetchone()[0] == \
+            "2031-01-01T10:00:00+00:00"
+    finally:
+        conn.close()
+
+
+def test_retired_secret_columns_are_refused_at_write_time(db_path, caplog):
+    rid = models.create_restaurant(models.Restaurant(name="R", owner_email="r@x.test", temp_password="pw-1"),
+                                   db_path=db_path)
+    assert models.get_restaurant(rid, db_path=db_path).temp_password in (None, "")
+    with caplog.at_level("WARNING", logger="models"):
+        models.update_restaurant(rid, {"temp_password": "pw-2", "two_fa_code": "123456",
+                                       "two_fa_pending": "secret", "name": "Renamed"}, db_path=db_path)
+    r = models.get_restaurant(rid, db_path=db_path)
+    assert r.name == "Renamed"
+    assert not r.temp_password and not r.two_fa_code and not r.two_fa_pending
+    assert "refused retired secret column" in caplog.text
 
 
 def test_a_ledgered_rewrite_runs_on_a_database_that_never_had_it(db_path):

@@ -246,8 +246,9 @@ static_bundles.install(app)
 # fetch wrapper (_csrf_fetch.html) compares it with each JSON answer's
 # X-Cavnar-Build and offers a reload once they differ — a tab left open
 # across a deploy otherwise runs the old JavaScript against the new routes
-# (audit 10/26/26 A06-13).
-app.context_processor(lambda: {"cavnar_build": config.build_id()})
+# (audit 10/26/26 A06-13). A cohort switch (rollout "stale_tab_reload",
+# default on — client_compat.page_build) turns the bar off at run time.
+app.context_processor(lambda: {"cavnar_build": client_compat.page_build()})
 # The iPhone app's build on every /mobile/api and /staff/api request: a build
 # under MOBILE_MIN_BUILD gets 426 {update_required} (client_compat, audit #25
 # A06-02); one with no header is served until MOBILE_HEADERLESS_CUTOFF.
@@ -1118,12 +1119,10 @@ try:
     # also re-seeds, so a service added to SERVICES appears without a deploy.
     from status_manager import seed_default_services as _seed_status
     _seed_status()
-    # Which deployment this is and what it may do, in the log at every boot;
-    # an ERROR when Railway names an environment that is not production and
-    # CAVNAR_ENV does not say so (config.environment_problem, also on
-    # /health) — and a MOBILE_MIN_BUILD above every installed build is
-    # ignored, loudly (client_compat.check_min_build; blind re-audit 10/27/26).
-    config.report_environment_at_boot(_boot_log)
+    # A MOBILE_MIN_BUILD above every installed build is ignored, loudly
+    # (client_compat.check_min_build; blind re-audit 10/27/26). Which
+    # deployment this is, and a misnamed one, is logged by _post_boot
+    # (status_manager.boot_environment_report).
     client_compat.check_min_build()
     # What's new: release notes kept in whats_new.ENTRIES reach the table
     # with the push that ships them (missing titles only).
@@ -1299,6 +1298,10 @@ _demo_seed.start_background_seed()
 def _post_boot():
     import atexit
     import threading
+    # What this deployment is, and loudly what is wrong with its settings: an
+    # environment name that stands a production-looking service down, a drain
+    # shorter than the shutdown (blind re-audit 10/27/26 RF6).
+    _sm_boot.boot_environment_report()
     # The reference schema /health compares against, built now rather than
     # inside the first /health — i.e. inside Railway's deploy check (#134).
     try:

@@ -23,7 +23,9 @@ ways; the body names the problem by code.
 |---|---|---|
 | Connection refused / 502 | The process is down, crash-looping, or Railway is down | [Platform down](#platform-down) |
 | `500`, `"error": "db_unavailable"` or `"db_unreadable"` | The database (Postgres since 10/19/26) cannot be opened or read | [Database recovery](#database-recovery) |
-| `500`, `"error": "schema_mismatch"` (with `missing_count`) | The database lacks tables or columns this code expects — an empty or old restore, a skipped migration. The names are in the deploy log, not the body | [Database recovery](#database-recovery) |
+| `500`, `"error": "schema_mismatch"` (with `missing_count`) | The database lacks a table this code expects, or a column of a sign-in table (`status_manager.STRICT_SCHEMA_TABLES`: users, sessions, memberships, the second factor, staff PIN and portal access, restaurants, the migration ledger) — an empty or old restore, a skipped migration. The names are in the deploy log, not the body | [Database recovery](#database-recovery) |
+| `200`, `"status": "degraded"`, `schema_gaps` (with `schema_gaps_count`) | A column this code expects is missing from a table outside that list (drift: a column dropped by hand, a migration that never landed). Serving; the feature that reads it fails. The names are in the log (`health: the database lacks …`) — add the column (the boot's own `ALTER`), or redeploy so the boot does (blind re-audit 10/27/26) | [Something specific](#something-specific-is-broken) |
+| `200`, `"status": "degraded"`, `not_production_env` | A Railway service that looks like production (a live Stripe key, `DATABASE_URL` on the production Postgres host, or `CAVNAR_PRODUCTION_SERVICE`) is not named `production` (`CAVNAR_ENV` unset and Railway's environment renamed, or a `CAVNAR_ENV` typo): its scheduler, every send and the paging stand down. The boot log's CRITICAL line says why. Set `CAVNAR_ENV=production` (or `staging` if it is not production) and redeploy | [Deploys](#deploys-the-branch-the-gate-the-window-the-smoke-release-safety-audit-102626) |
 | `500`, `"error": "db_not_writable"` | The database refuses a write (read-only or failing storage, or a full volume) | [Volume full](#volume-full), then [Database recovery](#database-recovery) |
 | `500`, `"error": "data_missing"` | The database holds no client restaurants, but the volume's marker says it held some — an emptied or replaced database | [Database recovery](#database-recovery) |
 | `200`, `"status": "degraded"`, `problems` has `disk_low` / `disk_critical` | Volume filling or nearly full — **writes fail before reads do** | [Volume full](#volume-full) |
@@ -176,6 +178,24 @@ Railway outage or a crashed process.
      has none — refused BEFORE `init_db` and the seeds could build an empty
      platform over it. Restore (below); `ALLOW_EMPTY_DATABASE=1` (or deleting
      the marker) is for an emptying that was deliberate;
+   - **`DATABASE_URL` is set but unusable** (`config.database_url_problem`,
+     blind re-audit 10/27/26): not a Postgres URL (a typo, an unresolved
+     `${{Postgres.DATABASE_URL}}`), or a Postgres one in a process on the
+     container with Railway's markers lost. It used to open the volume's
+     SQLite file instead — the frozen pre-cutover copy. Fix the variable;
+     `DB_BACKEND=sqlite` is the deliberate rollback to SQLite;
+   - **Postgres held the clients and this boot would serve SQLite**: the
+     volume marker says `"backend": "postgres"` and `DATABASE_URL` names no
+     Postgres (deleted). Restore `DATABASE_URL`, or `DB_BACKEND=sqlite`;
+   - **the marker cannot be read from object storage** (volume-less,
+     `VOLUME_OPTIONAL`) **and the database holds no client restaurant** — the
+     guard fails closed. Fix object storage; `ALLOW_EMPTY_DATABASE=1` for a
+     database meant to be empty;
+   - **another boot held the boot DDL lock past `BOOT_LOCK_WAIT_SECONDS`**
+     (90): two booters on one Postgres run their DDL one at a time
+     (`models.boot_ddl_lock`); a second one gives up rather than race. With no
+     volume the old container keeps serving; redeploy once the other boot is
+     done;
    - **a migration raised** (`DB init error:` in the log). Since DATA-11
      that includes "database is locked" and any other failure of the boot
      init chain: the process exits rather than serving on a half-migrated
@@ -216,21 +236,30 @@ and Web Push, Stripe with a live key, DocuSign outside its demo account, Google
 review replies, their retraction, posts and listing edits, customer webhooks,
 the RPOWER and Toast schedule pushes, every Meta Graph write) — whatever keys a
 "duplicate environment" copied in. Each refusal is counted (`/health`'s
-`sends_refused`), and a Railway environment that is not named `production`
-with `CAVNAR_ENV` unset is `/health`'s `env_not_production` problem, so say
+`sends_refused`), and a production-looking Railway service that is not named
+`production` is `/health`'s `not_production_env` problem, so say
 `CAVNAR_ENV=staging` on staging (blind re-audit 10/27/26). `ALLOW_NONPROD_SENDS=1` lifts the send gate for a
 staging that holds only test keys and test addresses; `ALLOW_LOCAL_SCHEDULER=1`
 starts its scheduler. Production needs no new variable: Railway names its
 environment `production`.
 
 **Shutdown.** Railway sends SIGTERM and kills the container
-`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` later. Set it on the web service:
-`RAILWAY_DEPLOYMENT_DRAINING_SECONDS=60`. gunicorn gives the web worker
-`graceful_timeout` (20 s) to finish its requests and release the scheduler
-lease, then gives the queue worker 25 s (`_DRAIN_SECONDS`) to hand its rows
-back — 45 s, inside the 60 (`gunicorn.conf.py`, held by
-`tests/test_boot_ddl_rules.py`). A shorter drain kills the hand-back: rows wait
-out their lease and the next scheduler waits 4 minutes for the lease.
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` later — **and its default is 0**: unset,
+the SIGKILL follows the SIGTERM at once. Set it on the web service:
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS=60`. At the SIGTERM the queue worker (and
+a scheduler process) start handing their rows back and releasing the lease
+AT ONCE, in parallel with the web worker's `graceful_timeout` (30 s) to finish
+its requests and release the scheduler lease, and the web worker stops
+claiming queue rows (`gunicorn.conf.py`: `_begin_drain`, `post_worker_init`).
+The budget is the longer of the two plus a margin — `SHUTDOWN_SECONDS`, 35 s,
+inside the 60 (held by `tests/test_boot_ddl_rules.py`; blind re-audit
+10/27/26, which also put graceful back to 30 from 20: 30-60 s Ask requests
+were killed at every deploy). The boot reads the setting: on Railway a drain
+that is unset or under the budget is an ERROR at every boot
+(`deploy shutdown budget: …`) and `/health`'s `shutdown {drain_seconds,
+needs_seconds, fits}` says so (never a problem — not an outage until a
+deploy). A shorter drain kills the hand-back: rows wait out their lease and
+the next scheduler waits 4 minutes for the lease.
 `boot_events.previous_exit` says whether each exit was clean.
 
 **After every deploy** (`.github/workflows/release.yml`, on Railway's
@@ -264,7 +293,29 @@ listed in `migrations/prebuilt_indexes.txt`; a data rewrite runs once
 rows, or a new index past its build limit (`PG_BOOT_INDEX_TIMEOUT_MS`, 60 s),
 goes on and `/health` says `constraint_missing` / `index_missing` (degraded,
 with `indexes_missing`): dedupe (read-only count first) and redeploy, or build
-the index with the script.
+the index with the script. So does an INVALID index (a failed `CREATE INDEX
+CONCURRENTLY` leaves one, and the boot used to count it as built): rebuild it
+with `scripts/build_index.py "<the boot's CREATE statement>" --apply
+--rebuild-invalid` (drops it CONCURRENTLY, builds it again).
+
+**No `railway ssh` session (psql, a long report) open during a deploy.** A
+boot `ALTER` waits for its table's lock 3 s a try, eight tries (about 40 s),
+then fails the boot — on purpose for the sign-in tables, whose missing
+column would fail every sign-in. A session holding `sessions` or `users`
+open is the likeliest way to turn a deploy into an outage.
+
+**Every push boots on the previous release's database** (blind re-audit
+10/27/26, B5 P1): `scripts/upgrade_boot_check.py` (the gate runs it) boots the
+previous release — `origin/production`, else the merge-base with `main`, else
+`HEAD~1` — on a fresh SQLite and a scratch Postgres 16, seeds every table,
+boots this code on it twice (`/health` 200, no schema gap, no missing index,
+no failed boot statement or run-once migration), then boots the previous
+release on the result (the rollback path), and holds the prebuilt-index rule
+against that release itself. To run it by hand before a risky deploy:
+`python scripts/upgrade_boot_check.py --database-url
+postgresql://postgres@127.0.0.1:55433/postgres` (a scratch server on this
+machine; never production's). Exit 2 means it could not run (no base commit —
+fetch the history — or the previous release itself would not boot here).
 
 ### Retiring the volume (Will's step; the code is ready — release-safety audit 10/26/26, P3)
 
@@ -292,10 +343,21 @@ database is Postgres and object storage is configured, and never with
    boot is ready `cavnar-markers/.cavnar-volume.json` and, after the first
    scheduler tick, `cavnar-markers/.restore_epoch` appear in the bucket (the
    guard baselines on its first tick, never freezes).
-4. Railway can now overlap deployments. Before turning that on: every boot
-   statement commits on its own (A05-16) and no index is built at boot on an
-   existing table (A05-04) — both done — and `/health` must stay 200 through a
-   deploy.
+4. **Deploys now overlap — that is Railway's default without a volume**:
+   the new container boots, and must pass `/health`, while the old one still
+   serves. What makes that safe, all in code (blind re-audit 10/27/26 RF6):
+   every boot statement commits on its own (A05-16); no index is built at
+   boot on an existing table (A05-04, held per push by the upgrade boot
+   check against the previous release); boot DDL runs ONE booter at a time
+   (`models.boot_ddl_lock` — a Postgres advisory lock held for the whole
+   `boot_schema`; a second booter waits up to `BOOT_LOCK_WAIT_SECONDS`, 90,
+   then fails its boot, and the old container keeps serving); and the
+   guards that read object storage fail closed (an unreadable restore
+   freeze holds scheduling and sends; an unreadable volume marker refuses a
+   boot with no client restaurants). What is NOT free: a release that adds a
+   column to a hot table (`sessions`, `users`) queues that table's readers
+   behind its `ALTER` for up to 3 s a try while the old container serves —
+   deploy those in a quiet hour, and keep `/health` 200 through the deploy.
 5. Rollback: re-attach the volume (mount path unchanged) and redeploy; unset
    `VOLUME_OPTIONAL`.
 
@@ -309,7 +371,9 @@ marker prefix its own rule or use the blob bucket.
 
 The way back from a bad release. Safe because the schema is additive and data
 formats are read one release before they are written (ARCHITECTURE_MANIFEST.md
-→ *Release compatibility*). Rehearsed each quarter (below).
+→ *Release compatibility*), and every push proves it: the upgrade boot check
+boots the previous release on the upgraded database and requires its
+`/health` 200. Rehearsed each quarter (below).
 
 1. Railway → the `web` service → **Deployments**. Find the last deployment
    before the bad one that was healthy (its build SHA is in its details; the

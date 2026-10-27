@@ -28,6 +28,14 @@ No restaurant id (a platform job) is in only at 100%. Reads are cached for
 `ROLLOUT_CACHE_SECONDS` per process (a set() here drops this process's copy;
 another process sees it within the window). The table is created at boot
 (`init_rollout`, from models.init_db).
+
+FEATURES lists every feature the code consults, with the default it keeps
+when nothing sets it (blind re-audit 10/27/26 RF6 — the module gated
+nothing). A risky new behaviour ships behind one (ARCHITECTURE_MANIFEST.md
+→ Release compatibility): default OFF and 0% → an allow-list → 10% → 100%
+for a new owner-visible behaviour, or default ON with the flag as a run-time
+kill switch for a change that must reach everyone. The console lists them
+(GET /admin/api/rollout, `known`).
 """
 import hashlib
 import json
@@ -62,6 +70,20 @@ _DDL = (
 _flag_cache = {}          # (db_path, feature) -> (read_at, state or None)
 _process_caches.register("rollout._flag_cache", _flag_cache)
 _LOCK = threading.Lock()
+
+
+# Every feature consulted through enabled(), its default and where.
+FEATURES = {
+    "client_min_build": {
+        "default": True, "where": "client_compat.refusal_allowed",
+        "what": "an iPhone build under MOBILE_MIN_BUILD is refused with 426 (A06-02)"},
+    "client_headerless_cutoff": {
+        "default": True, "where": "client_compat.refusal_allowed",
+        "what": "a request with no X-Cavnar-App header after MOBILE_HEADERLESS_CUTOFF is refused with 426"},
+    "stale_tab_reload": {
+        "default": True, "where": "client_compat.page_build",
+        "what": "the web dashboard's 'Cavnar AI was updated' bar after a deploy (A06-13)"},
+}
 
 
 class RolloutError(ValueError):
@@ -239,4 +261,18 @@ def list_flags(db_path=None):
                     "allow": json.loads(r["allow_json"] or "[]"), "deny": json.loads(r["deny_json"] or "[]"),
                     "note": r["note"], "updated_by": r["updated_by"], "updated_at": r["updated_at"],
                     "env_override": env})
+    return out
+
+
+def known_features(db_path=None):
+    """FEATURES with each one's environment variable and effective state
+    (None: nothing sets it, so its default holds) — the console's list."""
+    out = []
+    for name, info in sorted(FEATURES.items()):
+        try:
+            st = state(name, db_path=db_path)
+        except Exception as e:
+            st = {"error": f"unreadable: {e}"[:200]}
+        out.append({"feature": name, "default": bool(info["default"]), "where": info["where"],
+                    "what": info["what"], "env": env_name(name), "state": st})
     return out

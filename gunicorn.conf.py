@@ -34,14 +34,15 @@ environment), and the --workers count stays 1 (CLAUDE.md).
 """
 import os
 import select
+import signal
 import subprocess
 import sys
 import threading
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_state = {"proc": None, "stop": False, "draining": [], "sched": None}
-_lock = threading.Lock()
+_state = {"proc": None, "stop": False, "draining": [], "sched": None, "drain_started": None, "terminated": set()}
+_lock = threading.RLock()   # re-entrant: _begin_drain may run in a signal handler on the main thread
 # When this container's master started: before the web worker it forks
 # boots. The queue worker waits for a web process booted SINCE THEN (the
 # schema is migrated), not since its own start — a recycled worker starts
@@ -50,17 +51,25 @@ _lock = threading.Lock()
 _MASTER_STARTED = time.time()
 # Seconds a SIGTERM'd queue worker is given to hand its rows back.
 _DRAIN_SECONDS = 25
-# The deploy's shutdown budget (release-safety audit 10/26/26 A05-12).
-# Railway sends SIGTERM and SIGKILLs RAILWAY_DEPLOYMENT_DRAINING_SECONDS
-# later (the service setting; docs/ops/RECOVERY.md "Deploys" says 60). The
-# master gives the web worker graceful_timeout to finish its requests and
-# run its atexit (lease release, telemetry flush, boot stop), and only then
-# runs on_exit, which gives the queue worker _DRAIN_SECONDS to hand its rows
-# back — so both together must fit inside the drain, or the SIGKILL lands
-# mid-handback and rows wait out their lease. gunicorn's default is 30
-# (30 + 25 = 55, with nothing documented to fit it in).
+# The deploy's shutdown budget (release-safety audit 10/26/26 A05-12; blind
+# re-audit 10/27/26 B5 P2 / B8 P3). Railway sends SIGTERM and SIGKILLs
+# RAILWAY_DEPLOYMENT_DRAINING_SECONDS later — a service setting whose
+# DEFAULT IS 0. The queue worker (and a scheduler process) are told at the
+# SIGTERM itself (_begin_drain, installed by when_ready) and hand their rows
+# back WHILE the web worker spends graceful_timeout finishing its requests
+# and running its atexit (lease release, telemetry flush, boot stop); the web
+# worker stops claiming queue rows at the same moment (post_worker_init).
+# The two used to run one after the other (20 + 25 = 45 s, so graceful was
+# cut from gunicorn's 30 to 20 and killed 30-60 s Ask requests); in parallel
+# the budget is the longer of the two plus a margin — SHUTDOWN_SECONDS,
+# published to the web worker (CAVNAR_SHUTDOWN_SECONDS), which logs loudly
+# at boot and reports on /health when the drain is shorter
+# (config.drain_budget_problem). docs/ops/RECOVERY.md "Deploys": set the
+# drain to DEPLOY_DRAIN_SECONDS.
 DEPLOY_DRAIN_SECONDS = 60
-graceful_timeout = 20
+graceful_timeout = 30
+_MARGIN_SECONDS = 5
+SHUTDOWN_SECONDS = max(graceful_timeout, _DRAIN_SECONDS) + _MARGIN_SECONDS
 
 
 def _queue_command():
@@ -202,8 +211,69 @@ def publish_worker_count(server):
     return n
 
 
+def _live_children():
+    with _lock:
+        return [p for p in [_state["proc"], _state.get("sched")] + list(_state["draining"])
+                if p is not None and p.poll() is None]
+
+
+def _begin_drain():
+    """The deploy's SIGTERM, in the master, before gunicorn's own handling:
+    no supervisor restarts anything from here, and every queue worker (the
+    current one and any still draining for a recycle) and a scheduler
+    process get their SIGTERM NOW — they hand rows back and release the
+    lease in parallel with the web worker's graceful window. Idempotent;
+    signal-safe enough (os.kill per child, no waiting)."""
+    _state["stop"] = True
+    if _state["drain_started"] is None:
+        _state["drain_started"] = time.time()
+    for proc in _live_children():
+        if proc.pid in _state["terminated"]:
+            continue
+        _state["terminated"].add(proc.pid)
+        try:
+            proc.terminate()
+        except OSError:                  # it exited in between: nothing to tell
+            pass
+
+
+def install_drain_on_sigterm():
+    """Chain _begin_drain in front of the master's SIGTERM handler (when_ready
+    runs in the master's main thread after gunicorn installed its own)."""
+    prev = signal.getsignal(signal.SIGTERM)
+
+    def _on_term(signum, frame):
+        _begin_drain()
+        if callable(prev):
+            prev(signum, frame)
+    signal.signal(signal.SIGTERM, _on_term)
+    return _on_term
+
+
+def post_worker_init(worker):
+    """In each web worker, after gunicorn installed its signal handlers: at
+    the deploy's SIGTERM the worker stops claiming queue rows (job_queue.
+    stop_claiming) — the queue worker is handing its rows back at that
+    moment, and this process must not pick them up in its graceful window
+    only to be killed holding them. Then gunicorn's own handler runs."""
+    prev = signal.getsignal(signal.SIGTERM)
+
+    def _on_term(signum, frame):
+        jq = sys.modules.get("job_queue")
+        if jq is not None and hasattr(jq, "stop_claiming"):
+            jq.stop_claiming()           # sets an Event: nothing in it to fail
+        if callable(prev):
+            prev(signum, frame)
+    signal.signal(signal.SIGTERM, _on_term)
+    return _on_term
+
+
 def when_ready(server):
     publish_worker_count(server)
+    # What the shutdown needs, for the web worker's boot check and /health
+    # (config.drain_budget_problem), and the SIGTERM hand-off above.
+    os.environ["CAVNAR_SHUTDOWN_SECONDS"] = str(SHUTDOWN_SECONDS)
+    install_drain_on_sigterm()
     # Before the web worker forks, so it inherits it: the platform check
     # warns when the queue worker this master supervises goes silent
     # (ops.queue_problems — scale audit 10/19/26 INF-4).
@@ -233,16 +303,11 @@ def on_exit(server):
     still draining for a recycle — hands its running rows back
     (job_queue.shutdown), and a scheduler process releases its lease, before
     the container goes."""
-    _state["stop"] = True
-    with _lock:
-        procs = [p for p in [_state["proc"], _state.get("sched")] + list(_state["draining"])
-                 if p is not None and p.poll() is None]
-    for proc in procs:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-    deadline = time.time() + _DRAIN_SECONDS
+    _begin_drain()                     # a no-op for the children the SIGTERM already told
+    procs = _live_children()
+    # The children's _DRAIN_SECONDS run from when they were told (the
+    # SIGTERM), not from now — they have been handing back all along.
+    deadline = (_state["drain_started"] or time.time()) + _DRAIN_SECONDS
     for proc in procs:
         try:
             proc.wait(timeout=max(0.1, deadline - time.time()))

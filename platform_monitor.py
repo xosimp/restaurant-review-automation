@@ -1485,10 +1485,10 @@ def system_warnings(report) -> list:
     if isinstance(db.get("write"), dict) and db["write"].get("state") == "failed":
         w.append("The database cannot take a write.")
     dep = report.get("deployment") or {}
-    if dep.get("problem") == "env_not_production":
-        w.append(f"This deployment's environment is {dep.get('env')!r}, not production, and CAVNAR_ENV is unset: "
-                 "the scheduler stands down and every send is refused. Set CAVNAR_ENV=production (or rename the "
-                 "environment) if this is production; CAVNAR_ENV=staging if it is staging.")
+    if dep.get("problem") == "not_production_env":
+        w.append(f"This deployment's environment is {dep.get('env')!r}, not production, but the service looks "
+                 "like production: the scheduler stands down and every send is refused. Set "
+                 "CAVNAR_ENV=production if this is production; CAVNAR_ENV=staging if it is staging.")
     refused = dep.get("sends_refused") or {}
     if refused and dep.get("outbound_sends_allowed") is False:
         n = sum(int(v.get("count") or 0) for v in refused.values())

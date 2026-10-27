@@ -414,8 +414,8 @@ CREATE INDEX IF NOT EXISTS idx_users_restaurant
 """
 # idx_login_history_created serves the retention prune (created_at < cutoff):
 # idx_login_history_user leads with user_id, so that DELETE scanned the whole
-# table under the write lock — at boot here (prune_login_history) and nightly
-# once ops' retention registry carries login_history (fix round D #72).
+# table under the write lock — nightly, ops' retention registry (fix round D
+# #72; the boot's own prune is gone — blind re-audit 10/27/26).
 
 # login_history is the only append-only table in the schema, so it is also the
 # only one with no natural ceiling: 250k employees × one sign-in per shift is
@@ -630,32 +630,53 @@ def init_auth(db_path: str = DB_PATH):
     # a refused duplicate costs SQLite a full schema parse.
     add_missing_columns(db_path, _alters)
 
-    # A PIN identity is an employee, never a console login. They were created
-    # with users.role's column default 'client', which is what the session
-    # fell back to whenever no active membership resolved (SEC-1, SEC-29).
-    try:
-        conn_bf = boot_conn(db_path)
-        conn_bf.execute("UPDATE users SET role='employee' WHERE email LIKE '%@staff.invalid' "
-                        "AND (role IS NULL OR role='client')")
-        conn_bf.commit()
-        conn_bf.close()
-    except Exception:
-        pass
+    # Every boot, on purpose (kept off the run-once ledger — blind re-audit
+    # 10/27/26 RF6): both are guards against a users row written OUTSIDE
+    # create_user (a seed script, a by-hand fix in a railway ssh session),
+    # and users is small enough that the scan costs milliseconds.
+    #  - A PIN identity is an employee, never a console login. They were
+    #    created with users.role's column default 'client', which is what the
+    #    session fell back to whenever no active membership resolved (SEC-1,
+    #    SEC-29).
+    #  - Mixed-case usernames (raw SQL, as _ensure_gia_mia_vibe() in
+    #    hosted_dashboard.py used to write) can never log in: get_user_by_
+    #    username lower-cases its input and the column has no COLLATE NOCASE.
+    #    Repaired on the next deploy, with no manual fix.
+    for _sql in ("UPDATE users SET role='employee' WHERE email LIKE '%@staff.invalid' "
+                 "AND (role IS NULL OR role='client')",
+                 "UPDATE users SET username = LOWER(username) WHERE username != LOWER(username)"):
+        try:
+            _c_users = boot_conn(db_path)
+            try:
+                _c_users.execute(_sql)
+                _c_users.commit()
+            finally:
+                _c_users.close()
+        except Exception as _e_users:
+            import logging as _lg_users
+            _lg_users.getLogger(__name__).warning("[auth] boot users repair not applied: %s", _e_users)
 
-    # Normalize any mixed-case usernames written outside create_user() (e.g.
-    # raw SQL in a seed/"ensure" script, as _ensure_gia_mia_vibe() in
-    # hosted_dashboard.py used to). get_user_by_username() always lowercases
-    # its input before querying, but the username column has no COLLATE
-    # NOCASE, so a stored mixed-case value can never match and that account
-    # can never log in again, regardless of what's typed. Idempotent — a
-    # no-op once every username is already lowercase, safe to run every boot.
+    # The 2FA code and pending secret used to live in plaintext on the
+    # restaurants row (SEC-20/SEC-39); two_fa_challenges replaced them and
+    # update_restaurant refuses to write them (RETIRED_SECRET_FIELDS). Blanked
+    # ONCE per database (data_migrations — it ran on every boot until blind
+    # re-audit 10/27/26).
+    import models as _models_once
     try:
-        conn_n = boot_conn(db_path)
-        conn_n.execute("UPDATE users SET username = LOWER(username) WHERE username != LOWER(username)")
-        conn_n.commit()
-        conn_n.close()
-    except Exception:
-        pass
+        _c_once = boot_conn(db_path)
+        try:
+            _models_once.run_once_sql(
+                _c_once, "legacy_two_fa_scrub",
+                "UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, two_fa_pending=NULL "
+                "WHERE COALESCE(two_fa_code,'')!='' OR COALESCE(two_fa_pending,'')!=''")
+        finally:
+            _c_once.close()
+    except Exception as _e_once:
+        # restaurants not created yet on a bare file (init_db runs first at
+        # boot); anything else is retried by the next boot.
+        import logging as _lg_once
+        _lg_once.getLogger(__name__).warning("[auth] legacy_two_fa_scrub not applied (retried next boot): %s",
+                                             _e_once)
 
     # Indexes last: they name columns the ALTERs above add.
     try:
@@ -671,24 +692,20 @@ def init_auth(db_path: str = DB_PATH):
 
     ensure_active_name_index(db_path=db_path)
 
-    # The 2FA code and pending secret used to live in plaintext on the
-    # restaurants row (SEC-20/SEC-39). Nothing reads those columns any more
-    # (two_fa_challenges replaced them); blank any value left from before so
-    # no live code sits in the file or in a backup of it.
-    try:
-        conn_2fa = boot_conn(db_path)
-        conn_2fa.execute("UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, two_fa_pending=NULL "
-                         "WHERE COALESCE(two_fa_code,'')!='' OR COALESCE(two_fa_pending,'')!=''")
-        conn_2fa.commit()
-        conn_2fa.close()
-    except Exception:
-        pass  # restaurants not created yet (init_db runs first at boot)
-
-    normalize_session_rows(db_path=db_path)
+    # Session rows written under the old rules, and lockout counters left by
+    # memberships deleted before ON DELETE CASCADE: once per database (both
+    # were every boot — sessions is the hottest table there is). Nothing
+    # writes either shape now (sql_utc stamps, acting_admin_id on every
+    # view-as, the admin cap at creation; memberships are never deleted).
+    for _name, _fn in (("session_rows_normalised_v1", normalize_session_rows),
+                       ("pin_attempt_orphans_swept_v1", sweep_orphan_pin_attempts)):
+        _models_once.run_once(_name, lambda _f=_fn: _f(db_path=db_path, strict=True), db_path=db_path)
     backfill_memberships(db_path=db_path)
     grandfather_staff_pos_pay(db_path=db_path)
-    prune_login_history(db_path=db_path)
-    sweep_orphan_pin_attempts(db_path=db_path)
+    # login_history's retention is the nightly registry prune alone
+    # (ops._RETENTION_DAYS, after history_rollups.roll_engagement): the boot
+    # prune ran the same window again, rollup included, inside every deploy's
+    # outage (blind re-audit 10/27/26 B5 P3).
 
     # A missing pepper silently downgrades every staff PIN to something a
     # leaked database makes trivially brute-forceable. It must not be a
@@ -708,7 +725,7 @@ def init_auth(db_path: str = DB_PATH):
         print(f"[auth] person_id columns not added: {e}")
 
 
-def normalize_session_rows(db_path: str = DB_PATH) -> dict:
+def normalize_session_rows(db_path: str = DB_PATH, strict: bool = False) -> dict:
     """Boot-time repair of session rows written under the old rules.
     Idempotent, and a no-op once every row is in the current shape.
 
@@ -750,6 +767,9 @@ def normalize_session_rows(db_path: str = DB_PATH) -> dict:
     except Exception as exc:
         # Not fatal (the session lookup enforces all three on its own), but
         # visible: a boot that could not repair these should be known.
+        # `strict` (the boot's run-once): raised, so it is not recorded done.
+        if strict:
+            raise
         print(f"[auth] session normalization skipped: {exc}")
     return out
 
@@ -800,8 +820,11 @@ def prune_login_history(days: int = None, db_path: str = DB_PATH) -> int:
     being expired, revoked or deduped, which is the whole reason it exists
     separately from `sessions`. "Append-only" was never meant to mean
     "unbounded"; a staff tier writes a row per employee per shift, so the
-    table outgrows everything else in the file. Runs at boot; returns how many
-    rows it removed so a test can assert the window is actually applied.
+    table outgrows everything else in the file. The nightly retention
+    registry is the prune that runs (the boot's call was dropped, blind
+    re-audit 10/27/26); this stays for a by-hand run on the same window.
+    Returns how many rows it removed so a test can assert the window is
+    actually applied.
     """
     if days is None:
         # The one registry's window (ops, RETAIN_LOGIN_HISTORY_DAYS) — never
@@ -836,7 +859,7 @@ def prune_login_history(days: int = None, db_path: str = DB_PATH) -> int:
         return 0
 
 
-def sweep_orphan_pin_attempts(db_path: str = DB_PATH) -> int:
+def sweep_orphan_pin_attempts(db_path: str = DB_PATH, strict: bool = False) -> int:
     """Delete lockout counters whose membership no longer exists.
 
     The table gained ON DELETE CASCADE, but only for databases created after
@@ -855,6 +878,8 @@ def sweep_orphan_pin_attempts(db_path: str = DB_PATH) -> int:
         finally:
             conn.close()
     except Exception:
+        if strict:
+            raise
         return 0
 
 
