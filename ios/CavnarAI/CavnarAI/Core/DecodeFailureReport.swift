@@ -11,7 +11,7 @@ import Foundation
 /// status, the DecodingError's coding path and description — NEVER the
 /// response body — the device's id (the server keeps only a hash) and, in
 /// the request's headers, the build (ClientIdentity). One per route per hour
-/// per device (`DecodeFailureThrottle`).
+/// per device, counted from a report that was delivered (`DecodeFailureThrottle`).
 struct ClientErrorReport: Encodable, Equatable, Sendable {
     let route: String
     let method: String
@@ -72,33 +72,54 @@ struct ClientErrorReport: Encodable, Equatable, Sendable {
 }
 
 /// One report per route per hour on this device, remembered across launches
-/// (UserDefaults: route keys and times only). Thread-safe: APIClient claims
-/// from its actor, StaffTasksAPI through it.
+/// (UserDefaults: route keys and times only). The hour starts only once a
+/// report was delivered (blind re-audit 10/27/26): a report that failed —
+/// offline on venue Wi-Fi, a 429, a 5xx — used to spend the route's hour
+/// anyway, so that device said nothing more for it. Thread-safe: APIClient
+/// begins and finishes from its actor, StaffTasksAPI through it.
 final class DecodeFailureThrottle: @unchecked Sendable {
     static let window: TimeInterval = 3600
 
     private let defaults: UserDefaults
     private let key: String
     private let lock = NSLock()
+    /// Routes with a report on its way: a second failure meanwhile waits
+    /// for the first's answer rather than sending a twin. Memory only.
+    private var inFlight: Set<String> = []
 
     init(defaults: UserDefaults = .standard, key: String = "cavnar.decodeReports.lastSent") {
         self.defaults = defaults
         self.key = key
     }
 
-    /// True — and the hour starts now — when `route` has not been reported
-    /// in the last hour; false otherwise.
-    func claim(route: String, now: Date = Date()) -> Bool {
+    /// True — and a report for `route` is now on its way — when the route
+    /// was not reported in the last hour and has no report in flight; false
+    /// otherwise. Every true is followed by `finish(route:delivered:)`.
+    func begin(route: String, now: Date = Date()) -> Bool {
         let route = Self.routeKey(route)
         return lock.withLock {
-            var sent = (defaults.dictionary(forKey: key) as? [String: Double]) ?? [:]
+            guard !inFlight.contains(route) else { return false }
+            let sent = (defaults.dictionary(forKey: key) as? [String: Double]) ?? [:]
             let at = now.timeIntervalSince1970
             if let last = sent[route], at - last < Self.window, at >= last { return false }
+            inFlight.insert(route)
+            return true
+        }
+    }
+
+    /// The report `begin` started has its answer: `delivered` starts the
+    /// route's hour; otherwise the next failure may report again.
+    func finish(route: String, delivered: Bool, now: Date = Date()) {
+        let route = Self.routeKey(route)
+        lock.withLock {
+            inFlight.remove(route)
+            guard delivered else { return }
+            var sent = (defaults.dictionary(forKey: key) as? [String: Double]) ?? [:]
+            let at = now.timeIntervalSince1970
             // Old entries go, so the record stays a handful of routes.
             sent = sent.filter { at - $0.value < Self.window * 24 }
             sent[route] = at
             defaults.set(sent, forKey: key)
-            return true
         }
     }
 

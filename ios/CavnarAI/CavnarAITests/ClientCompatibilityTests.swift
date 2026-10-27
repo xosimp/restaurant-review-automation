@@ -152,13 +152,60 @@ final class ClientCompatibilityTests: XCTestCase {
     }
 
     @MainActor
-    func testTheSheetHasOneActionAndNoWayPast() {
+    func testTheSheetHasOnePrimaryActionAndNoWayPast() {
         let view = AppUpdateRequiredView(requirement: AppUpdateRequirement(message: "Update it.", minBuild: 2,
                                                                            storeURL: nil))
         XCTAssertEqual(AppUpdateRequiredView.title, "Update Cavnar AI")
         XCTAssertEqual(AppUpdateRequiredView.buttonTitle, "Open the App Store")
+        XCTAssertEqual(AppUpdateRequiredView.checkTitle, "Check again")
         let renderer = ImageRenderer(content: view.frame(width: 390, height: 844))
         XCTAssertNotNil(renderer.uiImage, "the sheet renders")
+        let checking = AppUpdateRequiredView(requirement: AppUpdateRequirement(message: "Update it.", minBuild: 2,
+                                                                               storeURL: nil), isChecking: true)
+        XCTAssertNotNil(ImageRenderer(content: checking.frame(width: 390, height: 844)).uiImage)
+    }
+
+    // MARK: - The gate opens again when the server stops saying 426 (blind re-audit 10/27/26)
+
+    @MainActor
+    func testTheGateClearsOnlyWhenTheServerServesTheBuildAgain() async {
+        let gate = AppUpdateGate.shared
+        gate.require(AppUpdateRequirement(message: "Update", minBuild: 99_999, storeURL: nil))
+        await gate.recheck { true }                       // still 426
+        XCTAssertNotNil(gate.requirement)
+        await gate.recheck { nil }                        // offline: nothing known
+        XCTAssertNotNil(gate.requirement)
+        await gate.recheck { false }                      // the minimum came down
+        XCTAssertNil(gate.requirement)
+        XCTAssertFalse(gate.isChecking)
+        // Nothing held: nothing is asked.
+        let asked = Box<Int>(0)
+        await gate.recheck { asked.value += 1; return false }
+        XCTAssertEqual(asked.value, 0)
+    }
+
+    func testTheProbeReadsTheGatesAnswerWithNoSession() async throws {
+        let seen = Box<[URLRequest]>([])
+        let status = Box<Int>(426)
+        MockURLProtocol.requestHandler = { request in
+            seen.value.append(request)
+            return status.value == 426
+                ? EdgeHTTP.reply(request, 426, #"{"ok": false, "update_required": true, "error": "Update."}"#)
+                : EdgeHTTP.reply(request, 401, #"{"ok": false, "session_expired": true}"#)
+        }
+        let client = APIClient(baseURL: base, session: MockURLProtocol.makeSession())
+        await client.setToken("owner-token")
+        let still = await client.stillRequiresUpdate()
+        XCTAssertEqual(still, true)
+        status.value = 401
+        let served = await client.stillRequiresUpdate()
+        XCTAssertEqual(served, false, "any answer but 426 means the build is served")
+        XCTAssertEqual(seen.value.count, 2)
+        for request in seen.value {
+            XCTAssertEqual(request.url?.path, APIClient.updateProbePath)
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"), "the probe carries no session")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Cavnar-App"), ClientIdentity.appValue)
+        }
     }
 
     // MARK: - Decode-failure reports
@@ -218,15 +265,73 @@ final class ClientCompatibilityTests: XCTestCase {
         XCTAssertEqual(reports.value, 1)
     }
 
+    /// begin + a delivered finish: the old `claim`.
+    private func sent(_ throttle: DecodeFailureThrottle, _ route: String, at now: Date) -> Bool {
+        guard throttle.begin(route: route, now: now) else { return false }
+        throttle.finish(route: route, delivered: true, now: now)
+        return true
+    }
+
     func testTheThrottleCountsAnHourPerRoute() {
         let throttle = freshThrottle()
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertTrue(throttle.claim(route: "/mobile/api/dsr/2026-10-25?peek=1", now: t0))
-        XCTAssertFalse(throttle.claim(route: "/mobile/api/dsr/2026-10-26", now: t0.addingTimeInterval(600)))
-        XCTAssertTrue(throttle.claim(route: "/mobile/api/home", now: t0.addingTimeInterval(600)))
-        XCTAssertTrue(throttle.claim(route: "/mobile/api/dsr/2026-10-27", now: t0.addingTimeInterval(3601)))
+        XCTAssertTrue(sent(throttle, "/mobile/api/dsr/2026-10-25?peek=1", at: t0))
+        XCTAssertFalse(sent(throttle, "/mobile/api/dsr/2026-10-26", at: t0.addingTimeInterval(600)))
+        XCTAssertTrue(sent(throttle, "/mobile/api/home", at: t0.addingTimeInterval(600)))
+        XCTAssertTrue(sent(throttle, "/mobile/api/dsr/2026-10-27", at: t0.addingTimeInterval(3601)))
         XCTAssertEqual(DecodeFailureThrottle.routeKey("/mobile/api/reviews/412?x=1"), "/mobile/api/reviews/:id")
         XCTAssertEqual(DecodeFailureThrottle.routeKey("/mobile/api/labor"), "/mobile/api/labor")
+    }
+
+    /// The hour starts only once a report was delivered (blind re-audit
+    /// 10/27/26), and a report in flight is not sent twice.
+    func testTheHourIsSpentOnlyByADeliveredReport() {
+        let throttle = freshThrottle()
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertTrue(throttle.begin(route: "/mobile/api/home", now: t0))
+        XCTAssertFalse(throttle.begin(route: "/mobile/api/home", now: t0), "one report in flight per route")
+        throttle.finish(route: "/mobile/api/home", delivered: false, now: t0)
+        XCTAssertTrue(throttle.begin(route: "/mobile/api/home", now: t0.addingTimeInterval(5)),
+                      "a report that failed leaves the hour unspent")
+        throttle.finish(route: "/mobile/api/home", delivered: true, now: t0.addingTimeInterval(5))
+        XCTAssertFalse(throttle.begin(route: "/mobile/api/home", now: t0.addingTimeInterval(60)))
+    }
+
+    func testAReportThatFailsIsSentAgainOnTheNextFailure() async throws {
+        let attempts = Box<Int>(0)
+        MockURLProtocol.requestHandler = { request in
+            if request.url?.path == "/mobile/api/client-errors" {
+                attempts.value += 1
+                // The first report meets a gateway answering for a restarting
+                // server; the second gets through.
+                return attempts.value == 1 ? EdgeHTTP.reply(request, 503, #"{"ok": false}"#)
+                    : EdgeHTTP.reply(request, 200, #"{"ok": true, "stored": true}"#)
+            }
+            return EdgeHTTP.reply(request, 200, #"{"ok": true}"#)
+        }
+        let client = reportingClient()
+        for _ in 0..<3 {
+            let _: Strict? = try? await client.send("/mobile/api/labor")
+            await client.lastDecodeReport?.value
+        }
+        XCTAssertEqual(attempts.value, 2, "the 503 spent nothing; the delivered one starts the hour")
+    }
+
+    func testARefusalNoRetryWouldChangeSpendsTheHour() async throws {
+        let attempts = Box<Int>(0)
+        MockURLProtocol.requestHandler = { request in
+            if request.url?.path == "/mobile/api/client-errors" {
+                attempts.value += 1
+                return EdgeHTTP.reply(request, 400, #"{"ok": false, "error": "That isn't one of the app's routes."}"#)
+            }
+            return EdgeHTTP.reply(request, 200, #"{"ok": true}"#)
+        }
+        let client = reportingClient()
+        for _ in 0..<2 {
+            let _: Strict? = try? await client.send("/mobile/api/labor")
+            await client.lastDecodeReport?.value
+        }
+        XCTAssertEqual(attempts.value, 1)
     }
 
     func testTheCodingPathNamesKeysAndIndexes() throws {
