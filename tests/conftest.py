@@ -470,6 +470,13 @@ if _RECORD_DIR and not _PG_BASE:
 
 def pytest_sessionfinish(session, exitstatus):
     _enforce_expected_skips(session)
+    # With CAVNAR_ENFORCE_SKIPS=1 (CI), a test that tried to reach the
+    # network fails the run too: the guard refused it, so the test passed
+    # on whatever the refusal made of it — two did, reaching RPOWER's and
+    # Google's real APIs on every run until the guard listed them (audit #25).
+    if (os.getenv("CAVNAR_ENFORCE_SKIPS") or "").strip() == "1" and \
+            (_BLOCKED_BY_TEST or (_NET_BLOCKED and not hasattr(session.config, "workerinput"))):
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if not (_RECORD_DIR and _RECORDED):
         return
     import json

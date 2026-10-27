@@ -384,11 +384,22 @@ def _wall_capped(solver, status) -> bool:
     if _cp is None or status in (_cp.OPTIMAL, _cp.INFEASIBLE, _cp.MODEL_INVALID):
         return False
     try:
-        if not solver.parameters.max_deterministic_time:
+        budget = float(solver.parameters.max_deterministic_time or 0)
+        if not budget:
             return False                 # the wall clock IS the budget here, not an emergency cap
         cap = float(solver.parameters.max_time_in_seconds)
         wall = float(solver.wall_time)
+        det = float(solver.response_proto.deterministic_time)
     except Exception as e:
         _log.warning("solve's wall time unreadable (%r); not reported as cut", e)
         return False
-    return cap > 0 and wall >= WALL_CAP_SHARE * cap
+    if cap > 0 and wall >= WALL_CAP_SHARE * cap:
+        return True
+    # An unproved answer whose work stayed under its budget was ended by
+    # something other than the budget — the clock (memory has its own flag).
+    # CP-SAT's own wall_time starts after the model is loaded, so on a loaded
+    # box a clock-cut solve reports less than its cap (0.41 s against 0.5 s,
+    # 16 solves at once in the integration run, 10/26/26); the work it did is
+    # the evidence then. Over budget proves nothing either way (interleaved
+    # workers overshoot it, the comment above), so it is only ever a "yes".
+    return det < WALL_CAP_SHARE * budget

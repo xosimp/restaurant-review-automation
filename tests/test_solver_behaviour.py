@@ -277,7 +277,12 @@ def test_a_later_phase_the_clock_ends_before_it_finds_anything_is_a_cut(monkeypa
             if isolate is False:                   # a fixed-week evaluation: solved for real
                 return real(s, model, isolate=isolate)
             wall = share * float(s.parameters.max_time_in_seconds)
-            s._CpSolver__response = rt._answer(cp.UNKNOWN, None, {"wall_time": wall})._CpSolver__response
+            # Well inside the cap, the work budget is what ran out: it used
+            # all of it (an UNKNOWN that did less work than its budget was
+            # ended by the clock — schedule_cpsat_runtime._wall_capped).
+            det = float(s.parameters.max_deterministic_time) if share < 0.95 else 0.0
+            s._CpSolver__response = rt._answer(cp.UNKNOWN, None, {"wall_time": wall,
+                                                                  "deterministic_time": det})._CpSolver__response
             return cp.UNKNOWN
         return run
     rows, c, sig = _tiny()

@@ -124,12 +124,23 @@ def register_all(app):
 
 
 def url_map_app(template_folder=None):
-    """A throwaway Flask app with every blueprint registered and nothing else
-    (no CSRF wiring, no hooks, no boot): what a test needs to read the whole
-    url_map or call a view without importing hosted_dashboard."""
+    """A throwaway Flask app with every blueprint registered and no app-wide
+    hooks or boot: what a test needs to read the whole url_map or call a view
+    without importing hosted_dashboard. Each blueprint's CSRF check is wired
+    first (once per process, as register_all does): a blueprint takes no new
+    hook once any app has registered it, so registering it bare here left a
+    later test unable to wire it ("can no longer be called on the blueprint")."""
     from flask import Flask
+    from csrf import csrf_protect
     app = Flask("cavnar_url_map", template_folder=template_folder)
     app.secret_key = "url-map-only"
-    for bp in all_blueprints():
-        app.register_blueprint(bp)
+    for step, obj in plan():
+        if step == "csrf":
+            # Skipped when a test app already registered it bare: it can take
+            # no new hook then, and the url_map is the same either way.
+            if not getattr(obj, "_csrf_wired", False) and not getattr(obj, "_got_registered_once", False):
+                csrf_protect(obj)
+                obj._csrf_wired = True
+        elif step == "blueprint":
+            app.register_blueprint(obj)
     return app

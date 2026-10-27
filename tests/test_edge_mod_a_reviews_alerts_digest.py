@@ -96,6 +96,9 @@ def _first_connect(db_path, monkeypatch, reviews):
     monkeypatch.setattr(gmb, "get_valid_token", lambda rid: "tok")
     monkeypatch.setattr(gmb, "fetch_reviews_via_gmb", lambda tok, loc, rid, **k: list(reviews))
     monkeypatch.setattr(gmb, "fetch_gmb_logo_url", lambda *a, **k: None)
+    # The rating read after a fetch called Google for real on every run
+    # (caught by the suite's network guard, audit #25).
+    monkeypatch.setattr(gmb, "fetch_location_rating", lambda *a, **k: None)
     monkeypatch.setattr(analyser, "analyse_review", lambda *a, **k: None)
     monkeypatch.setattr(drafter, "draft_response", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "auto_approve_five_stars", lambda *a, **k: 0)
