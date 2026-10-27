@@ -29,6 +29,27 @@ copy with the database it is meant to catch.
 
 Production with its volume attached and no new variable is "volume": nothing
 changes until Will detaches it (docs/ops/RECOVERY.md → Retiring the volume).
+
+A read that FAILS is not "no marker" (re-audit B7 P3, 10/27/26: an object-
+storage 5xx or timeout read as absent — the restore freeze as lifted, the
+epoch as missing). read(name, strict=True) raises MarkerUnreadable for
+anything but a clean "there is none" (a 404, a missing file), and each
+marker takes its safe side:
+
+  .restore_freeze      unreadable → as last seen in this process; never seen
+                       → FROZEN (exists(when_unreadable=True), config.
+                       restore_frozen): a send the freeze should have held
+                       cannot be taken back, one it held for a minute can.
+  .restore_epoch       unreadable → restore_guard neither compares nor writes
+                       it that tick: writing over an epoch it could not read
+                       could erase the evidence of a restore. An unreadable
+                       freeze record holds the tick (state "frozen").
+  .cavnar-volume.json  unreadable → treated as present (it says client data
+                       existed): an EMPTY database is refused at boot rather
+                       than let through; a database holding clients boots as
+                       ever, and the marker is not rewritten over a record it
+                       could not read (status_manager's guards, read with
+                       strict=True).
 """
 import json
 import logging
@@ -41,8 +62,18 @@ log = logging.getLogger("marker_store")
 DEFAULT_PREFIX = "cavnar-markers/"
 EXISTS_TTL_SECONDS = 30.0
 _exists_cache = {}
+# The last answer each marker's store gave cleanly in this process: what an
+# unreadable read falls back to (module docstring).
+_last_known = {}
 import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
 _process_caches.register("marker_store._exists_cache", _exists_cache)
+_process_caches.register("marker_store._last_known", _last_known)
+
+
+class MarkerUnreadable(RuntimeError):
+    """The marker's store answered with something other than "there is
+    none": an object-storage error that is not a 404, a timeout, no bucket
+    configured where one is needed, a file that cannot be read or parsed."""
 _cache_lock = threading.Lock()
 
 
@@ -85,30 +116,52 @@ def _path(name):
     return os.path.join(directory(), name)
 
 
-def read(name):
-    """The marker's JSON (a dict), or None when there is none or it cannot be
-    read."""
+def read(name, strict=False):
+    """The marker's JSON (a dict), or None when there is none. A read that
+    fails (MarkerUnreadable's cases) is None too — unless `strict`, when it
+    raises MarkerUnreadable: a guard reads strictly and takes its marker's
+    safe side (module docstring)."""
+    def _unreadable(why):
+        log.warning("marker %s unreadable: %s", name, why)
+        if strict:
+            raise MarkerUnreadable(f"marker {name}: {why}")
+        return None
     if backend() == "object":
         cfg = object_config()
         if cfg is None:
-            return None
+            return _unreadable("no object storage configured (BLOB_S3_* or BACKUP_S3_*)")
         import offsite_backup
         try:
             data = json.loads(offsite_backup.get_bytes(name, cfg).decode("utf-8"))
         except offsite_backup.OffsiteError as e:
-            if "404" not in str(e):
-                log.warning("marker %s unreadable: %s", name, e)
-            return None
+            if "404" in str(e):
+                return None
+            return _unreadable(e)
         except (ValueError, UnicodeDecodeError) as e:
-            log.warning("marker %s unreadable: %s", name, e)
-            return None
-        return data if isinstance(data, dict) else None
+            return _unreadable(e)
+        return data if isinstance(data, dict) else _unreadable("not a JSON object")
+    return read_file(_path(name), strict=strict)
+
+
+def read_file(path, strict=False):
+    """A marker file's JSON (a dict); None when the file is not there. A
+    file that is there but cannot be read or parsed is None too — unless
+    `strict` (MarkerUnreadable)."""
     try:
-        with open(_path(name), encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return None
+    except (OSError, ValueError) as e:
+        log.warning("marker %s unreadable: %s", path, e)
+        if strict:
+            raise MarkerUnreadable(f"marker {path}: {e}")
+        return None
+    if isinstance(data, dict):
+        return data
+    if strict:
+        raise MarkerUnreadable(f"marker {path}: not a JSON object")
+    return None
 
 
 def write(name, data) -> None:
@@ -146,10 +199,11 @@ def remove(name) -> None:
         pass
 
 
-def exists(name, ttl=EXISTS_TTL_SECONDS) -> bool:
+def exists(name, ttl=EXISTS_TTL_SECONDS, when_unreadable=True) -> bool:
     """Whether the marker is there. In object storage, answered from a cache
     at most `ttl` seconds old: config.restore_frozen() asks on every gate
-    check."""
+    check. A read that fails answers what this process last read cleanly,
+    else `when_unreadable` (True: the freeze's safe side — fail closed)."""
     if backend() != "object":
         return os.path.exists(_path(name))
     now = time.monotonic()
@@ -157,7 +211,16 @@ def exists(name, ttl=EXISTS_TTL_SECONDS) -> bool:
         hit = _exists_cache.get(name)
         if hit is not None and now - hit[0] < ttl:
             return hit[1]
-    found = read(name) is not None
+    try:
+        found = read(name, strict=True) is not None
+        with _cache_lock:
+            _last_known[name] = found
+    except MarkerUnreadable as e:
+        with _cache_lock:
+            last = _last_known.get(name)
+        found = last if last is not None else bool(when_unreadable)
+        log.error("marker %s unreadable — answering %s (%s): %s", name, found,
+                  "as last read" if last is not None else "its safe side", e)
     with _cache_lock:
         _exists_cache[name] = (now, found)
     return found

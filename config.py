@@ -235,14 +235,16 @@ def restore_frozen() -> bool:
     import sys
     if volume_optional() and not (os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip() and on_railway():
         # No volume (release-safety audit 10/26/26, P3): the freeze lives in
-        # object storage (marker_store), answered from a 30-second cache.
+        # object storage (marker_store), answered from a 30-second cache. A
+        # read that fails is the freeze as last read, else frozen — never
+        # "lifted" on a storage blip during a restore (re-audit B7 P3).
         try:
             import marker_store
-            return marker_store.exists(".restore_freeze")
-        except Exception as e:     # a guard that cannot read never stops the platform (restore_guard)
+            return marker_store.exists(".restore_freeze", when_unreadable=True)
+        except Exception as e:
             import logging
-            logging.getLogger("config").warning("restore freeze unreadable in object storage: %s", e)
-            return False
+            logging.getLogger("config").error("restore freeze unreadable in object storage — held: %s", e)
+            return True
     models = sys.modules.get("models")
     path = getattr(models, "DB_PATH", None) or os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
     return os.path.exists(os.path.join(os.path.dirname(os.path.abspath(path)) or ".", ".restore_freeze"))

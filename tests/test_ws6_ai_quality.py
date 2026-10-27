@@ -62,7 +62,8 @@ def _seed_surface(db_path, surface, action, base_calls, base_events, day_calls, 
     for i in range(day_calls):
         usage.append((action, _stamp(NOW - timedelta(hours=1 + (i % 20)))))
     for i in range(base_events):
-        events.append((surface, "validation_refused", action, _stamp(NOW - timedelta(days=2 + (i % 13))), "old", "tpl-old"))
+        events.append((surface, "validation_refused", action, _stamp(NOW - timedelta(days=2 + (i % 13), hours=1)), "old",
+                       "tpl-old"))
     for i in range(day_events):
         events.append((surface, "fallback", action, _stamp(NOW - timedelta(hours=2 + (i % 18))), build, template))
     _x(db_path, "INSERT INTO ai_usage (action, model, vendor, outcome, status, created_at) "
@@ -90,17 +91,60 @@ def test_a_surface_refusing_six_times_its_baseline_warns_with_the_change_it_came
     _seed_surface(db, "dsr_narrative", "dsr_narrative", 280, 14, 20, 6)
     (r,) = aqw.surface_regressions(now=NOW, use_cache=False)
     assert r["surface"] == "dsr_narrative" and r["calls_24h"] == 20 and r["events_24h"] == 6
-    assert r["rate_24h"] == 0.3 and r["rate_base"] == 0.05 and r["ratio"] == 6.0
+    # The baseline is the low quantile of its days' rates, never above the pooled 5% (re-audit B7).
+    assert r["rate_24h"] == 0.3 and 0.03 <= r["rate_base"] <= 0.05 and r["ratio"] >= 6.0
     assert r["build"] == "abc123def456" and r["template_hash"] == "tpl-new"
     (p,) = aqw.platform_problems(now=NOW)
     assert p["key"] == "ai_quality:dsr_narrative"
     assert "6 of 20 calls" in p["line"] and "build abc123def456" in p["line"] and "template tpl-new" in p["line"]
 
 
-def test_too_few_calls_or_a_steady_rate_says_nothing(db):
-    _seed_surface(db, "dsr_narrative", "dsr_narrative", 280, 14, 19, 6)           # n < 20 today
+def test_a_steady_rate_or_a_quiet_surface_under_its_floor_says_nothing(db):
     _seed_surface(db, "reply_public", "draft_response", 280, 28, 40, 6)          # 10% then 15%: under 2x
+    _seed_surface(db, "dsr_narrative", "dsr_narrative", 280, 14, 19, 2)          # quiet, 2 events: under 3
     assert aqw.surface_regressions(now=NOW, use_cache=False) == []
+
+
+# ── re-audit B7 P2: low volume is watched, and a regression does not become
+# its own baseline ────────────────────────────────────────────────────────
+
+def test_a_quiet_surface_refusing_half_its_calls_warns_on_the_low_volume_rule(db):
+    # Eight restaurants' DSR narratives last night, four refused: no 24-hour
+    # ratio is possible under 20 calls, so it used to be watched not at all.
+    _seed_surface(db, "dsr_narrative", "dsr_narrative", 0, 0, 8, 4)
+    (r,) = aqw.surface_regressions(now=NOW, use_cache=False)
+    assert r["rule"] == "low_volume" and r["calls"] == 8 and r["events"] == 4 and r["hours"] == 48
+    (p,) = aqw.platform_problems(now=NOW)
+    assert "4 of 8 calls in 48 hours" in p["line"]
+    # The same share on a surface whose own baseline already runs that high says nothing.
+    aqw._cache.clear()
+    _seed_surface(db, "reply_public", "draft_response", 280, 140, 8, 4)          # 50% for two weeks
+    assert [x["surface"] for x in aqw.surface_regressions(now=NOW, use_cache=False)] == ["dsr_narrative"]
+
+
+def test_a_sustained_regression_does_not_fade_into_its_baseline(db):
+    """5% for a week, then 40% for a week and today: the pooled 14 days read
+    22.5%, under which 40% was no longer "twice the baseline" — the warning
+    went quiet while the surface stayed broken."""
+    usage, events = [], []
+    for day in range(2, 16):                       # the 14 days that end 48 hours back
+        rate = 0.40 if day <= 8 else 0.05
+        for i in range(20):
+            usage.append(("dsr_narrative", _stamp(NOW - timedelta(days=day, hours=i % 12))))
+        for i in range(int(round(20 * rate))):
+            events.append(("dsr_narrative", "fallback", "dsr_narrative", _stamp(NOW - timedelta(days=day, hours=i % 12)),
+                           "b", "t"))
+    for i in range(20):                            # today: 8 of 20
+        usage.append(("dsr_narrative", _stamp(NOW - timedelta(hours=1 + i % 20))))
+    for i in range(8):
+        events.append(("dsr_narrative", "fallback", "dsr_narrative", _stamp(NOW - timedelta(hours=2 + i)), "b", "t"))
+    _x(db, "INSERT INTO ai_usage (action, model, vendor, outcome, status, created_at) "
+           "VALUES (?, 'claude-sonnet-5-5', 'anthropic', 'ok', 'ok', ?)", usage)
+    _x(db, "INSERT INTO ai_quality_events (surface, kind, action, created_at, n, build, template_hash) "
+           "VALUES (?, ?, ?, ?, 1, ?, ?)", events)
+    (r,) = aqw.surface_regressions(now=NOW, use_cache=False)
+    assert r["rule"] == "ratio" and r["rate_24h"] == 0.4
+    assert r["rate_base"] == 0.05, "the baseline is the days before the regression, not the pooled 22.5%"
 
 
 def test_the_platform_check_warns_on_an_ai_quality_regression(db, monkeypatch):

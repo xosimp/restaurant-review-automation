@@ -302,6 +302,9 @@ def _fail(job: GenerationRun, e: Exception) -> None:
         return
     log.error(f"FAILED:\n{traceback.format_exc()}")
     se._run_failed(e)
+    # How it failed, for the queue row (a platform failure is a dead letter
+    # the urgent rule reads — re-audit B7 P1).
+    se.record_generation_failure(req.job_id, e)
     try:
         se._ops.capture(e, job="schedule_generate", context=f"restaurant_id={req.restaurant_id}")
     except Exception as _sx:

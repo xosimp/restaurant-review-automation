@@ -108,15 +108,14 @@ def _remove(path):
 
 
 def _read_json(path):
+    """The epoch or freeze record, None when there is none; a read that
+    fails raises marker_store.MarkerUnreadable (re-audit B7 P3: an object-
+    storage blip read as "no epoch", and the tick then wrote a fresh one over
+    the evidence of a restore)."""
+    import marker_store
     if _object_backed():
-        import marker_store
-        return marker_store.read(os.path.basename(path))
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except (OSError, ValueError):
-        return None
+        return marker_store.read(os.path.basename(path), strict=True)
+    return marker_store.read_file(path, strict=True)
 
 
 def _write_json(path, data):
@@ -158,11 +157,19 @@ def check_and_stamp(db_path=None) -> dict:
     is the tick that found the database behind the volume (it writes the
     freeze and pages); `frozen` every tick after it until confirm(). Called
     by scheduler_loop at the top of each tick, before any job. Never raises
-    for a read or write it could not make (state 'error' — the tick goes on:
-    a guard that cannot read is no reason to stop the platform)."""
+    for a read or write it could not make (state 'error' — the tick goes on,
+    and an epoch it could not read is never written over). A freeze record
+    it cannot read holds the tick (state 'frozen', `unreadable`)."""
     if not active():
         return {"state": "off"}
-    held = frozen()
+    import marker_store
+    try:
+        held = frozen()
+    except marker_store.MarkerUnreadable as e:
+        # The freeze record cannot be read: the tick is held (its safe side —
+        # marker_store's docstring), never run as if no freeze were there.
+        log.error("restore guard: the freeze record is unreadable — the tick is held: %s", e)
+        return {"state": "frozen", "unreadable": True, "error": str(e)[:200]}
     if held is not None:
         return dict(held, state="frozen")
     try:

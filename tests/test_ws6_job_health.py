@@ -87,6 +87,17 @@ def test_a_run_is_scored_by_the_share_it_failed():
     assert ops._healthy_run(1, None) and ops._healthy_run(2, json.dumps({"attempted": 10, "failed": 1}))
     assert not ops._healthy_run(2, json.dumps({"attempted": 10, "failed": 9}))
     assert ops._healthy_run(2, None), "a partial with no counts is not judged failing"
+    # Re-audit B7 P2: one tenant of two is not the job failing (FAILING_MIN_ATTEMPTED).
+    assert ops._healthy_run(2, json.dumps({"attempted": 2, "failed": 1}))
+    assert not ops._healthy_run(0, json.dumps({"attempted": 2, "failed": 2})), "every attempt failed is still failed"
+
+
+def test_one_tenant_of_two_failing_is_neither_overdue_nor_failing(db):
+    _run(db, "review_fetch", 1, {"attempted": 1, "ok": 1, "failed": 0}, hours_ago=60)
+    for hours in (49, 25, 1):
+        _run(db, "pos_sync", 2, {"attempted": 2, "ok": 1, "failed": 1}, hours_ago=hours)
+    assert "pos_sync" not in {j["job"] for j in ops.jobs_overdue()}, "an urgent page a day for one tenant"
+    assert ops.jobs_failing(use_cache=False) == []
 
 
 def test_a_job_whose_runs_fail_most_restaurants_is_overdue(db):
@@ -206,7 +217,8 @@ def test_a_failed_owner_press_is_urgent(db, monkeypatch):
     monkeypatch.setattr(ops, "alert_will", lambda subject, lines: True)
     out = ops.check_platform_sla(send=True)
     assert out["queue_urgent"] and out["alerted"]
-    assert ops.last_operator_alert()["key"] == "platform_sla_alert", "urgent pages hourly, not once a day"
+    # Urgent pages hourly, keyed on its urgent conditions (re-audit B7: never one constant key).
+    assert ops.last_operator_alert()["key"] == "platform_sla_alert:queue_failed_urgent:schedule_generate"
 
 
 def test_an_unknown_kind_is_deferred_never_failed(db, monkeypatch):
@@ -245,28 +257,63 @@ def pulsed(db, monkeypatch):
     return scheduler._PulsedOps(), clock
 
 
+def _sweep(fail, ran, job="pos_sync"):
+    """A per-restaurant pass over restaurants 1-10 through
+    scheduler.resumable_sweep (a partial retry narrows only such a pass), the
+    restaurants in `fail` raising (captured with their id), returning the
+    standard counts of what it ran."""
+    def body():
+        mine = []
+
+        def one(rid):
+            mine.append(rid)
+            ran.append(rid)
+            if rid in fail:
+                raise RuntimeError(f"store {rid} refused")
+        scheduler.resumable_sweep(f"test_partial:{job}", list(range(1, 11)), one, 60, job=job)
+        bad = sum(1 for r in mine if r in fail)
+        return {"attempted": len(mine), "ok": len(mine) - bad, "failed": bad, "skipped": 0, "hit_bound": False,
+                "eligible": 10}
+    return body
+
+
 def test_a_partial_retryable_run_that_failed_a_fifth_retries_once_after_30_minutes(pulsed):
     p, clock = pulsed
     assert jobs_registry.spec("pos_sync").get("retry") and not jobs_registry.spec("pos_sync").get("sends")
     assert p.claim_period("pos_sync", "2026-10-26") is True
-    p.run_job("pos_sync", lambda: {"attempted": 10, "ok": 7, "failed": 3, "skipped": 0, "hit_bound": False})
+    ran = []
+    p.run_job("pos_sync", _sweep({3, 7, 9}, ran))
     assert p._retries[("pos_sync", "2026-10-26")]["attempt"] == 1
     assert ("pos_sync", "2026-10-26", 1) == ops.pending_retries()[0][:3], "kept in the database too"
+    assert ops.pending_retry_scopes()[("pos_sync", "2026-10-26")] == [3, 7, 9], "with what it re-runs"
     clock["t"] += 29 * 60
     assert p.claim_period("pos_sync", "2026-10-26") is False, "retried before 30 minutes"
     clock["t"] += 2 * 60
     assert p.claim_period("pos_sync", "2026-10-26") is True
-    # Partial again: the period stays spent — one retry only.
-    p.run_job("pos_sync", lambda: {"attempted": 10, "ok": 6, "failed": 4, "skipped": 0, "hit_bound": False})
+    # The retry runs ONLY the three that failed (re-audit B7 P3 / B8 P3);
+    # partial again: the period stays spent — one retry only.
+    ran.clear()
+    p.run_job("pos_sync", _sweep({3, 7}, ran))
+    assert sorted(ran) == [3, 7, 9], "a partial retry re-ran restaurants that had succeeded"
     assert ("pos_sync", "2026-10-26") not in p._retries and ops.pending_retries() == []
     clock["t"] += 31 * 60
     assert p.claim_period("pos_sync", "2026-10-26") is False
 
 
+def test_a_partial_run_that_does_not_sweep_restaurants_is_not_retried_whole(pulsed):
+    """A job whose work does not go through resumable_sweep cannot be
+    narrowed to its failed restaurants — so it is not retried at all,
+    rather than paying again for everything that succeeded."""
+    p, _clock = pulsed
+    assert p.claim_period("pos_sync", "2026-10-26") is True
+    p.run_job("pos_sync", lambda: {"attempted": 10, "ok": 7, "failed": 3, "skipped": 0, "hit_bound": False})
+    assert p._retries == {} and ops.pending_retries() == []
+
+
 def test_a_partial_run_that_failed_few_keeps_its_period(pulsed):
     p, _clock = pulsed
     assert p.claim_period("pos_sync", "2026-10-26") is True
-    p.run_job("pos_sync", lambda: {"attempted": 10, "ok": 9, "failed": 1, "skipped": 0, "hit_bound": False})
+    p.run_job("pos_sync", _sweep({4}, []))
     assert p._retries == {}
 
 

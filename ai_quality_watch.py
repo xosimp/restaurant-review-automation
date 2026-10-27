@@ -12,12 +12,16 @@ hour (an hourly rule on a five-minute supervisor):
 
   surface_regressions   per surface, the last 24 hours' refusals and
                         fallbacks (ai_utils.FALLBACK_EVENT_KINDS) per call
-                        of the surface's own ledger actions, against the
-                        trailing 14 days': over AI_QUALITY_RATIO (2x) with at
-                        least AI_QUALITY_MIN_CALLS calls in each window and
-                        AI_QUALITY_MIN_EVENTS events today, a warning naming
-                        the build and prompt template most of today's events
-                        came from (ai_quality_events.build/template_hash).
+                        of the surface's own ledger actions, against the 14
+                        days that end 48 hours back (their low quantile of
+                        daily rates — _robust_baseline): over AI_QUALITY_RATIO
+                        (2x) with at least AI_QUALITY_MIN_CALLS calls in each
+                        window and AI_QUALITY_MIN_EVENTS events today; a
+                        surface too quiet for that, at AI_QUALITY_LOW_VOLUME_
+                        SHARE of its calls over 48 hours (re-audit B7). A
+                        warning naming the build and prompt template most of
+                        the events came from (ai_quality_events.build /
+                        template_hash).
   generation_fallbacks  the share of the last GEN_FALLBACK_SAMPLE schedule
                         generations whose days were drafted by a fallback
                         (a model-source week with days built in code, or a
@@ -52,6 +56,22 @@ AI_QUALITY_RATIO = float(os.getenv("AI_QUALITY_RATIO", "2.0"))
 AI_QUALITY_MIN_CALLS = int(os.getenv("AI_QUALITY_MIN_CALLS", "20"))
 AI_QUALITY_MIN_EVENTS = 3
 AI_QUALITY_BASELINE_DAYS = 14
+# Re-audit B7 P2 (10/27/26). The baseline window ends this many hours back,
+# so the last two days' regression is not part of what it is judged against.
+AI_QUALITY_BASELINE_GAP_HOURS = 48
+# ...and is the low quantile of its days' rates (days with this many calls,
+# at least this many days), so a sustained regression does not become its
+# own baseline within a week.
+AI_QUALITY_BASELINE_QUANTILE = 0.25
+AI_QUALITY_DAY_MIN_CALLS = 3
+AI_QUALITY_MIN_DAYS = 4
+# A surface too quiet for the 24-hour ratio (fewer than AI_QUALITY_MIN_CALLS
+# calls in a window) warns at this share of its calls over the last
+# AI_QUALITY_LOW_VOLUME_HOURS (with AI_QUALITY_MIN_EVENTS events): the DSR
+# narrative makes one call per restaurant a night, so below ~20 DSR
+# restaurants it was never watched at all.
+AI_QUALITY_LOW_VOLUME_SHARE = float(os.getenv("AI_QUALITY_LOW_VOLUME_SHARE", "0.3"))
+AI_QUALITY_LOW_VOLUME_HOURS = 48
 GEN_FALLBACK_SAMPLE = 20
 GEN_FALLBACK_MIN = 5
 GEN_FALLBACK_RATIO = 2.0
@@ -100,48 +120,100 @@ def surface_regressions(db_path=None, now=None, use_cache=True) -> list:
 def _surface_regressions(db_path, now):
     import ai_utils
     t = _utcnow(now)
-    day, base = _stamp(t - timedelta(days=1)), _stamp(t - timedelta(days=1 + AI_QUALITY_BASELINE_DAYS))
+    day = _stamp(t - timedelta(days=1))
+    recent = _stamp(t - timedelta(hours=AI_QUALITY_LOW_VOLUME_HOURS))
+    base_end = _stamp(t - timedelta(hours=AI_QUALITY_BASELINE_GAP_HOURS))
+    base = _stamp(t - timedelta(hours=AI_QUALITY_BASELINE_GAP_HOURS) - timedelta(days=AI_QUALITY_BASELINE_DAYS))
     kinds = tuple(ai_utils.FALLBACK_EVENT_KINDS)
     marks = ",".join("?" * len(kinds))
     conn = get_conn(db_path)
     try:
+        # Per surface and action: the last 24 hours, the last 48, and each
+        # day of the baseline window (which ends 48 hours back).
         ev = conn.execute(
-            "SELECT surface, action, SUM(CASE WHEN created_at >= ? THEN n ELSE 0 END) AS e24, "
+            "SELECT surface, action, SUBSTR(created_at, 1, 10) AS d, "
+            "SUM(CASE WHEN created_at >= ? THEN n ELSE 0 END) AS e24, "
+            "SUM(CASE WHEN created_at >= ? THEN n ELSE 0 END) AS e48, "
             "SUM(CASE WHEN created_at < ? THEN n ELSE 0 END) AS eb FROM ai_quality_events "
-            f"WHERE created_at >= ? AND kind IN ({marks}) GROUP BY surface, action",
-            (day, day, base) + kinds).fetchall()
-        calls = {r["action"]: (int(r["c24"] or 0), int(r["cb"] or 0)) for r in conn.execute(
-            "SELECT action, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS c24, "
-            "SUM(CASE WHEN created_at < ? THEN 1 ELSE 0 END) AS cb FROM ai_usage "
-            "WHERE created_at >= ? AND COALESCE(outcome, 'ok') <> 'blocked' "
-            "AND COALESCE(vendor, 'anthropic') = 'anthropic' GROUP BY action", (day, day, base)).fetchall()}
+            f"WHERE created_at >= ? AND kind IN ({marks}) GROUP BY surface, action, SUBSTR(created_at, 1, 10)",
+            (day, recent, base_end, base) + kinds).fetchall()
+        calls = {}
+        for r in conn.execute(
+                "SELECT action, SUBSTR(created_at, 1, 10) AS d, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS c24, "
+                "SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS c48, "
+                "SUM(CASE WHEN created_at < ? THEN 1 ELSE 0 END) AS cb FROM ai_usage "
+                "WHERE created_at >= ? AND COALESCE(outcome, 'ok') <> 'blocked' "
+                "AND COALESCE(vendor, 'anthropic') = 'anthropic' GROUP BY action, SUBSTR(created_at, 1, 10)",
+                (day, recent, base_end, base)).fetchall():
+            a = calls.setdefault(r["action"], {"c24": 0, "c48": 0, "cb": 0, "days": {}})
+            a["c24"] += int(r["c24"] or 0)
+            a["c48"] += int(r["c48"] or 0)
+            a["cb"] += int(r["cb"] or 0)
+            if int(r["cb"] or 0):
+                a["days"][r["d"]] = a["days"].get(r["d"], 0) + int(r["cb"] or 0)
         by = {}
         for r in ev:
-            s = by.setdefault(r["surface"], {"e24": 0, "eb": 0, "actions": set()})
+            s = by.setdefault(r["surface"], {"e24": 0, "e48": 0, "eb": 0, "actions": set(), "days": {}})
             s["e24"] += int(r["e24"] or 0)
+            s["e48"] += int(r["e48"] or 0)
             s["eb"] += int(r["eb"] or 0)
             s["actions"].add(r["action"])
+            if int(r["eb"] or 0):
+                s["days"][r["d"]] = s["days"].get(r["d"], 0) + int(r["eb"] or 0)
         out = []
         for surface, s in sorted(by.items()):
             acts = _surface_actions(surface, s["actions"])
-            c24 = sum(calls.get(a, (0, 0))[0] for a in acts)
-            cb = sum(calls.get(a, (0, 0))[1] for a in acts)
-            if c24 < AI_QUALITY_MIN_CALLS or cb < AI_QUALITY_MIN_CALLS or s["e24"] < AI_QUALITY_MIN_EVENTS:
+            c24 = sum(calls.get(a, {}).get("c24", 0) for a in acts)
+            c48 = sum(calls.get(a, {}).get("c48", 0) for a in acts)
+            cb = sum(calls.get(a, {}).get("cb", 0) for a in acts)
+            day_calls = {}
+            for a in acts:
+                for d, n in (calls.get(a, {}).get("days") or {}).items():
+                    day_calls[d] = day_calls.get(d, 0) + n
+            rate_b = _robust_baseline(s["eb"], cb, s["days"], day_calls)
+            rule = None
+            if c24 >= AI_QUALITY_MIN_CALLS and cb >= AI_QUALITY_MIN_CALLS:
+                if s["e24"] >= AI_QUALITY_MIN_EVENTS and s["e24"] / float(c24) > AI_QUALITY_RATIO * rate_b:
+                    rule, n_calls, n_events, hours = "ratio", c24, s["e24"], 24
+            elif c48 and s["e48"] >= AI_QUALITY_MIN_EVENTS:
+                # Low volume (re-audit B7 P2): too few calls for a 24-hour
+                # ratio — one DSR narrative per restaurant a night — so an
+                # absolute share over 48 hours, still above twice a known
+                # baseline.
+                share = s["e48"] / float(c48)
+                known = cb >= AI_QUALITY_MIN_CALLS
+                if share >= AI_QUALITY_LOW_VOLUME_SHARE and (not known or share > AI_QUALITY_RATIO * rate_b):
+                    rule, n_calls, n_events, hours = "low_volume", c48, s["e48"], AI_QUALITY_LOW_VOLUME_HOURS
+            if rule is None:
                 continue
-            rate, rate_b = s["e24"] / float(c24), s["eb"] / float(cb)
-            if rate <= AI_QUALITY_RATIO * rate_b:
-                continue
+            rate = n_events / float(n_calls)
             top = conn.execute(
                 "SELECT build, template_hash, SUM(n) AS n FROM ai_quality_events WHERE surface=? AND created_at >= ? "
                 f"AND kind IN ({marks}) GROUP BY build, template_hash ORDER BY SUM(n) DESC LIMIT 1",
-                (surface, day) + kinds).fetchone()
-            out.append({"surface": surface, "calls_24h": c24, "events_24h": s["e24"], "rate_24h": round(rate, 4),
+                (surface, day if hours == 24 else recent) + kinds).fetchone()
+            out.append({"surface": surface, "rule": rule, "hours": hours, "calls_24h": c24, "events_24h": s["e24"],
+                        "calls": n_calls, "events": n_events, "rate_24h": round(rate, 4),
                         "calls_base": cb, "events_base": s["eb"], "rate_base": round(rate_b, 4),
                         "ratio": (round(rate / rate_b, 1) if rate_b else None),
                         "build": top["build"] if top else None, "template_hash": top["template_hash"] if top else None})
         return out
     finally:
         conn.close()
+
+
+def _robust_baseline(events, calls, day_events, day_calls) -> float:
+    """The baseline window's refusal-and-fallback rate as a regression
+    cannot move it (re-audit B7 P2): the AI_QUALITY_BASELINE_QUANTILE of its
+    days' rates (days with at least AI_QUALITY_DAY_MIN_CALLS calls) when at
+    least AI_QUALITY_MIN_DAYS such days, else the pooled rate — so a 5% -> 40%
+    jump stays "over twice its baseline" until it has filled most of the
+    window, instead of fading into it within a week."""
+    pooled = events / float(calls) if calls else 0.0
+    rates = sorted(day_events.get(d, 0) / float(n) for d, n in day_calls.items() if n >= AI_QUALITY_DAY_MIN_CALLS)
+    if len(rates) < AI_QUALITY_MIN_DAYS:
+        return pooled
+    q = rates[min(len(rates) - 1, int(AI_QUALITY_BASELINE_QUANTILE * (len(rates) - 1)))]
+    return min(pooled, q)
 
 
 def _fell_back(ds) -> bool:
@@ -225,8 +297,8 @@ def platform_problems(db_path=None, now=None) -> list:
             if r.get("template_hash"):
                 names.append(f"template {r['template_hash']}")
             out.append({"key": f"ai_quality:{r['surface']}",
-                        "line": f"AI quality: {r['surface']} refused or fell back on {r['events_24h']} of "
-                                f"{r['calls_24h']} calls in 24 hours ({r['rate_24h'] * 100:.0f}%), against "
+                        "line": f"AI quality: {r['surface']} refused or fell back on {r['events']} of "
+                                f"{r['calls']} calls in {r['hours']} hours ({r['rate_24h'] * 100:.0f}%), against "
                                 f"{r['rate_base'] * 100:.1f}% over the 14 days before"
                                 + (f" — most from {', '.join(names)}" if names else "")
                                 + ". The events are on the console's AI Quality page."})

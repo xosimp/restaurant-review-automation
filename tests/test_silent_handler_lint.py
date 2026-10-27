@@ -176,3 +176,17 @@ def test_update_only_lowers_the_baseline(lint_root, capsys):
     assert lint.main(["--update", "--allow-increase"]) == 0
     saved = json.loads((lint_root / "scripts" / "silent_handlers_baseline.json").read_text())
     assert saved["files"]["pkg/mod.py"] == {"silent": 2, "silent_writes": 0} and saved["total"]["silent"] == 2
+
+
+def test_a_handler_that_only_logs_at_debug_leaves_no_trace(tmp_path):
+    """Re-audit B7 P3 (10/27/26): LOG_LEVEL is INFO in production, so a broad
+    handler whose body is only `log.debug(...)` is as silent as `pass` — it
+    counts toward the ratchet; a warning or a capture does not."""
+    import ast
+    import check_silent_handlers as lint
+    silent = ast.parse("try:\n    f()\nexcept Exception as e:\n    log.debug('skipped: %s', e)\n").body[0].handlers[0]
+    assert lint.leaves_no_trace(silent.body)
+    logged = ast.parse("try:\n    f()\nexcept Exception as e:\n    log.warning('skipped: %s', e)\n").body[0].handlers[0]
+    assert not lint.leaves_no_trace(logged.body)
+    both = ast.parse("try:\n    f()\nexcept Exception as e:\n    log.debug('x')\n    return None\n").body[0].handlers[0]
+    assert lint.leaves_no_trace(both.body)

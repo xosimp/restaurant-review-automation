@@ -209,7 +209,7 @@ _NOT_SUCCESS = frozenset(("attempted", "failed", "skipped", "held", "retried", "
 # Kept beside the counts when a job reports it (scale audit 10/19/26 INF-7):
 # how many restaurants the pass was FOR, so a run its bound cut short says
 # how far it got (jobs_bound_capped).
-_COVERAGE_KEYS = ("eligible",)
+_COVERAGE_KEYS = ("eligible", "queued", "rows_settled", "pending")
 
 # How often a running job proves it is alive (job_runs.pulse_at), and how
 # long a silent run may go before it is taken to be dead — its process gone.
@@ -1005,15 +1005,19 @@ def _retry_key(claim, period):
     return f"{_RETRY_KEY}{claim}|{period}"
 
 
-def record_retry(claim, period, attempt, at_epoch) -> None:
-    """Keep a pending retry durably. Never raises."""
+def record_retry(claim, period, attempt, at_epoch, only=None) -> None:
+    """Keep a pending retry durably — a partial retry with the restaurant
+    ids it re-runs (`only`). Never raises."""
+    body = {"attempt": int(attempt), "at": float(at_epoch)}
+    if only is not None:
+        body["only"] = [int(x) for x in only][:5000]
     try:
         from models import get_conn
         conn = get_conn()
         try:
             conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
                          "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                         (_retry_key(claim, period), json.dumps({"attempt": int(attempt), "at": float(at_epoch)})))
+                         (_retry_key(claim, period), json.dumps(body)))
             conn.commit()
         finally:
             conn.close()
@@ -1060,6 +1064,54 @@ def pending_retries() -> list:
     except Exception as e:
         log.warning(f"pending retries not read: {e}")
     return out
+
+
+def pending_retry_scopes() -> dict:
+    """{(claim, period): [restaurant ids]} of the pending PARTIAL retries
+    (record_retry `only`): what each re-runs. Never raises."""
+    out = {}
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            rows = conn.execute("SELECT key, value FROM job_cursors WHERE key LIKE ?", (f"{_RETRY_KEY}%",)).fetchall()
+        finally:
+            conn.close()
+        for key, value in ((r[0], r[1]) for r in rows):
+            claim, sep, period = str(key)[len(_RETRY_KEY):].rpartition("|")
+            try:
+                v = json.loads(value or "{}")
+            except (TypeError, ValueError):
+                continue
+            if sep and claim and isinstance(v.get("only"), list):
+                out[(claim, period)] = [int(x) for x in v["only"]]
+    except Exception as e:
+        log.warning(f"pending partial retries not read: {e}")
+    return out
+
+
+def failed_restaurants(jobs, since) -> set:
+    """The restaurant ids whose failures `jobs` (names) captured since
+    `since` (a UTC "YYYY-MM-DD HH:MM:SS"): what a partial retry re-runs
+    (scheduler._PulsedOps._after). job_failures carries the restaurant each
+    per-restaurant capture names (capture's context, restaurant_id=N). Empty
+    when unreadable."""
+    names = sorted({str(j) for j in (jobs or ()) if j})
+    if not names or not since:
+        return set()
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            rows = conn.execute("SELECT DISTINCT restaurant_id FROM job_failures WHERE job IN ("
+                                + ",".join("?" * len(names)) + ") AND created_at >= ? AND restaurant_id IS NOT NULL "
+                                "AND COALESCE(kind, 'job') = 'job'", tuple(names) + (str(since),)).fetchall()
+        finally:
+            conn.close()
+        return {int(r[0]) for r in rows}
+    except Exception as e:
+        log.warning(f"failed restaurants of {names} unreadable: {e}")
+        return set()
 
 
 # ── permanent markers (#157) ────────────────────────────────────────────────
@@ -1235,6 +1287,13 @@ BOUND_ALERT_RUNS = max(2, int(os.getenv("BOUND_ALERT_RUNS", "3")))
 # for 49 of 50 stores was a partial run — counted a success, never paged.
 FAILING_ALERT_RUNS = max(2, int(os.getenv("JOB_FAILING_ALERT_RUNS", "2")))
 FAILING_ALERT_SHARE = float(os.getenv("JOB_FAILING_ALERT_SHARE", "0.5"))
+# ...judged only on a run that attempted at least this many (re-audit B7
+# P2, 10/27/26): one restaurant of two with a revoked credential made a
+# nightly job "overdue" — an urgent page a day for a single tenant's problem
+# its reconnect flow already handles. Below it a partial run counts toward
+# the SLA and the per-restaurant rules speak; a run whose every attempt
+# failed (or that raised) is still a failed run at any size.
+FAILING_MIN_ATTEMPTED = max(1, int(os.getenv("JOB_FAILING_MIN_ATTEMPTED", "3")))
 # Failed job_queue rows (dead letters) per kind in the last hour that warn
 # (A07-07): QUEUE_FAILED_ALERT_ROWS of one kind, or QUEUE_FAILED_ALERT_SHARE
 # of the kind's finished rows with at least QUEUE_FAILED_ALERT_MIN failed.
@@ -1242,6 +1301,16 @@ FAILING_ALERT_SHARE = float(os.getenv("JOB_FAILING_ALERT_SHARE", "0.5"))
 QUEUE_FAILED_ALERT_ROWS = int(os.getenv("QUEUE_FAILED_ALERT_ROWS", "5"))
 QUEUE_FAILED_ALERT_SHARE = float(os.getenv("QUEUE_FAILED_ALERT_SHARE", "0.2"))
 QUEUE_FAILED_ALERT_MIN = 2
+# A rate, never a bare count (re-audit B7 P2: 5 dead letters of a kind an
+# hour paged whatever the kind's volume — at 1,500 stores a routine 0.3%):
+# a kind warns at QUEUE_FAILED_ALERT_MIN failed and QUEUE_FAILED_ALERT_SHARE
+# of its finished rows, or at QUEUE_FAILED_ALERT_ROWS failed and this
+# smaller share of a busy kind's.
+QUEUE_FAILED_ALERT_VOLUME_SHARE = float(os.getenv("QUEUE_FAILED_ALERT_VOLUME_SHARE", "0.05"))
+# A queued row of a kind this build has no handler for, this long after the
+# boot and this old, is named (re-audit B7 P2; job_queue.expire_unknown_kinds
+# expires it after days).
+QUEUE_UNKNOWN_KIND_ALERT_SECONDS = 30 * 60
 QUEUE_FAILED_URGENT_KINDS = ("schedule_generate", "auto_draft")
 
 # How long past its own deadline (set_async_job_deadline) a job may still be
@@ -2174,11 +2243,23 @@ def run_failed_share(ok, result_json):
     return min(1.0, failed / float(attempted))
 
 
+def _run_attempted(result_json) -> int:
+    """What one finished run counted as attempted (0: no counts)."""
+    import json as _json
+    try:
+        b = _json.loads(result_json) if result_json else None
+    except (TypeError, ValueError):
+        return 0
+    return _int(b.get("attempted")) if isinstance(b, dict) else 0
+
+
 def _healthy_run(ok, result_json) -> bool:
     """Whether a finished run counts as a success for the SLA (A07-03): a
     clean run (ok 1), or a partial one (ok 2) that failed under
     FAILING_ALERT_SHARE of what it attempted — a run that failed 9 of 10
-    restaurants is not a success however it is scored."""
+    restaurants is not a success however it is scored — or that attempted
+    fewer than FAILING_MIN_ATTEMPTED (one tenant of two is not the job
+    failing; re-audit B7)."""
     try:
         ok = int(ok)
     except (TypeError, ValueError):
@@ -2187,8 +2268,25 @@ def _healthy_run(ok, result_json) -> bool:
         return True
     if ok != RUN_PARTIAL:
         return False
+    if 0 < _run_attempted(result_json) < FAILING_MIN_ATTEMPTED:
+        return True
     share = run_failed_share(ok, result_json)
     return share is None or share < FAILING_ALERT_SHARE
+
+
+def _failing_run(ok, result_json) -> bool:
+    """Whether one finished run counts toward jobs_failing: it raised or
+    every attempt failed (ok 0), or it failed at least FAILING_ALERT_SHARE
+    of at least FAILING_MIN_ATTEMPTED attempts."""
+    share = run_failed_share(ok, result_json)
+    if share is None:
+        return False
+    try:
+        if int(ok) == RUN_FAILED:
+            return True
+    except (TypeError, ValueError):
+        return False
+    return share >= FAILING_ALERT_SHARE and _run_attempted(result_json) >= FAILING_MIN_ATTEMPTED
 
 
 def _last_healthy_finish(conn, job, scan=20):
@@ -2336,8 +2434,9 @@ def jobs_failing(db_path=None, runs=None, use_cache=True) -> list:
     eligible}] for every registered job whose last `runs`
     (FAILING_ALERT_RUNS) finished runs ALL failed at least
     FAILING_ALERT_SHARE of what they attempted (a crashed run counts as all
-    failed), or ALL attempted nothing while restaurants were eligible
-    (_run_idle) — Audit #25 A07-03. One indexed read per job, kept ten
+    failed; a run of fewer than FAILING_MIN_ATTEMPTED attempts only when all
+    failed — _failing_run), or ALL attempted nothing while restaurants were
+    eligible (_run_idle) — Audit #25 A07-03. One indexed read per job, kept ten
     minutes like jobs_bound_capped. Never raises: [] unreadable."""
     import json as _json
     n = int(runs or FAILING_ALERT_RUNS)
@@ -2366,7 +2465,7 @@ def jobs_failing(db_path=None, runs=None, use_cache=True) -> list:
             last = last if isinstance(last, dict) else {}
             common = {"job": job, "runs": n, "attempted": last.get("attempted"), "failed": last.get("failed"),
                       "eligible": last.get("eligible")}
-            if all(s is not None and s >= FAILING_ALERT_SHARE for s in shares):
+            if all(_failing_run(r[0], r[1]) for r in rows):
                 out.append(dict(common, why="failing", share=round(shares[0], 2)))
             elif all(_run_idle(r[1]) for r in rows):
                 out.append(dict(common, why="idle", share=None))
@@ -2379,12 +2478,107 @@ def jobs_failing(db_path=None, runs=None, use_cache=True) -> list:
     return out
 
 
+# A job that fans out as queue rows (pos_sync in queue mode, POS_SYNC_QUEUE)
+# finishes when it has QUEUED them: its counts were rows enqueued, `failed`
+# always 0, so the failure-share, idle and partial-retry rules never saw a
+# store's sync fail (re-audit B7 P2, 10/27/26). settle_queue_fanout rewrites
+# such a run's counts from its rows' real outcomes once they have run.
+FANOUT_SETTLE_MAX_HOURS = 36
+
+
+def _row_outcome(state, result_json) -> str:
+    """"ok", "failed", "skipped", "missed" (expired unstarted) or "pending"
+    for one queue row a fan-out queued."""
+    import json as _json
+    if state in ("queued", "running"):
+        return "pending"
+    if state == "expired":
+        return "missed"
+    if state != "done":
+        return "failed"
+    try:
+        r = _json.loads(result_json) if result_json else {}
+    except (TypeError, ValueError):
+        r = {}
+    if not isinstance(r, dict):
+        return "ok"
+    if isinstance(r.get("ok"), bool):
+        return "ok" if r["ok"] else "failed"
+    if r.get("skipped") and not r.get("attempted"):
+        return "skipped"
+    counts = standard_counts(r)
+    if counts and counts["failed"] and counts["failed"] >= max(1, counts["attempted"]):
+        return "failed"
+    return "ok"
+
+
+def settle_queue_fanout(job, kind, db_path=None, max_runs=5) -> int:
+    """Rewrite the counts of `job`'s recent fan-out runs (their stored
+    counts carry `queued`, not yet `rows_settled`) from the outcomes of the
+    `kind` rows each queued (created while it ran): attempted the rows that
+    ran (and those that expired unstarted), ok / failed / skipped as each
+    row ended, `eligible` the rows queued — and its ok column re-judged
+    (run_outcome) — so jobs_failing, jobs_overdue and the idle rule read the
+    night as it went. A run is settled once none of its rows is still
+    queued or running, or FANOUT_SETTLE_MAX_HOURS after it. A run none of
+    whose rows ran reads idle (attempted 0, eligible N). Returns runs
+    settled; never raises."""
+    import json as _json
+    settled = 0
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+    except Exception as e:
+        log.warning(f"fan-out runs of {job} not settled: {e}")
+        return 0
+    try:
+        runs = conn.execute("SELECT id, started_at, finished_at, result_json FROM job_runs WHERE job=? "
+                            "AND finished_at IS NOT NULL AND started_at >= datetime('now', ?) "
+                            "ORDER BY started_at DESC LIMIT ?",
+                            (job, f"-{FANOUT_SETTLE_MAX_HOURS + 24} hours", int(max_runs))).fetchall()
+        for run_id, started, finished, blob in runs:
+            try:
+                b = _json.loads(blob) if blob else None
+            except (TypeError, ValueError):
+                b = None
+            if not isinstance(b, dict) or not _int(b.get("queued")) or b.get("rows_settled"):
+                continue
+            tally = {"ok": 0, "failed": 0, "skipped": 0, "missed": 0, "pending": 0}
+            for state, res in conn.execute("SELECT state, result_json FROM jobs WHERE kind=? AND created_at >= ? "
+                                           "AND created_at <= ?", (kind, started, finished)).fetchall():
+                tally[_row_outcome(state, res)] += 1
+            old = conn.execute("SELECT (julianday('now') - julianday(?)) * 24.0", (finished,)).fetchone()[0]
+            if tally["pending"] and (old or 0) < FANOUT_SETTLE_MAX_HOURS:
+                continue
+            ran = tally["ok"] + tally["failed"]
+            counts = {"attempted": ran + tally["missed"] if ran else 0, "ok": tally["ok"],
+                      "failed": tally["failed"] + tally["missed"] if ran else 0,
+                      # Only rows that skipped: the stores the pass never queued (no
+                      # POS) are not what it was for (`eligible` is the rows).
+                      "skipped": tally["skipped"], "hit_bound": False,
+                      "eligible": _int(b.get("queued")), "queued": _int(b.get("queued")), "rows_settled": True,
+                      "pending": tally["pending"]}
+            ok, new_blob = run_outcome(counts)
+            conn.execute("UPDATE job_runs SET ok=?, result_json=? WHERE id=?", (ok, new_blob, run_id))
+            conn.commit()
+            settled += 1
+        if settled:
+            _failing_cache.clear()
+    except Exception as e:
+        log.warning(f"fan-out runs of {job} not settled: {e}")
+    finally:
+        conn.close()
+    return settled
+
+
 def queue_failed_kinds(q) -> list:
     """[{kind, failed, finished, share, urgent}] for every job_queue kind
-    whose failed rows (dead letters: failed on their last try) in the last
-    hour reach QUEUE_FAILED_ALERT_ROWS, or QUEUE_FAILED_ALERT_SHARE of the
-    kind's finished rows with at least QUEUE_FAILED_ALERT_MIN failed
-    (A07-07). From job_queue.stats()'s `kinds`: failed_1h, finished_1h."""
+    whose failed rows (dead letters: failed on their last try, or a
+    handler's job_queue.dead_letter — a failed generation) in the last hour
+    reach QUEUE_FAILED_ALERT_SHARE of the kind's finished rows with at least
+    QUEUE_FAILED_ALERT_MIN failed, or QUEUE_FAILED_ALERT_VOLUME_SHARE with
+    at least QUEUE_FAILED_ALERT_ROWS (A07-07; a rate with absolute minimums,
+    re-audit B7). From job_queue.stats()'s `kinds`: failed_1h, finished_1h."""
     out = []
     for kind, k in sorted(((q or {}).get("kinds") or {}).items()):
         failed = _int((k or {}).get("failed_1h"))
@@ -2392,8 +2586,8 @@ def queue_failed_kinds(q) -> list:
         if failed <= 0:
             continue
         share = failed / float(max(finished, failed))
-        if failed >= QUEUE_FAILED_ALERT_ROWS or (failed >= QUEUE_FAILED_ALERT_MIN
-                                                  and share >= QUEUE_FAILED_ALERT_SHARE):
+        if (failed >= QUEUE_FAILED_ALERT_MIN and share >= QUEUE_FAILED_ALERT_SHARE) or \
+                (failed >= QUEUE_FAILED_ALERT_ROWS and share >= QUEUE_FAILED_ALERT_VOLUME_SHARE):
             out.append({"kind": kind, "failed": failed, "finished": max(finished, failed),
                         "share": round(share, 2), "urgent": kind in QUEUE_FAILED_URGENT_KINDS})
     return out
@@ -2408,7 +2602,10 @@ def queue_problems(q, worker_expected=None) -> list:
       * a kind's failed rows in the last hour past its threshold
         (queue_failed_kinds, A07-07): "queue_failed:<kind>", or
         "queue_failed_urgent:<kind>" for an owner's press or the auto-draft
-        — check_platform_sla pages those as urgent.
+        — check_platform_sla pages those as urgent;
+      * queued rows of a kind this build has no handler for, half an hour
+        after the boot and that old: "queue_unknown_kind:<kind>" (re-audit
+        B7 — a renamed kind's rows sat forever).
     `worker_expected`: whether gunicorn's master supervises a queue worker
     here (QUEUE_WORKER_SUPERVISED, which it sets before the web worker
     forks); None reads it."""
@@ -2436,6 +2633,16 @@ def queue_problems(q, worker_expected=None) -> list:
                         f"{age / 3600:.1f} hours (alert past {QUEUE_BACKLOG_ALERT_SECONDS // 3600}) with "
                         f"{int(g.get('queued') or 0)} queued — raise QUEUE_{grp.upper()}_CONCURRENCY or see "
                         "docs/plans/POSTGRES_AND_WORKERS_PLAN.md."))
+    booted = q.get("web_started_age_seconds")
+    for kind, u in sorted((q.get("unknown_kinds") or {}).items()):
+        if (booted is None or booted > QUEUE_UNKNOWN_KIND_ALERT_SECONDS) and \
+                float(u.get("oldest_seconds") or 0) > QUEUE_UNKNOWN_KIND_ALERT_SECONDS:
+            out.append((f"queue_unknown_kind:{kind}",
+                        f"{int(u.get('queued') or 0)} queued {kind} row{'s' if int(u.get('queued') or 0) != 1 else ''} "
+                        f"of a kind this build has no handler for (the oldest {float(u['oldest_seconds']) / 3600:.1f} "
+                        "hours) — renamed or removed? Nothing will run them; they expire after "
+                        "QUEUE_UNKNOWN_KIND_EXPIRE_DAYS (a removed kind's expire hook belongs in "
+                        "job_queue.RETIRED_KINDS)."))
     for f in queue_failed_kinds(q):
         what = "queue_failed_urgent" if f["urgent"] else "queue_failed"
         out.append((f"{what}:{f['kind']}",
@@ -2640,6 +2847,42 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or not write_ok)
 
 
+def _sla_conditions(out, state, warn_kinds) -> dict:
+    """{"sla:<condition>": "critical" | "warning"} — what check_platform_sla
+    found, one key per condition (the pager's dedup key, resolved when it
+    is gone): the urgent ones (_has_urgent's) named, every warning kind as
+    it is."""
+    c = {}
+    hb = out.get("heartbeat_minutes")
+    if hb is not None and hb > HEARTBEAT_ALERT_MINUTES:
+        c["heartbeat"] = "critical"
+    if state.get("wedged"):
+        c["loop_wedged"] = "critical"
+    elif state.get("loop_stalled"):
+        c["loop_stalled"] = "critical"
+    for j in out.get("jobs_overdue") or []:
+        c[f"job_overdue:{j.get('job')}"] = "critical"
+    if (out.get("disk") or {}).get("state") == "critical":
+        c["disk_critical"] = "critical"
+    if (out.get("pg_volume") or {}).get("state") == "critical":
+        c["pg_volume_critical"] = "critical"
+    if out.get("write_ok") is False:
+        c["write_refused"] = "critical"
+    rq = out.get("requests") or {}
+    if rq.get("error_rate_over"):
+        c["http_5xx_rate"] = "critical"
+    elif rq.get("error_floor_over"):
+        c["http_5xx_floor"] = "critical"
+    for r in out.get("rpower_rules") or []:
+        if r.get("page") == "urgent":
+            c[str(r.get("key"))] = "critical"
+    for k in out.get("queue_urgent_kinds") or []:
+        c[k] = "critical"
+    for k in warn_kinds:
+        c.setdefault(str(k), "warning")
+    return {PAGER_CONDITION_PREFIX + k: v for k, v in c.items()}
+
+
 def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     """The scheduler's watchdog: {heartbeat_minutes, loop_minutes,
     running_job, jobs_overdue, disk, write_ok, backup, dsr_missing, problems,
@@ -2679,7 +2922,26 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     Only where the scheduler is meant to run (scheduler.scheduling_allowed):
     a laptop has no scheduler and must not page anyone. Owners are never
     contacted from here. Never raises. `write_ok` is the caller's own write
-    probe (/health may already have run one)."""
+    probe (/health may already have run one).
+
+    The pager gets each condition as its own incident ("sla:<condition>",
+    _sla_conditions) and a RESOLVE for each one that has cleared
+    (pager_resolve_cleared), on every send=True pass where the scheduler may
+    page — re-audit B7 P2.
+
+    What /health's read-only call (send=False) reads — each bounded, none
+    paging-only (re-audit B7 P3): the scheduler's state (one row), the jobs
+    overdue (one indexed lookup per registered job), the volume and the
+    Postgres volume, the write probe (unless given), the backup's state, the
+    DSR nights missing, the schedule generations' samples (the last
+    GEN/INPUT/CAPPED sample rows), the queue's live rows (queued and running,
+    grouped — not its finished rows, job_queue.stats dead_letters=False),
+    the request rollups of the last 5, 10 and 15 minutes and the signed-in
+    5xx of the last 10 (not the post-boot 7-day route scan, request_slo
+    fresh=False) and the iPhone decode reports of the last hour (indexed on
+    created_at). Read only when paging: messaging health, the failing and
+    bound-capped jobs, the AI quality watch, the RPOWER rules and the POS
+    fleet, the queue's dead letters and the fresh-5xx routes."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "pg_volume": None, "write_ok": None, "backup": None, "dsr_missing": [],
            "dsr_missing_paged": False, "messaging": [], "problems": [],
@@ -2836,7 +3098,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     # worker and add slots — no request-latency figure sees it.
     try:
         import job_queue as _jq_sla
-        out["queue"] = _jq_sla.stats()
+        out["queue"] = _jq_sla.stats(dead_letters=send)
     except Exception as e:
         log.warning(f"the job queue's stats unavailable to the platform check: {e}")
     q = out["queue"] or {}
@@ -2851,6 +3113,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     for kind, sentence in queue_problems(q):
         if kind.startswith("queue_failed_urgent:"):
             out["queue_urgent"] = True      # an owner's press or the auto-draft: _has_urgent
+            out.setdefault("queue_urgent_kinds", []).append(kind)
         else:
             warn_kinds.add(kind)
         problems.append(sentence)
@@ -2896,7 +3159,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     # p95 over the SLO held for a quarter of an hour.
     try:
         import platform_monitor as _pm_sla
-        out["requests"] = _pm_sla.request_slo(db_path=db_path)
+        out["requests"] = _pm_sla.request_slo(db_path=db_path, fresh=send)
     except Exception as e:
         log.warning(f"request rollups unavailable to the platform check: {e}")
     rq = out["requests"] or {}
@@ -2977,7 +3240,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     except Exception as e:
         log.warning(f"the fleet POS reading unavailable to the platform check: {e}")
     out["problems"] = problems
-    if not problems or not send:
+    if not send:
         return out
     try:
         import scheduler as _sched
@@ -2985,6 +3248,18 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
             return out
     except Exception:
         return out
+    # Each condition its own pager incident, and the ones that cleared
+    # resolved — before the "nothing wrong" return, so the last one clearing
+    # resolves too (re-audit B7 P2).
+    conds = _sla_conditions(out, state, warn_kinds)
+    out["conditions"] = sorted(conds)
+    try:
+        out["pager_resolved"] = pager_resolve_cleared(set(conds))
+    except Exception as e:
+        log.warning(f"cleared pager conditions not resolved: {e}")
+    if not problems:
+        return out
+    events = [(k, f"Cavnar AI: {k[len(PAGER_CONDITION_PREFIX):]}", sev) for k, sev in sorted(conds.items())]
     # An urgent problem pages hourly. Only warnings: once a day for the same
     # set, sooner when a new kind joins it (the key names the set). Jobs
     # overdue, and nothing worse: once per the shortest overdue job's own
@@ -2997,13 +3272,17 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         overdue = out["jobs_overdue"]
         cd = int(max(60, min(24 * 60, min(float(j.get("max_hours") or 1) for j in overdue) * 60)))
         res = page_operator("platform_sla_overdue:" + ",".join(sorted(str(j["job"]) for j in overdue)),
-                            "Cavnar AI: the platform needs you", problems, cooldown_minutes=cd)
+                            "Cavnar AI: the platform needs you", problems, cooldown_minutes=cd, pager_events=events)
     elif urgent:
-        res = page_operator("platform_sla_alert", "Cavnar AI: the platform needs you", problems)
+        # Keyed on the urgent conditions, never one constant (re-audit B7):
+        # a new urgent condition pages at once; the same set hourly.
+        crit = sorted(k[len(PAGER_CONDITION_PREFIX):] for k, sev in conds.items() if sev == "critical")
+        res = page_operator("platform_sla_alert:" + ",".join(crit), "Cavnar AI: the platform needs you", problems,
+                            pager_events=events)
     else:
         res = page_operator("platform_sla_warn:" + ",".join(sorted(warn_kinds)),
                             "Cavnar AI: the platform needs you", problems,
-                            cooldown_minutes=PLATFORM_WARN_COOLDOWN_MINUTES)
+                            cooldown_minutes=PLATFORM_WARN_COOLDOWN_MINUTES, pager_events=events)
     out["alerted"] = bool(res.get("sent"))
     return out
 
@@ -3014,6 +3293,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
 # the cooldown lives here instead — one page per key per cooldown per process.
 _page_memory = {}
 _page_lock = threading.Lock()
+_page_lock_open = threading.Lock()
 _page_local = threading.local()
 
 
@@ -3085,29 +3365,95 @@ def pager_misconfigured() -> str:
     return f"OPS_PAGER_KIND={kind or '(unset)'} but OPS_PAGER_WEBHOOK_URL is not set"
 
 
-def send_to_pager(key, subject, lines) -> bool:
-    """One event to the configured paging service. True when it took it;
-    never raises."""
+def send_to_pager(key, subject, lines, action="trigger", severity="critical") -> bool:
+    """One event to the configured paging service — `action` "trigger" or
+    "resolve" (PagerDuty Events v2; a webhook gets it as `action`), deduped
+    on `key`. True when it took it; never raises. A trigger of a platform
+    condition (a "sla:" key) is remembered as open (pager_open), so the
+    supervisor resolves it when the condition clears."""
     if not pager_configured():
         return False
     import requests
     kind = (os.getenv("OPS_PAGER_KIND") or "").strip().lower()
     try:
         if kind == "pagerduty":
-            r = requests.post(PAGERDUTY_EVENTS_URL, json={
-                "routing_key": os.getenv("OPS_PAGER_ROUTING_KEY").strip(), "event_action": "trigger",
-                "dedup_key": f"cavnar:{key}",
-                "payload": {"summary": str(subject)[:1000], "source": "cavnar-ai", "severity": "critical",
-                            "custom_details": {"lines": [str(x)[:300] for x in (lines or [])[:12]]}}},
-                timeout=PAGER_TIMEOUT)
+            body = {"routing_key": os.getenv("OPS_PAGER_ROUTING_KEY").strip(), "event_action": action,
+                    "dedup_key": f"cavnar:{key}"}
+            if action == "trigger":
+                body["payload"] = {"summary": str(subject)[:1000], "source": "cavnar-ai", "severity": severity,
+                                   "custom_details": {"lines": [str(x)[:300] for x in (lines or [])[:12]]}}
+            r = requests.post(PAGERDUTY_EVENTS_URL, json=body, timeout=PAGER_TIMEOUT)
         else:
             r = requests.post(os.getenv("OPS_PAGER_WEBHOOK_URL").strip(), json={
                 "key": str(key), "subject": str(subject), "lines": [str(x) for x in (lines or [])[:12]],
-                "source": "cavnar-ai"}, timeout=PAGER_TIMEOUT)
-        return 200 <= r.status_code < 300
+                "source": "cavnar-ai", "action": action, "severity": severity}, timeout=PAGER_TIMEOUT)
+        ok = 200 <= r.status_code < 300
     except Exception as e:
         log.error(f"pager send failed: {e}")
         return False
+    if ok and str(key).startswith(PAGER_CONDITION_PREFIX):
+        _pager_open_note(str(key), opened=(action == "trigger"))
+    return ok
+
+
+# The platform check's conditions reach the pager one dedup key each
+# ("sla:<condition>"), triggered when a page goes out and RESOLVED when the
+# condition clears (re-audit B7 P2, 10/27/26): every urgent page shared one
+# constant key and nothing was ever resolved, so an incident left
+# acknowledged swallowed every later urgent page. The open keys are kept in
+# job_cursors (PAGER_OPEN_CURSOR), so a deploy does not forget them.
+PAGER_CONDITION_PREFIX = "sla:"
+PAGER_OPEN_CURSOR = "pager_open_conditions"
+
+
+def _pager_open_read() -> dict:
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (PAGER_OPEN_CURSOR,)).fetchone()
+        finally:
+            conn.close()
+        v = json.loads(row[0]) if row and row[0] else {}
+        return v if isinstance(v, dict) else {}
+    except Exception as e:
+        log.warning(f"open pager conditions unreadable: {e}")
+        return {}
+
+
+def _pager_open_note(key, opened=True) -> None:
+    """Remember `key` as an open pager incident (or forget it)."""
+    with _page_lock_open:
+        cur = _pager_open_read()
+        if opened:
+            cur[key] = cur.get(key) or time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        else:
+            cur.pop(key, None)
+        try:
+            from models import get_conn
+            conn = get_conn()
+            try:
+                conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                             (PAGER_OPEN_CURSOR, json.dumps(cur)))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning(f"open pager conditions not kept: {e}")
+
+
+def pager_resolve_cleared(active) -> list:
+    """Resolve every open platform-condition incident whose condition is not
+    in `active` (a set of "sla:" keys). Returns the keys resolved. Only
+    where the scheduler may page (the caller checks); never raises."""
+    if not pager_configured():
+        return []
+    done = []
+    for key in sorted(set(_pager_open_read()) - set(active or ())):
+        if send_to_pager(key, "Cleared", [], action="resolve"):
+            done.append(key)
+    return done
 
 
 def _cooldown_active(key, minutes):
@@ -3160,13 +3506,15 @@ def _record_operator_alert(key, subject, res):
         log.error(f"operator alert not recorded ({key}): {e}")
 
 
-def page_operator(key, subject, lines, cooldown_minutes=PLATFORM_ALERT_COOLDOWN_MINUTES) -> dict:
+def page_operator(key, subject, lines, cooldown_minutes=PLATFORM_ALERT_COOLDOWN_MINUTES, pager_events=None) -> dict:
     """Page Will about `key` at most once per `cooldown_minutes`, over every
     channel alert_will has. The cooldown is claimed only AFTER a channel
     confirmed delivery (#27): it used to be spent first, so a page whose
     email and push both failed silenced the next hour of them. Returns
     alert_will's {sent, channels, error}, or {sent: False, reason:
-    'cooldown'}."""
+    'cooldown'}. `pager_events` [(key, summary, severity)]: the paging
+    service gets one event per condition instead of one for `key` (the
+    platform check's "sla:" conditions, each resolved when it clears)."""
     with _page_lock:
         if _cooldown_active(key, cooldown_minutes):
             return {"sent": False, "reason": "cooldown", "channels": {}}
@@ -3174,10 +3522,12 @@ def page_operator(key, subject, lines, cooldown_minutes=PLATFORM_ALERT_COOLDOWN_
         # alert_will's (subject, lines) signature — which tests and callers
         # stand in for — is unchanged.
         _page_local.key = key
+        _page_local.pager_events = pager_events
         try:
             got = alert_will(subject, lines)
         finally:
             _page_local.key = None
+            _page_local.pager_events = None
         res = {"sent": bool(got), "channels": dict(getattr(got, "channels", None) or {}),
                "error": getattr(got, "error", None)}
         # Which channels were tried and did not take it (A07-09): a page that
@@ -3240,8 +3590,15 @@ def alert_will(subject, lines, key=None):
             log.error(f"alert_will pager not reachable: {why_not}")
         else:
             try:
-                channels["pager"] = bool(send_to_pager(key or getattr(_page_local, "key", None) or subject,
-                                                       subject, lines))
+                events = getattr(_page_local, "pager_events", None) if key is None else None
+                if events:
+                    # One event per condition (its own incident, resolved
+                    # when it clears): taken when every one was accepted.
+                    channels["pager"] = all([bool(send_to_pager(k, summary, lines, severity=sev))
+                                             for k, summary, sev in events])
+                else:
+                    channels["pager"] = bool(send_to_pager(key or getattr(_page_local, "key", None) or subject,
+                                                           subject, lines))
             except Exception as e:          # send_to_pager never raises; belt and braces for the one channel
                 channels["pager"] = False
                 log.error(f"alert_will pager failed: {e}")
