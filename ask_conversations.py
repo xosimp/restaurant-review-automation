@@ -145,15 +145,21 @@ def _summarize_call(restaurant_id, previous, turns) -> str:
     the updated notes (JSON text) out. It reads nothing but this chat's own
     turns, so it rests on no data source (data_health.NOT_APPLICABLE)."""
     import ai_guard
+    import ai_workflows as wf
     import data_health
     from ai_utils import create_with_retry, extract_text, get_client, model_for
     prev = summary_text(previous) or "(none yet)"
     user = ("PREVIOUS NOTES:\n" + ai_guard.wrap_untrusted(prev) + "\n\nTURNS THAT SCROLLED OUT:\n"
             + _turn_block(turns) + "\n\nReturn the updated notes as JSON.")
-    message = create_with_retry(get_client(), model=model_for("ask_summary"), max_tokens=SUMMARY_MAX_TOKENS,
-                                system=_SUMMARY_SYSTEM, messages=[{"role": "user", "content": user}],
-                                restaurant_id=restaurant_id, action="ask_summary",
-                                readiness=data_health.NOT_APPLICABLE)
+    # Through the workflow's route (Audit #25 A07-14): the ask_summary policy
+    # is on ladder T1, so the tier canary (AI_TIER_CANARY) and the tier's
+    # model env var reach it like every other T1 workflow; an
+    # ASK_SUMMARY_MODEL pin still wins (the route is then the call's own).
+    route = wf.route_for(wf.policy("ask_summary"), 0, restaurant_id=restaurant_id)
+    kwargs = route.apply(dict(model=model_for("ask_summary"), max_tokens=SUMMARY_MAX_TOKENS,
+                              system=_SUMMARY_SYSTEM, messages=[{"role": "user", "content": user}]))
+    message = create_with_retry(get_client(), restaurant_id=restaurant_id, action="ask_summary",
+                                readiness=data_health.NOT_APPLICABLE, **kwargs)
     return extract_text(message)
 
 

@@ -879,7 +879,10 @@ def run_daily_fetch(restaurant_ids=None):
         return {"restaurants": len(live), "processed": counts["ok"], "hit_time_bound": ran_out,
                 "attempted": counts["attempted"], "ok": counts["ok"], "failed": counts["failed"],
                 "skipped": counts["skipped"] + quiet_skipped, "hit_bound": bool(ran_out),
-                "quiet_skipped": quiet_skipped}
+                "quiet_skipped": quiet_skipped,
+                # What the pass was for (Audit #25 A07-03): ops.jobs_failing
+                # warns when it attempts and skips nothing of these.
+                "eligible": len(by_id)}
 
     except Exception as e:
         # Captured AND re-raised (DH2-1): logged only, a pass that never
@@ -5502,18 +5505,39 @@ class _PulsedOps:
     def _after(self, name, claim, period, spec, outcome):
         """A failed retryable job gives its period back after a backoff —
         kept in the database too (ops.record_retry), so a deploy before the
-        retry no longer loses it (R1-10)."""
+        retry no longer loses it (R1-10).
+
+        A PARTIAL run of one (Audit #25 A07-12) that failed at least
+        jobs_registry.PARTIAL_RETRY_SHARE of what it attempted gives its
+        period back ONCE, after PARTIAL_RETRY_MINUTES: a provider blip that
+        failed 30% of the nightly learners left those restaurants a whole
+        period stale. Only on a first try — a retry that is partial again
+        keeps the period — and, like every retry, never for a job that
+        sends."""
         if period is None:
             return
         key = (claim, period)
-        failed = outcome.get("raised") or (
-            "result" in outcome and _ops.run_outcome(outcome["result"])[0] == _ops.RUN_FAILED)
+        state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else None
+        failed = outcome.get("raised") or state == _ops.RUN_FAILED
+        retryable = spec.get("retry") and not spec.get("sends") and len(jobs_registry.jobs_for_claim(claim)) <= 1
+        partial_retry = False
+        if not failed and state == _ops.RUN_PARTIAL and retryable:
+            counts = _ops.standard_counts(outcome["result"]) or {}
+            attempted, nfailed = int(counts.get("attempted") or 0), int(counts.get("failed") or 0)
+            partial_retry = attempted > 0 and nfailed / float(attempted) >= jobs_registry.PARTIAL_RETRY_SHARE
         with self._retry_lock:
+            if partial_retry and key not in self._retries:
+                wait = jobs_registry.PARTIAL_RETRY_MINUTES
+                self._retries[key] = {"attempt": 1, "at": time.monotonic() + wait * 60, "partial": True}
+                _ops.record_retry(claim, period, 1, time.time() + wait * 60)
+                log.warning(f"{name} was partial for {period} ({nfailed} of {attempted} failed); one retry in "
+                            f"{wait} minutes")
+                return
             if not failed:
                 if self._retries.pop(key, None) is not None:
                     _ops.clear_retry(claim, period)
                 return
-            if not spec.get("retry") or spec.get("sends") or len(jobs_registry.jobs_for_claim(claim)) > 1:
+            if not retryable:
                 return
             attempt = self._retries.get(key, {}).get("attempt", 0)
             backoff = jobs_registry.RETRY_BACKOFF_MINUTES
@@ -7076,6 +7100,17 @@ def scheduler_loop():
             if _due(now, 6) and now.weekday() == 0 and _ops.claim_period("ai_route_learning", str(today)):
                 from ai_learning import run_learning
                 _ops.run_job("ai_route_learning", run_learning)
+
+            # Monday 5am, on the AI lane — the weekly AI smoke eval
+            # (ai_eval.run_smoke_eval, Audit #25 A07-06): a few frozen inputs
+            # of each top surface replayed on its production model and
+            # scored against the baseline; the platform check warns on a
+            # deviation. Off (a run that attempts nothing) unless
+            # AI_SMOKE_EVAL=1. Sends nothing.
+            if _due(now, 5) and now.weekday() == 0 and _ops.claim_period("ai_smoke_eval", str(today)):
+                import ai_eval as _ai_eval
+                if not _ops.run_in_lane("ai", "ai_smoke_eval", _ai_eval.run_smoke_eval):
+                    _ops.release_period("ai_smoke_eval", str(today))
 
             # Hourly: the digest's narrative sent through Message Batches
             # from 2am local on each digest day, so the 9am send reads it

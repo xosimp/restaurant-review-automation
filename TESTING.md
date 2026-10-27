@@ -237,6 +237,11 @@ Most schedule test files are named after the audit round that wrote them. Read b
 
 **The benchmark.** `tests/test_schedule_benchmark.py` runs `schedule_benchmark.FAST_PLAN` (about a minute) once, in a child process with its own throwaway database, no provider key and no network, and makes each (archetype, arm, invariant) its own test. What the code breaks today is a strict xfail naming the finding that fixes it (`KNOWN`): when a fix makes one pass, the xfail fails until its entry is removed — the gate only tightens. The full run, every archetype at full size on both arms with three presses, is `scripts/run_schedule_benchmark.py` (about 25 minutes; `--heavy` adds the 500-person one, ~8 GB). The week drafted is the restaurant's next one on today's clock (sales are judged against today), moved past a holiday week, so a run in late November still measures an ordinary week.
 
+## Driving the loop, jobs and AI quality (Audit #25 WS6, 10/26/26)
+
+- `tests/test_scheduler_drive.py` runs the real `scheduler_loop` under a frozen clock (`time_machine`, requirements-dev) with every job body stubbed: a whole day ticked every 10 minutes (every daily-SLA registry job starts; no job runs more often than its claim was taken; no claim is left unrun), and 00:30–03:30 on the 2026 DST dates (the 2am jobs once, an hour-keyed job once per local hour that exists). ~50 s; the behaviour the regex tests in `test_fix_d_jobs.py` only read.
+- `tests/test_ws6_job_health.py` (failing and idle jobs, queue dead letters, the unknown-kind deferral, the partial retry, paging channels), `tests/test_ws6_ai_quality.py` (AI quality warnings, per-template rates, the schedule's fallback share), `tests/test_ai_eval.py` and `tests/test_ai_model_change_needs_eval.py` (the eval sets and the model-change gate — no model is ever called: `send` is a stub), `tests/test_ws6_validated_surfaces.py` (each `VALIDATED_IN` call site end to end with a stubbed answer stating an invented figure), `tests/test_ws6_ai_routes.py`, `tests/test_ws6_atomic_units.py`, `tests/test_watchdog_worker.py` (the Worker in Node, stubbed KV and fetch).
+
 ## Test file naming
 
 Files read as sentences, not identifiers — `test_a_new_share_gets_an_expiry_about_sixty_days_out`, not `test_share_expiry`. This is deliberate: a failing test's name should tell you what broke without opening the file.

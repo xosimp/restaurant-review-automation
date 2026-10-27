@@ -4031,7 +4031,20 @@ def ai_quality(days=30, restaurant_id=None):
             # can be compared with the result, and now it is — how often a
             # claim the model called high / medium / low held, for advice
             # that was taken, over a year of scored claims.
-            "model_confidence": _model_confidence_check(restaurant_id)}
+            "model_confidence": _model_confidence_check(restaurant_id),
+            # Outcome and refusal rates per (caller, prompt template) with
+            # its first sighting (Audit #25 A07-05): a prompt edit's before
+            # and after, side by side.
+            "templates": _template_outcomes(days, restaurant_id)}
+
+
+def _template_outcomes(days, restaurant_id=None):
+    try:
+        import ai_quality_watch
+        return ai_quality_watch.template_outcomes(days=days, restaurant_id=restaurant_id)
+    except Exception as e:
+        log.warning("template outcomes unavailable: %s", e)
+        return []
 
 
 def _model_confidence_check(restaurant_id=None):

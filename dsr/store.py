@@ -1026,8 +1026,11 @@ def mark_coverage_ran(restaurant_id, business_date, db_path=DB_PATH):
                      "ON CONFLICT(restaurant_id, business_date) DO UPDATE SET last_at=datetime('now')",
                      (restaurant_id, str(business_date)[:10]))
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        # Never raises, but never silent (Audit #25 A07-08): without this row
+        # the night's report says the clock-in check never ran.
+        import ops
+        ops.capture(e, job="dsr_coverage", context=f"restaurant_id={restaurant_id} mark_coverage_ran")
     finally:
         conn.close()
 

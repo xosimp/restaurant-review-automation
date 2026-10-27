@@ -258,6 +258,9 @@ POLL_SECONDS = float(os.getenv("QUEUE_POLL_SECONDS", "2"))
 CANDIDATES = 200
 # Seconds before a failed try is tried again: try n waits RETRY_BACKOFF[n-1].
 RETRY_BACKOFF = (30, 120, 600)
+# A row of a kind this build has no handler for (an older process during a
+# deploy) that reached run_one anyway goes back for this long (defer_unknown).
+UNKNOWN_KIND_DEFER_SECONDS = 60
 # Per-tenant token buckets: (burst, refill per hour) by class. The scheduled
 # class's bucket is per RESTAURANT, never per organization (SCALE-3: a
 # 40-location group shared one 2-token bucket and its auto-drafts expired
@@ -1116,6 +1119,21 @@ def _serve(conn, row, klass, now):
 # chose that index's range on not_before over the per-class index and then
 # sorted every queued row of the group (2.7 ms at 9,000 rows, against 0.1).
 
+def known_kind(kind) -> bool:
+    """Whether this build has a handler for `kind`."""
+    return kind in HANDLERS
+
+
+def _known_clause(alias=""):
+    """SQL keeping a claim to the kinds THIS build can run (Audit #25 — the
+    contract: an unknown kind is deferred, never failed). During a deploy
+    the new build's web process can queue a kind the old queue worker has
+    no handler for; the old worker leaves it queued — never claimed,
+    retried, expired or failed — for a process that knows it."""
+    kinds = sorted(HANDLERS)
+    return f" AND {alias}kind IN (" + ",".join("?" * len(kinds)) + ")", kinds
+
+
 def _busy_clause(busy):
     """SQL excluding the restaurants that already run a row of the group."""
     ids = sorted(int(x) for x in busy if x is not None)
@@ -1133,6 +1151,7 @@ def _fair_head(conn, grp, klass, now, busy):
     _burst, per_hour = BUCKETS.get(klass, BUCKETS["bulk"])
     system = _system_vtime(conn, klass)
     excl, ids = _busy_clause(busy)
+    known, kinds = _known_clause()
     # Each BUCKET's oldest row (a restaurant's for a per-location class, so
     # every location of an organization is a candidate with its own tokens),
     # its tokens read from its bucket (b) and its virtual time from its
@@ -1140,13 +1159,13 @@ def _fair_head(conn, grp, klass, now, busy):
     bk = _bucket_sql(klass)
     row = conn.execute(
         "SELECT j.* FROM (SELECT " + bk + " AS bk, MIN(id) AS head FROM jobs "
-        "WHERE grp=? AND priority_class=? AND state='queued' AND +not_before<=?" + excl +
+        "WHERE grp=? AND priority_class=? AND state='queued' AND +not_before<=?" + excl + known +
         " GROUP BY " + bk + ") h JOIN jobs j ON j.id = h.head "
         "LEFT JOIN job_tenants b ON b.tenant_key = h.bk AND b.klass = ? "
         "LEFT JOIN job_tenants t ON t.tenant_key = COALESCE(j.tenant_key, 'platform') AND t.klass = ? "
         "ORDER BY CASE WHEN b.tenant_key IS NULL OR b.tokens + (? - b.refilled_at) * ? / 3600.0 >= 1 "
         "THEN 0 ELSE 1 END, CASE WHEN t.vtime IS NULL OR t.vtime < ? THEN ? ELSE t.vtime END, j.id LIMIT 1",
-        (grp, klass, now, *ids, klass, klass, now, float(per_hour), system, system)).fetchone()
+        (grp, klass, now, *ids, *kinds, klass, klass, now, float(per_hour), system, system)).fetchone()
     return dict(row) if row else None
 
 
@@ -1156,13 +1175,14 @@ def _edf_head(conn, grp, now, busy):
     on the deadline go to the tenant with the lower virtual time — else,
     work-conserving, the earliest."""
     excl, ids = _busy_clause(busy)
+    known, kinds = _known_clause()
     base = ("SELECT * FROM jobs WHERE grp=? AND priority_class='scheduled' AND state='queued' "
-            "AND +not_before<=?" + excl)
+            "AND +not_before<=?" + excl + known)
     rows = [dict(r) for r in conn.execute(base + " AND deadline IS NOT NULL ORDER BY deadline, id LIMIT ?",
-                                          (grp, now, *ids, CANDIDATES)).fetchall()]
+                                          (grp, now, *ids, *kinds, CANDIDATES)).fetchall()]
     if len(rows) < CANDIDATES:
         rows += [dict(r) for r in conn.execute(base + " AND deadline IS NULL ORDER BY id LIMIT ?",
-                                               (grp, now, *ids, CANDIDATES - len(rows))).fetchall()]
+                                               (grp, now, *ids, *kinds, CANDIDATES - len(rows))).fetchall()]
     if not rows:
         return None
     system = _system_vtime(conn, "scheduled")
@@ -1201,15 +1221,17 @@ def _occupancy(conn, grp, now):
 
 
 def _has_work(conn, grp, klass, now) -> bool:
-    return conn.execute("SELECT 1 FROM jobs WHERE grp=? AND priority_class=? AND state='queued' AND +not_before<=? "
-                        "LIMIT 1", (grp, klass, now)).fetchone() is not None
+    known, kinds = _known_clause()
+    return conn.execute("SELECT 1 FROM jobs WHERE grp=? AND priority_class=? AND state='queued' AND +not_before<=?"
+                        + known + " LIMIT 1", (grp, klass, now, *kinds)).fetchone() is not None
 
 
 def _has_urgent_draft(conn, grp, now) -> bool:
     """A scheduled row waiting that expires within SCHEDULED_URGENT_SECONDS."""
+    known, kinds = _known_clause()
     return conn.execute("SELECT 1 FROM jobs WHERE grp=? AND priority_class='scheduled' AND state='queued' "
-                        "AND +not_before<=? AND deadline IS NOT NULL AND deadline<=? LIMIT 1",
-                        (grp, now, now + SCHEDULED_URGENT_SECONDS)).fetchone() is not None
+                        "AND +not_before<=? AND deadline IS NOT NULL AND deadline<=?" + known + " LIMIT 1",
+                        (grp, now, now + SCHEDULED_URGENT_SECONDS, *kinds)).fetchone() is not None
 
 
 def _admits(conn, grp, klass, total, held, now) -> bool:
@@ -1242,12 +1264,14 @@ def _maybe_claimable(conn, groups, now) -> bool:
     """A plain read (no write lock) of whether a claim could take anything
     (SCALE-32): some group has a claimable row and room for it, or has a
     queued row past its deadline to expire."""
+    known, kinds = _known_clause()
     for grp in groups:
         if conn.execute("SELECT 1 FROM jobs WHERE grp=? AND state='queued' AND attempts=0 AND deadline IS NOT NULL "
-                        "AND deadline<? LIMIT 1", (grp, now)).fetchone():
+                        "AND deadline<?" + known + " LIMIT 1", (grp, now, *kinds)).fetchone():
             return True
         if not conn.execute("SELECT 1 FROM jobs WHERE grp=? AND ((state='queued' AND not_before<=?) OR "
-                            "(state='running' AND lease_until<=?)) LIMIT 1", (grp, now, now)).fetchone():
+                            "(state='running' AND lease_until<=?))" + known + " LIMIT 1",
+                            (grp, now, now, *kinds)).fetchone():
             continue
         total, held, _busy = _occupancy(conn, grp, now)
         if total < max_running(grp) and sum(held.values()) < group_concurrency(grp):
@@ -1259,8 +1283,10 @@ def _expire_overdue(conn, grp, now) -> list:
     """Queued rows of `grp` that never started before their deadline:
     expired (their EXPIRE_HOOKS run after the commit). Bounded per claim."""
     out = []
+    known, kinds = _known_clause()
     for r in conn.execute("SELECT * FROM jobs WHERE grp=? AND state='queued' AND attempts=0 AND deadline IS NOT NULL "
-                          "AND deadline<? ORDER BY deadline LIMIT ?", (grp, now, CANDIDATES)).fetchall():
+                          "AND deadline<?" + known + " ORDER BY deadline LIMIT ?",
+                          (grp, now, *kinds, CANDIDATES)).fetchall():
         conn.execute("UPDATE jobs SET state='expired', finished_at=?, error=? WHERE id=? AND state='queued'",
                      (now, "not started before its deadline", r["id"]))
         out.append(dict(r))
@@ -1280,8 +1306,9 @@ def _dead_rows(conn, grp, now, expired) -> list:
     # and ran it beside the original.
     with _held_lock:
         mine = set(_held)
-    for r in conn.execute("SELECT * FROM jobs WHERE grp=? AND state='running' AND lease_until<=? ORDER BY id LIMIT ?",
-                          (grp, now, CANDIDATES)).fetchall():
+    known, kinds = _known_clause()
+    for r in conn.execute("SELECT * FROM jobs WHERE grp=? AND state='running' AND lease_until<=?" + known +
+                          " ORDER BY id LIMIT ?", (grp, now, *kinds, CANDIDATES)).fetchall():
         r = dict(r)
         if int(r["id"]) in mine:
             continue
@@ -1845,9 +1872,35 @@ class _LeaseKeeper(threading.Thread):
                     return
 
 
+def defer_unknown(job_id, worker_id, db_path=None) -> bool:
+    """Hand a claimed row of a kind this build has no handler for back,
+    untouched (the contract: an unknown kind is deferred, never failed):
+    queued again after UNKNOWN_KIND_DEFER_SECONDS, this try not counted, its
+    error noting why — a process that knows the kind runs it."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE jobs SET state='queued', lease_owner=NULL, lease_until=NULL, not_before=?, "
+                         "phase=NULL, attempts=MAX(0, attempts-1), error=? WHERE id=? AND lease_owner=? "
+                         "AND state='running'",
+                         (time.time() + UNKNOWN_KIND_DEFER_SECONDS, "deferred: no handler for this kind in this build",
+                          int(job_id), worker_id)).rowcount
+        conn.commit()
+        return n == 1
+    finally:
+        conn.close()
+        _slot_freed()
+
+
 def run_one(job):
     """Run a claimed row through its handler: done, or failed / queued
-    again. The handler's return is the row's result. Returns it."""
+    again. The handler's return is the row's result. Returns it. A row of a
+    kind this build cannot run (claim() never picks one; a row claimed
+    another way) is deferred, never failed (defer_unknown)."""
+    if not known_kind(job.get("kind")):
+        log.warning("job %s: kind %r has no handler in this build — deferred for a process that knows it",
+                    job.get("id"), job.get("kind"))
+        defer_unknown(job["id"], job["worker_id"])
+        return None
     with _held_lock:
         _held[int(job["id"])] = job
     with _lost_lock:
@@ -2244,7 +2297,8 @@ def stats(window_seconds=3600, db_path=None) -> dict:
 
         def _kind(kind, grp):
             return out["kinds"].setdefault(kind, {"grp": grp, "queued": 0, "running": 0,
-                                                  "oldest_ready_seconds": None, "failed_24h": 0, "expired_24h": 0})
+                                                  "oldest_ready_seconds": None, "failed_24h": 0, "expired_24h": 0,
+                                                  "failed_1h": 0, "finished_1h": 0})
         for r in conn.execute(
                 "SELECT kind, grp, state, COUNT(*) AS n, MIN(CASE WHEN not_before <= ? THEN "
                 "(CASE WHEN not_before > enqueued_at THEN not_before ELSE enqueued_at END) END) AS ready "
@@ -2256,9 +2310,18 @@ def stats(window_seconds=3600, db_path=None) -> dict:
                 k["oldest_ready_seconds"] = max(k["oldest_ready_seconds"] or 0, age)
                 g = out["groups"].setdefault(r["grp"], {"queued": 0, "running": 0, "oldest_queued_seconds": None})
                 g["oldest_ready_seconds"] = max(g.get("oldest_ready_seconds") or 0, age)
-        for r in conn.execute("SELECT kind, state, COUNT(*) AS n FROM jobs WHERE state IN ('failed','expired') "
-                              "AND finished_at>? GROUP BY kind, state", (now - 86400,)).fetchall():
-            _kind(r["kind"], KINDS.get(r["kind"], ("bulk",))[0])[r["state"] + "_24h"] = int(r["n"])
+        # ...and the last hour's dead letters against the rows that finished
+        # (Audit #25 A07-07: ops.queue_failed_kinds pages them).
+        for r in conn.execute("SELECT kind, state, COUNT(*) AS n, SUM(CASE WHEN finished_at>? THEN 1 ELSE 0 END) "
+                              "AS n1h FROM jobs WHERE state IN ('failed','expired','done') AND finished_at>? "
+                              "GROUP BY kind, state", (now - 3600, now - 86400)).fetchall():
+            k = _kind(r["kind"], KINDS.get(r["kind"], ("bulk",))[0])
+            if r["state"] != "done":
+                k[r["state"] + "_24h"] = int(r["n"])
+            if r["state"] == "failed":
+                k["failed_1h"] = int(r["n1h"] or 0)
+            if r["state"] in ("failed", "done"):
+                k["finished_1h"] += int(r["n1h"] or 0)
         # The queue worker process (INF-4): seconds since it last beat its
         # heartbeat (None: none on record), and since this web process booted.
         row = conn.execute("SELECT MAX(heartbeat_at) AS h FROM job_workers WHERE role='worker'").fetchone()

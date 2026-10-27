@@ -73,6 +73,12 @@ TIER_CANARY_ENV = "AI_TIER_CANARY"
 # Empty since 10/17/26: T1's Haiku 5.5 serves every restaurant (owner: "move
 # the haiku ones to haiku 5.5"); it was held to the canary restaurants since
 # 10/10/26. AI_TIER_CANARY=T1 puts the hold back.
+# The rule from Audit #25 (R13): a commit that changes a tier's default model
+# (default_tier_models) names that tier here — a canary window, for at least
+# a week, on the measured baselines of scripts/run_ai_eval.py — and a later
+# commit empties it. tests/test_ai_model_change_needs_eval.py holds both:
+# the fingerprint in eval_baselines/MODEL_FINGERPRINT.json records which
+# tiers changed, and fails while they are not canaried here or closed there.
 TIER_CANARY_DEFAULT = ""
 
 
@@ -121,20 +127,34 @@ def _in_canary(restaurant_id) -> bool:
     return bool(pct) and _canary_bucket(rid) < pct
 
 
-def _tier_table(restaurant_id=None):
+def default_tier_models() -> dict:
+    """Each tier's model and effort as the CODE sets them — no env var, no
+    canary. _tier_table reads these under the env overrides; ai_eval's model
+    fingerprint reads them as they are, so a tier's default moving is a
+    change tests/test_ai_model_change_needs_eval.py sees (Audit #25 R13)."""
     import ai_utils as _ai
+    return {
+        "T1": {"model": _ai.HAIKU_55, "effort": None},
+        "T2": {"model": _ai.SONNET_55, "effort": None},
+        "T3": {"model": _ai.SONNET_55, "effort": "medium"},
+        "T4": {"model": _ai.OPUS_55, "effort": "medium"},
+    }
+
+
+def _tier_table(restaurant_id=None):
+    d = default_tier_models()
     t1 = os.getenv("AI_TIER_T1_MODEL")
     if not t1:
-        t1 = _ai.HAIKU_55
+        t1 = d["T1"]["model"]
         if tier_canaried("T1") and not _in_canary(restaurant_id):
             t1 = _previous_tier_models()["T1"]
     return {
         "T1": {"model": t1, "effort": None},
-        "T2": {"model": os.getenv("AI_TIER_T2_MODEL", _ai.SONNET_55), "effort": None},
-        "T3": {"model": os.getenv("AI_TIER_T3_MODEL", _ai.SONNET_55),
-               "effort": os.getenv("AI_TIER_T3_EFFORT", "medium")},
-        "T4": {"model": os.getenv("AI_TIER_T4_MODEL", _ai.OPUS_55),
-               "effort": os.getenv("AI_TIER_T4_EFFORT", "medium")},
+        "T2": {"model": os.getenv("AI_TIER_T2_MODEL", d["T2"]["model"]), "effort": None},
+        "T3": {"model": os.getenv("AI_TIER_T3_MODEL", d["T3"]["model"]),
+               "effort": os.getenv("AI_TIER_T3_EFFORT", d["T3"]["effort"])},
+        "T4": {"model": os.getenv("AI_TIER_T4_MODEL", d["T4"]["model"]),
+               "effort": os.getenv("AI_TIER_T4_EFFORT", d["T4"]["effort"])},
     }
 
 

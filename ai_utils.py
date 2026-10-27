@@ -4795,6 +4795,38 @@ _AI_OPS_DDL = (
         PRIMARY KEY (place_id, day, fields, variant)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_places_details_cache_created ON places_details_cache(created_at)",
+    # The frozen evaluation sets of the top model surfaces (ai_eval, Audit
+    # #25 R13): stored production inputs, scrubbed again with
+    # ai_orchestrator._redacted_request — an invoice item holds its
+    # owner-confirmed costs, never its scan. Versioned; no retention rule
+    # touches it (a baseline is only comparable on the same set).
+    """CREATE TABLE IF NOT EXISTS ai_eval_items (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        surface        TEXT NOT NULL,
+        version        TEXT NOT NULL,
+        item_key       TEXT NOT NULL,
+        restaurant_id  INTEGER,
+        source_model   TEXT,
+        request_z      BLOB,
+        reference_json TEXT,
+        created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (surface, version, item_key)
+    )""",
+    # Each scored run of a set (ai_eval.record_run): aggregate scores only.
+    """CREATE TABLE IF NOT EXISTS ai_eval_runs (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_key        TEXT NOT NULL,
+        surface        TEXT NOT NULL,
+        version        TEXT,
+        model          TEXT,
+        n              INTEGER,
+        scores_json    TEXT,
+        cost_usd       REAL,
+        trigger_kind   TEXT,
+        build          TEXT,
+        created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_ai_eval_runs_created ON ai_eval_runs(created_at)",
 )
 
 
@@ -4839,8 +4871,13 @@ def init_ai_ops(db_path=None):
         # the key is per model, an action runs one effort on a model almost
         # always, and a new key column would mean rebuilding a never-pruned
         # table at boot — and distinct texts checked (W4).
+        # ai_quality_events gained the build and the prompt template it was
+        # about (Audit #25 A07-04/A07-05): the quality watch's warning names
+        # the change, and the console compares templates.
         for table, col, typ in (("ai_usage_daily", "efforts_json", "TEXT"),
-                                ("ai_validation_daily", "n_texts", "INTEGER")):
+                                ("ai_validation_daily", "n_texts", "INTEGER"),
+                                ("ai_quality_events", "build", "TEXT"),
+                                ("ai_quality_events", "template_hash", "TEXT")):
             have = {r[1] for r in conn.execute("PRAGMA table_info(" + table + ")").fetchall()}
             if have and col not in have:
                 try:
@@ -5223,13 +5260,27 @@ def record_quality_event(surface, kind, restaurant_id=None, detail=None, codes=N
             call_id = last_call_id(restaurant_id, action=action or surface, surface=surface)
         conn = _conn(db_path)
         try:
-            conn.execute("INSERT INTO ai_quality_events (restaurant_id, surface, kind, action, detail, codes, n, "
-                         "call_id) VALUES (?,?,?,?,?,?,?,?)",
-                         (restaurant_id, str(surface or "?")[:60], str(kind or "?")[:40],
-                          (str(action)[:40] if action else None),
-                          redact_pii(str(detail or ""))[:300] or None,
-                          json.dumps(sorted(set(str(c) for c in codes))) if codes else None,
-                          int(n or 1), call_id))
+            # The build and the prompt template the event is about (Audit #25
+            # A07-04): the template from the call's own trace row.
+            template = None
+            if call_id:
+                try:
+                    row = conn.execute("SELECT template_hash FROM ai_calls WHERE call_id=?", (call_id,)).fetchone()
+                    template = row[0] if row else None
+                except sqlite3.Error as e:
+                    log.debug("quality event's template not read (%s): %s", call_id, e)
+            build = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or "")[:12] or None
+            row = (restaurant_id, str(surface or "?")[:60], str(kind or "?")[:40],
+                   (str(action)[:40] if action else None), redact_pii(str(detail or ""))[:300] or None,
+                   json.dumps(sorted(set(str(c) for c in codes))) if codes else None, int(n or 1), call_id)
+            try:
+                conn.execute("INSERT INTO ai_quality_events (restaurant_id, surface, kind, action, detail, codes, n, "
+                             "call_id, build, template_hash) VALUES (?,?,?,?,?,?,?,?,?,?)", row + (build, template))
+            except sqlite3.OperationalError as e:
+                # A database booted before the two columns (init_ai_ops adds them).
+                log.debug("quality event without build/template (%s)", e)
+                conn.execute("INSERT INTO ai_quality_events (restaurant_id, surface, kind, action, detail, codes, n, "
+                             "call_id) VALUES (?,?,?,?,?,?,?,?)", row)
             conn.commit()
         finally:
             conn.close()
