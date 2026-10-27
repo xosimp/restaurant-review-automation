@@ -7097,7 +7097,8 @@ def restaurant_has_module(restaurant_id: int, key: str, db_path: str = DB_PATH) 
             # your listing", which is the true answer.
             return is_full_tier(restaurant)
         return any(m["key"] == key for m in get_active_modules(restaurant))
-    except Exception:
+    except Exception as e:
+        report_gate_open("module", e, restaurant_id=restaurant_id)
         return True
 
 
@@ -14703,12 +14704,48 @@ def subscription_allows_access(restaurant_id: int, db_path: str = DB_PATH) -> bo
             "SELECT billing_status FROM restaurants WHERE id=?", (restaurant_id,)
         ).fetchone()
         conn.close()
-    except Exception:
+    except Exception as e:
+        report_gate_open("billing", e, restaurant_id=restaurant_id)
         return True
     if not row:
         return True
     status = (row["billing_status"] or "").strip().lower()
     return status not in BLOCKED_BILLING_STATES
+
+
+# The revenue gates fail OPEN (this one, restaurant_has_module, and auth's
+# billing, module and POS-hold gates): a broken read must not take a paying
+# client's product away. Each failure is reported (audit #25 A03-12) — logged
+# and ops.capture-d — at most once a minute per (gate, exception type) per
+# process: a read that fails, fails on every request, and the console needs
+# the fact, not a row per request.
+_GATE_OPEN_REPORT_SECONDS = 60
+_gate_open_reported = {}
+_process_caches.register("models._gate_open_reported", _gate_open_reported)
+
+
+def report_gate_open(gate, exc, restaurant_id=None, path=""):
+    """Report that the `gate` failed open on `exc`. True when this call
+    reported it, False when it was inside the minute's window (or the report
+    itself failed — it never raises: it runs inside the gate's except)."""
+    import logging
+    import time as _time
+    key = (str(gate), type(exc).__name__)
+    now = _time.monotonic()
+    last = _gate_open_reported.get(key)
+    if last is not None and now - last < _GATE_OPEN_REPORT_SECONDS:
+        return False
+    _gate_open_reported[key] = now
+    logging.getLogger("models").warning("%s gate failed open (restaurant %s): %s: %s", gate, restaurant_id,
+                                        type(exc).__name__, exc)
+    try:
+        import ops
+        ops.capture(exc, job=f"{gate}_gate_open", context=f"restaurant_id={restaurant_id} path={str(path)[:120]}",
+                    restaurant_id=restaurant_id, kind="request")
+    except Exception as report_exc:
+        logging.getLogger("models").warning("could not record a %s gate failing open: %s", gate, report_exc)
+        return False
+    return True
 
 
 def normalize_owner_email(value) -> str:

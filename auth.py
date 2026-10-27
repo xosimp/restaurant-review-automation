@@ -5851,9 +5851,22 @@ def _billing_blocked(user) -> bool:
             return False
         from models import subscription_allows_access
         return not subscription_allows_access(user["restaurant_id"])
-    except Exception:
-        # Fail open — see models.subscription_allows_access.
+    except Exception as e:
+        # Fail open — see models.subscription_allows_access — but counted, so
+        # a broken read is seen in the console, not only by the revenue it
+        # leaks (audit #25 A03-12).
+        _gate_failed_open("billing", e, user)
         return False
+
+
+def _gate_failed_open(gate, exc, user=None):
+    """A revenue gate (billing, module, the POS owner hold) that failed open:
+    logged and ops.capture-d, at most once a minute per (gate, exception
+    type) — models.report_gate_open (audit #25 A03-12). Never raises."""
+    from flask import has_request_context
+    rid = user.get("restaurant_id") if isinstance(user, dict) else None
+    path = (request.path or "") if has_request_context() else ""
+    return _models_mod.report_gate_open(gate, exc, restaurant_id=rid, path=path)
 
 
 _BILLING_BLOCKED_MESSAGE = (
@@ -5893,7 +5906,8 @@ def _pos_owner_hold(user) -> bool:
         from models import get_restaurant
         r = get_restaurant(user["restaurant_id"])
         return bool(r is not None and getattr(r, "pos_owner_hold", None))
-    except Exception:
+    except Exception as e:
+        _gate_failed_open("pos_hold", e, user)
         return False
 
 
@@ -5971,6 +5985,18 @@ _MODULE_PREFIXES = (
     # phone's Live Activity (iOS parity audit 10/7/26 #94).
     ("/api/intraday",               "labor"),
     ("/mobile/api/intraday",        "labor"),
+    # The team's side of Labor (staff_knowledge_routes): tonight's lineup
+    # brief (its draft is a model call), the house rules, staff docs and
+    # certifications the staff portal shows. They checked the role inside
+    # but not the plan, and sat outside the sweep (audit #25 A04-06).
+    ("/api/staff-brief",            "labor"),
+    ("/api/house-rules",            "labor"),
+    ("/api/staff-docs",             "labor"),
+    ("/api/staff-certs",            "labor"),
+    ("/mobile/api/staff-brief",     "labor"),
+    ("/mobile/api/house-rules",     "labor"),
+    ("/mobile/api/staff-docs",      "labor"),
+    ("/mobile/api/staff-certs",     "labor"),
     # Food Cost
     ("/api/food-cost",              "inventory"),
     ("/api/inv-insight",            "inventory"),
@@ -6090,6 +6116,9 @@ _UNGATED_PREFIXES = (
     "/api/post-to-facebook", "/api/post-to-instagram", "/api/post-insights", "/api/meta-review-test",
     # Public pages whose token is the credential.
     "/api/public/",
+    # The public status page's JSON (status_routes): no login, no restaurant
+    # data — the platform's own service states and incidents (A04-06).
+    "/api/status",
     # One-off admin tools (admin_required), and two login_required debug
     # endpoints (debug-insights, gbp-debug) that are candidates for removal
     # after verification — listed so they stay visible, not endorsed.
@@ -6120,9 +6149,10 @@ def _module_blocked(user, path=None):
         if restaurant_has_module(user["restaurant_id"], key):
             return None
         return module_label(key)
-    except Exception:
+    except Exception as e:
         # Fail open — a lookup failure must not take a paying client's tab
-        # away. See models.restaurant_has_module.
+        # away. See models.restaurant_has_module. Counted (A03-12).
+        _gate_failed_open("module", e, user)
         return None
 
 

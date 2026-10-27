@@ -378,16 +378,25 @@ def test_the_inventory_trend_route_belongs_to_the_food_cost_module():
 
 
 def _all_rules():
-    import clover_routes
-    import rpower_routes
-    import social_routes
-    import strategy_routes
-    app = _app()
-    for bp in (strategy_routes.strategy_bp, strategy_routes.strategy_mobile_bp, social_routes.social_bp,
-               clover_routes.clover_bp, rpower_routes.rpower_bp):
-        app.register_blueprint(bp)
+    """Every /api and /mobile/api rule of every blueprint the app registers —
+    from blueprints.all_blueprints(), the list hosted_dashboard registers
+    from (audit #25 A04-06: this sweep used to build its own app from 11 of
+    the 22 and 21 rules sat outside it)."""
+    import blueprints
+    app = blueprints.url_map_app(template_folder=TEMPLATES)
     return sorted({r.rule for r in app.url_map.iter_rules()
                    if r.rule.startswith("/api/") or r.rule.startswith("/mobile/api/")})
+
+
+def test_the_sweep_reads_every_blueprint_the_app_registers():
+    import blueprints
+    names = [bp.name for bp in blueprints.all_blueprints()]
+    assert len(names) == len(set(names)) >= 22
+    for name in ("knowledge", "knowledge_mobile", "staff_knowledge", "staff_comms", "staff_comms_mobile",
+                 "status", "onboarding_admin", "sales_audit", "webhook", "staff", "issue_link"):
+        assert name in names, name
+    rules = _all_rules()
+    assert "/api/staff-brief/draft" in rules and "/mobile/api/staff-certs" in rules and "/api/status" in rules
 
 
 def test_every_api_rule_is_module_mapped_or_listed_as_deliberately_ungated():
