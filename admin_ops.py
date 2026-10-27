@@ -7342,6 +7342,12 @@ def ops_state():
         failed = sum(v for k, v in by.items() if k in ("failed", "undelivered", "error"))
         if failed:
             return _sys("warn", f"{failed} of {day['attempted']} text{'s' if day['attempted'] != 1 else ''} failed in 24 hours.")
+        unknown = int(by.get(_n_sms.SMS_UNKNOWN_STATUS) or 0)
+        if unknown:
+            # Twilio took the request and never answered (A06-11): maybe
+            # delivered, deliberately not resent.
+            return _sys("warn", f"{unknown} text{'s' if unknown != 1 else ''} in 24 hours with no answer from Twilio "
+                                "— delivery unknown, not resent.")
         if (providers.get("twilio") or {}).get("state") == "unconfigured":
             return _sys("unknown", "Twilio is not configured on this server.")
         return _sys("ok", f"{day.get('attempted') or 0} text{'s' if (day.get('attempted') or 0) != 1 else ''} in 24 hours.")

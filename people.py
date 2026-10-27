@@ -657,9 +657,17 @@ def _place(restaurant_id, db):
 
 
 def _send_staff_text(restaurant_id, phone, text) -> bool:
+    """True when the text went — or may have: Twilio took it and never
+    answered (notify.SmsResult.uncertain). That counts as sent, so the chain
+    neither emails the same notice on top nor lets a manager's second tap
+    (a cover ask) text the person twice (audit #25 A06-11); sms_log and the
+    console say "unknown"."""
     import notify
+    notify.clear_last_sms_result()
     with notify.sms_context(restaurant_id):
-        return bool(notify.send_sms(phone, text, use_case="staff"))
+        if notify.send_sms(phone, text, use_case="staff"):
+            return True
+    return notify.last_sms_uncertain()
 
 
 def _send_staff_email(restaurant_id, email, place, title, lines, email_type="staff_notice") -> bool:

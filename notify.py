@@ -245,22 +245,35 @@ class SmsResult:
 
     `permanent` — will not change by retrying (a STOP, an invalid number, a
     number without consent). `account_level` — every text is failing (bad
-    credentials, a suspended account, carrier filtering). Neither — worth
-    another go later (a 429, a 5xx, Twilio not configured right now)."""
-    __slots__ = ("ok", "sid", "status", "error_code", "error", "permanent", "account_level", "log_id")
+    credentials, a suspended account, carrier filtering). `uncertain` — the
+    request reached Twilio and its answer never came back (a read timeout, a
+    connection reset after the request was written): the text may well have
+    gone out, status "unknown" (audit #25 A06-11). Twilio's Messages API has
+    no idempotency key, so a caller that retries failed texts treats an
+    uncertain one as SENT — a retry could text the person twice. None of the
+    three — worth another go later (a 429, a 5xx, Twilio not configured)."""
+    __slots__ = ("ok", "sid", "status", "error_code", "error", "permanent", "account_level", "log_id",
+                 "uncertain")
 
     def __init__(self, ok, sid=None, status=None, error_code=None, error=None, permanent=False,
-                 account_level=False, log_id=None):
+                 account_level=False, log_id=None, uncertain=False):
         self.ok, self.sid, self.status = bool(ok), sid, status
         self.error_code = str(error_code) if error_code not in (None, "") else None
         self.error, self.permanent, self.account_level, self.log_id = error, permanent, account_level, log_id
+        self.uncertain = bool(uncertain) and not self.ok
 
     def __bool__(self):
         return self.ok
 
+    @property
+    def maybe_sent(self) -> bool:
+        """Accepted, or of unknown outcome: what a retrying caller counts as
+        sent so it never texts the same person twice."""
+        return self.ok or self.uncertain
+
     def __repr__(self):
         return (f"<SmsResult ok={self.ok} status={self.status} code={self.error_code} "
-                f"permanent={self.permanent} err={self.error!r}>")
+                f"permanent={self.permanent} uncertain={self.uncertain} err={self.error!r}>")
 
 
 @contextmanager
@@ -286,6 +299,22 @@ def last_sms_result():
 
 def clear_last_sms_result():
     _sms_local.last = None
+
+
+def last_sms_uncertain() -> bool:
+    """Whether this thread's last text reached Twilio with no answer back —
+    it may have been delivered (SmsResult.uncertain). For a caller that
+    sends through send_sms (a bool): clear_last_sms_result() first, then
+    read this after a False to tell "not sent" from "maybe sent"."""
+    res = last_sms_result()
+    return bool(res is not None and getattr(res, "uncertain", False))
+
+
+# What sms_log, the console and a caller's own record say for a text whose
+# outcome Twilio never answered (SmsResult.uncertain).
+SMS_UNKNOWN_STATUS = "unknown"
+SMS_UNKNOWN_NOTE = ("delivery unknown: Twilio did not answer in time and the text may have gone out, "
+                    "so it was not sent again")
 
 
 def _sms_hash(phone: str) -> str:
@@ -631,11 +660,22 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
                 break
         except requests.exceptions.ConnectionError as e:
             print(f"[notify] SMS send failed: {e}")
-            last = SmsResult(False, status="failed", error=str(e)[:300])
             if not _sms_never_sent(e):
                 # The request may have reached Twilio (a reset while its
-                # answer was read): a retry could text twice (R9-21).
+                # answer was read): a retry could text twice (R9-21), and
+                # the outcome is unknown, not failed (A06-11).
+                last = SmsResult(False, status=SMS_UNKNOWN_STATUS, error=f"{SMS_UNKNOWN_NOTE} ({str(e)[:200]})",
+                                 uncertain=True)
                 break
+            last = SmsResult(False, status="failed", error=str(e)[:300])
+        except (requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as e:
+            # A read timeout (a connect timeout is a ConnectionError, above)
+            # or an answer cut off mid-read: Twilio had the request, and
+            # may have sent it (A06-11). Never retried here.
+            print(f"[notify] SMS send outcome unknown: {e}")
+            last = SmsResult(False, status=SMS_UNKNOWN_STATUS, error=f"{SMS_UNKNOWN_NOTE} ({str(e)[:200]})",
+                             uncertain=True)
+            break
         except Exception as e:
             print(f"[notify] SMS send failed: {e}")
             last = SmsResult(False, status="failed", error=str(e)[:300])
@@ -647,7 +687,8 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
     # away the real code and reason (the same trap emails.deliver notes).
     if last is None:
         last = SmsResult(False, status="failed", error="unknown SMS failure")
-    last.log_id = _log_sms(rid, use_case, phone, "failed", last.error_code, last.error, db_path=db_path)
+    last.log_id = _log_sms(rid, use_case, phone, SMS_UNKNOWN_STATUS if last.uncertain else "failed",
+                           last.error_code, last.error, db_path=db_path)
     if last.error_code == SMS_STOP_ERROR_CODE:
         record_platform_stop(phone, db_path=db_path)
     if last.account_level:
