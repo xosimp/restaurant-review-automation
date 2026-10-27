@@ -809,3 +809,17 @@ def test_reviews_are_read_and_answered_through_the_v4_api_that_exists(monkeypatc
                     "https://mybusiness.googleapis.com/v4/accounts/7/locations/9/reviews/abc/reply"]
     src = open(gmb.__file__, encoding="utf-8").read()
     assert "mybusinessreviews.googleapis.com" not in src
+
+
+def test_the_reset_email_names_the_username_to_sign_in_with(client, db_path, monkeypatch):
+    """Owner, 10/27/26: Anthony reset his password, then signed in as
+    "anthony" - his login is "aabbott" - and read it as the reset failing."""
+    import emails
+    rid = create_restaurant(Restaurant(name="EJ's", owner_email="o@x.test"), db_path=db_path)
+    create_user(rid, "aabbott", "aabbott@ejs.test", "Sup3r-long-pass!", db_path=db_path, role="manager")
+    sent = []
+    monkeypatch.setattr(emails, "deliver_or_raise", lambda **kw: sent.append(kw))
+    client.get("/forgot-password")
+    client.post("/forgot-password", data={"email": "aabbott@ejs.test",
+                                           "csrf_token": client.get_cookie("csrf_token").value})
+    assert sent and "your username <b>aabbott</b> or this email address" in sent[0]["payload"]["html"]
