@@ -1460,7 +1460,9 @@ def _upgrade_layouts(restaurant_id, provider, dates, db_path=DB_PATH) -> set:
             while v < ARCHIVE_VERSION and callable(LAYOUT_UPGRADES.get(v)) and LAYOUT_UPGRADES[v](
                     conn, restaurant_id, provider, iso):
                 v += 1
-            if v >= ARCHIVE_VERSION:
+            # == (release-safety audit 10/26/26 A05-05): a day a newer build
+            # stored is never stamped down to this code's layout.
+            if v == ARCHIVE_VERSION:
                 conn.execute("UPDATE pos_archive_days SET version=? WHERE restaurant_id=? AND provider=? "
                              "AND business_date=?", (ARCHIVE_VERSION, restaurant_id, provider, iso))
                 lifted.add(iso)

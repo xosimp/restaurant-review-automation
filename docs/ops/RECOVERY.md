@@ -30,6 +30,7 @@ ways; the body names the problem by code.
 | `200`, `"status": "degraded"`, `scheduler_stale`, `scheduler_wedged`, `scheduler_stalled` or `jobs_overdue` | Web is fine, background jobs have stopped, are stuck in one job, or have fallen behind | [Scheduler stopped](#scheduler-stopped) |
 | `200`, `"status": "degraded"`, `backup_stale` or `offsite_backup_stale` | No good backup (or no off-site copy) in 26 hours | [The backup](#the-backup) |
 | `200`, `"status": "degraded"`, `db_busy` / `db_not_wal` | A write lock held past two seconds, or the database is not in WAL mode | [Something specific](#something-specific-is-broken) |
+| `200`, `"status": "degraded"`, `constraint_missing` / `index_missing` (with `indexes_missing`) | The boot could not build a UNIQUE index over duplicate rows, or a new index ran past its build limit — the boot went on | [Deploys](#deploys-the-branch-the-gate-the-window-the-smoke-release-safety-audit-102626) |
 | `200`, `"status": "ok"` | The platform is healthy; the problem is narrower | [Something specific](#something-specific-is-broken) |
 
 Railway's deploy check needs only the 200, so a DEGRADED platform still
@@ -38,6 +39,8 @@ uptime monitor (below) asserts the keyword `"status":"ok"`, so degraded and
 error both page. The 200 body also carries the write probe, disk (free,
 total, database and WAL sizes and both thresholds), the scheduler heartbeat
 age, backup and off-site ages, and the overdue jobs; it is cached 5 seconds.
+Every answer names `build`: the commit, or `unknown` for a deploy that is not
+one (`railway up`) — the post-deploy smoke fails on it.
 
 `/status` (public) and `/admin` → Overview carry the same signals with more
 detail — Overview's *Needs you* list names the restaurants the review fetch
@@ -117,8 +120,12 @@ Railway outage or a crashed process.
 
 1. Check Railway's own status, then the service's Deployments tab.
 2. If the last deploy is the cause, **roll back in Railway** — do not try to
-   fix forward under pressure. The database is on a persistent volume and is
-   not affected by a rollback.
+   fix forward under pressure: [Rolling back a release](#rolling-back-a-release).
+   The database is Postgres (since 10/19/26), its own Railway service, so a
+   rollback changes the code and never the data; the old code runs on the
+   newer schema because schema changes are additive (ARCHITECTURE_MANIFEST.md
+   → *Release compatibility*). What a rollback does NOT undo is data the bad
+   release wrote — that is [Database recovery](#database-recovery).
 3. **With a volume attached, Railway runs one deployment at a time.** The
    old container is stopped before the new one boots, so a boot that fails,
    or a `/health` that does not answer 200 within the 120-second
@@ -171,10 +178,102 @@ Railway outage or a crashed process.
    Jobs.
 
 **What keeps working:** nothing. This is a full outage.
-**Data loss:** none — the volume survives.
+**Data loss:** none — the database is Postgres, a service of its own; the
+volume holds the local backup snapshots, the volume marker and the frozen
+pre-cutover `reviews.db`.
 **Owners see:** the site not loading. `/status` is served by the same
 process; point clients at the external monitor's hosted status page, or
 post to them directly.
+
+---
+
+## Deploys: the branch, the gate, the window, the smoke (release-safety audit 10/26/26)
+
+**The flow.** Work is pushed to `main`. The Railway `production` service
+deploys the `production` branch (once Will points it there — until then it
+deploys `main`): a release is a fast-forward of `production` to a `main` SHA
+whose CI gate passed, through the promote workflow, 9am–3pm CT (`--emergency`
+skips the window, never the gate). A Railway `staging` environment deploys
+`main` (below). The season-refresh bot's commits wait for the next promotion.
+
+**Staging.** One Railway environment named `staging` (its own small Postgres,
+no provider keys or test keys only, `CAVNAR_ENV=staging`). The code holds it:
+`config.deploy_env()` is `staging`, so the scheduler never starts
+(`config.scheduling_allowed()`) and every send point refuses
+(`config.outbound_sends_allowed()`: `emails.deliver`, the Twilio send, APNs
+and Web Push, Stripe with a live key, DocuSign outside its demo account, Google
+review replies and posts, customer webhooks) — whatever keys a "duplicate
+environment" copied in. `ALLOW_NONPROD_SENDS=1` lifts the send gate for a
+staging that holds only test keys and test addresses; `ALLOW_LOCAL_SCHEDULER=1`
+starts its scheduler. Production needs no new variable: Railway names its
+environment `production`.
+
+**Shutdown.** Railway sends SIGTERM and kills the container
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` later. Set it on the web service:
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS=60`. gunicorn gives the web worker
+`graceful_timeout` (20 s) to finish its requests and release the scheduler
+lease, then gives the queue worker 25 s (`_DRAIN_SECONDS`) to hand its rows
+back — 45 s, inside the 60 (`gunicorn.conf.py`, held by
+`tests/test_boot_ddl_rules.py`). A shorter drain kills the hand-back: rows wait
+out their lease and the next scheduler waits 4 minutes for the lease.
+`boot_events.previous_exit` says whether each exit was clean.
+
+**After every deploy** (`.github/workflows/release.yml`, on Railway's
+deployment-success event): `scripts/smoke.py` checks that `/health` names the
+deployed SHA (`build`, never `unknown`), `/login` renders, its static files
+resolve, and — with the `SMOKE_TOKEN` secret, the smoke tenant's session token —
+one web read and one mobile read answer. A failure fails the run (GitHub emails
+Will) and prints the rollback step. Hourly, the same workflow fails when the
+build `/health` names has lagged the deploy branch's head for over an hour.
+In the process, `platform_monitor.release_health` compares the new build's
+first 15 minutes with the previous build's last hour (boot failures, customer
+5xx and p95, jobs that crashed after a clean run, failed queue rows, AI
+provider errors, a scheduler tick) and pages once per build: **roll back** on
+an urgent row, **hold the next deploy** on a warning. A boot over 60 s, or 50%
+over the median of the last ten, pages once per build too.
+
+**Emergency deploys come from a pushed commit, never from `railway up`.**
+`railway up` uploads the working directory — uncommitted edits included — and
+names no commit: `/health` reads `build: "unknown"`, Sentry has no release,
+the smoke test fails, and a later rollback to it hung (10/22/26). When the
+GitHub integration is down: `git worktree add /tmp/release <pushed-sha>`, set
+`GIT_COMMIT=<sha>` on the service, and `railway up` from that clean worktree;
+otherwise `railway redeploy` a git-sourced deployment.
+
+**Schema changes at boot** follow the rules in ARCHITECTURE_MANIFEST.md →
+*Release compatibility*: additive only; an index on a table production
+already has is built first with `scripts/build_index.py` (CONCURRENTLY) and
+listed in `migrations/prebuilt_indexes.txt`; a data rewrite runs once
+(`data_migrations`). A boot that cannot build a UNIQUE index over duplicate
+rows, or a new index past its build limit (`PG_BOOT_INDEX_TIMEOUT_MS`, 60 s),
+goes on and `/health` says `constraint_missing` / `index_missing` (degraded,
+with `indexes_missing`): dedupe (read-only count first) and redeploy, or build
+the index with the script.
+
+---
+
+## Rolling back a release
+
+The way back from a bad release. Safe because the schema is additive and data
+formats are read one release before they are written (ARCHITECTURE_MANIFEST.md
+→ *Release compatibility*). Rehearsed each quarter (below).
+
+1. Railway → the `web` service → **Deployments**. Find the last deployment
+   before the bad one that was healthy (its build SHA is in its details; the
+   page that paged you names the bad build).
+2. Its **⋮ → Redeploy**. Railway builds nothing new: it starts the old
+   image. With the volume attached the bad container stops first — a minute
+   or two of outage.
+3. Watch `/health` until it answers 200 with `build` equal to the old SHA
+   (`python scripts/smoke.py https://dashboard.cavnar.ai --expect-sha <old-sha>`).
+4. Stop the cause from coming back: move the `production` branch back
+   (`git push --force-with-lease origin <old-sha>:production`) or revert on
+   `main` and promote, so the next deploy is not the bad one again.
+5. If the bad release wrote bad data, the rollback did not undo it:
+   [Database recovery](#database-recovery).
+
+A rollback of a `railway up` deployment can hang at "fetching snapshot"
+(10/22/26): roll back to a git-sourced deployment instead.
 
 ---
 
@@ -927,6 +1026,42 @@ quarter restore one into a scratch environment from the Backups tab and load
   What this did NOT prove: unredaction of OAuth tokens — the local database
   holds no `gmb_refresh_token` at all, so "0 kept" is not evidence either
   way. Superseded by the production drill above.
+
+### Release drills (quarterly — release-safety audit 10/26/26)
+
+The monthly job above proves the SQLite export. It does not prove the two
+paths a bad release actually needs: a Railway rollback, and a Postgres
+point-in-time restore. Rehearse each once a quarter, on a quiet weekday
+morning (9–11am CT), timed from the first click to a healthy `/health`, and
+record it — the Engineering system card shows the last of each and warns past
+100 days (`release_drills`, `platform_monitor.drill_status`).
+
+**Rollback drill** (production, ~10 minutes, a minute or two of outage):
+1. Note the current deployment's SHA (`/health` → `build`).
+2. Follow [Rolling back a release](#rolling-back-a-release) steps 1–3 to the
+   PREVIOUS healthy deployment. Start the clock at the Redeploy click.
+3. When `/health` names the old build and `scripts/smoke.py` passes, stop
+   the clock. Redeploy the current deployment the same way, smoke it again.
+4. Record: `railway ssh "python scripts/record_drill.py rollback --minutes <n> --note '<what was odd>'"`.
+
+**Postgres restore drill** (a scratch service, no outage, ~45 minutes):
+1. Railway → the `Postgres` service → Backups / point-in-time recovery →
+   restore to a time ~1 hour ago **into a NEW service** (never over
+   production's).
+2. A throwaway web deploy pointed at it: a new environment (or service) with
+   `DATABASE_URL` = the restored service's URL, `CAVNAR_ENV=staging`, and NO
+   provider keys (no `RESEND_API_KEY`, `TWILIO_*`, `STRIPE_*`, `DOCUSIGN_*`,
+   `ANTHROPIC_API_KEY`, `APNS_*`). The staging gate refuses every send even if
+   one is left behind; the scheduler does not start.
+3. Wait for `/health` = 200 (`"status"` may be degraded: no scheduler, no
+   backups). Count restaurants, `MAX(created_at)` of `reviews`, `alert_log`,
+   `job_runs` against production's (read-only `railway ssh` on production).
+4. Delete the scratch service and environment. Record:
+   `railway ssh "python scripts/record_drill.py pg_restore --minutes <n> --note '<counts matched / not>'"`.
+5. Write the steps that differed from these, and the minutes, here.
+
+- **Last rollback drill:** never (as of 10/26/26).
+- **Last Postgres restore drill:** never (as of 10/26/26).
 
 ## The outside monitor (cavnar-watchdog)
 

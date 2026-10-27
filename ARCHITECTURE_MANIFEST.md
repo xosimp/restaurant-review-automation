@@ -618,7 +618,7 @@ Files that look mergeable and must not be merged, and why.
 - Route modules end in `_routes.py`; the two big surfaces are `client_api.py` and `mobile_api.py`; `strategy_routes.py` registers each `_ROUTES` entry at both prefixes.
 - Mobile handlers are `mobile_<thing>`; the shared body a web route delegates to is either `_m("mobile_x")` or a `_do_<thing>(…)` in `client_api`. Web handlers that only delegate carry the docstring `Web twin — the one body is mobile_api.<name>`.
 - Scheduled work is `run_<job>` (runs a pass) or `check_<thing>` (evaluates and alerts); every job claims its period with the key used in `scheduler_loop` (`SYSTEM_ARCHITECTURE.md` lists them), has an entry in `jobs_registry.JOBS` under the name `ops.run_job` records, and returns the standard counts `{attempted, ok, failed, skipped, hit_bound}` or raises; owner-facing jobs gate on `local_due` and may pass `day=`.
-- Boot-time DDL helpers are `init_<table_group>` and are called from `init_db` (or, for the web process's own telemetry, from `hosted_dashboard`'s boot block: `platform_monitor.init_platform_tables`, `provider_health.init_provider_health`).
+- Boot-time DDL helpers are `init_<table_group>` and are called from `init_db` or from `models.boot_schema` — the ONE boot DDL chain (`init_db`, then `auth.init_auth`, `platform_monitor.init_platform_tables`, `provider_health.init_provider_health`, `ensure_columns` again and the rest of the `init_*` steps) that `hosted_dashboard`, `worker.py`, `/health`'s reference schema and the test template all call. A new boot step goes there, never into one caller alone. A boot data rewrite runs once: a `(name, sql)` entry in `init_db`'s list or `models.run_once(name, fn)` (ledger `data_migrations`).
 - Private helpers say what they return when a same-named helper elsewhere returns something else: `_one_dict` / `_one_row` / `_scalar`, `_rows_dict` / `_rows_raw`, `_iso_z` / `_stamp`, `_as_date`, `_normalize_phone_lenient`.
 - A new `restaurants` column has four touch points (dataclass, a migration list, `update_restaurant().allowed`, `get_restaurant()` hydration) — `tests/test_models.py` enforces it for `al_*`/`alert_*`.
 - Comments explain why, in the register of the incident the code prevents; no restating the line below.
@@ -638,3 +638,40 @@ Files that look mergeable and must not be merged, and why.
 
 **Docs**
 - The ten reference docs at the root are the canonical homes listed in `CLAUDE.md`; `docs/ops`, `docs/plans`, `docs/history` for the rest. A doc quotes commands for counts. A superseded doc moves to `docs/history/` with a line in its README; it is not deleted.
+
+---
+
+## 8. Release compatibility
+
+A release can be rolled back at any moment, and a phone may run an older
+build for weeks. So every change is written to work with the build before it
+and the build after it (release-safety audit 10/26/26, A05-05 / A05-14):
+
+- **Schema changes are additive.** New tables, new nullable or defaulted
+  columns, new indexes. No `DROP TABLE`, `DROP COLUMN` or `RENAME` in boot
+  DDL — `tests/test_boot_ddl_rules.py` holds it, with the SQLite-only table
+  rebuilds as its allow-list.
+- **A column or table is dropped no sooner than one release after its last
+  reader is gone**, by a runbook step, never by the boot.
+- **A new data format is read by release N and written from N+1.** N learns
+  to read it; only once N is live everywhere does N+1 start writing it, so a
+  rollback from N+1 lands on code that understands what was written.
+- **Format markers compare with `==`, never `>=`.** A row stamped with a
+  format this code does not write is not served as if it were (e.g.
+  `schedule_shifts._servable`: a projection a newer build wrote is skipped
+  and the week's text read instead). A version that means "this or newer"
+  (a consent version, an additive archive layout) says so where it is read.
+- **Indexes on existing tables are built before the deploy**, CONCURRENTLY,
+  with `scripts/build_index.py`, and listed in
+  `migrations/prebuilt_indexes.txt`; the boot creates an index only on a
+  table created in the same release (`migrations/schema_baseline.json`,
+  refreshed after each promotion with `scripts/schema_baseline.py --update`).
+- **A new UNIQUE index ships with its dedup**, counted read-only on
+  production first; a boot that meets duplicates records the index as missing
+  (`/health` `constraint_missing`) instead of failing.
+- **Responses add fields; they never rename or remove one while a supported
+  build reads it.** The same one-release rule applies to response keys and to
+  enum values a shipped iOS build decodes.
+- **Queue job kinds**: a kind the running build does not know is left queued
+  for the build that does (job_queue), never failed.
+

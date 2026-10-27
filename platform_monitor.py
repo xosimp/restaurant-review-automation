@@ -110,6 +110,20 @@ def _platform_ddl():
             PRIMARY KEY (hour_at, restaurant_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_tenant_request_rollups_hour ON tenant_request_rollups(hour_at)",
+        # The rehearsals the runbook asks for each quarter (release-safety
+        # audit 10/26/26 A05-05 / A05-10): a Railway rollback and a Postgres
+        # point-in-time restore into a scratch service, each with the minutes
+        # it took. A handful of rows a year; never pruned.
+        """CREATE TABLE IF NOT EXISTS release_drills (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind         TEXT NOT NULL,
+            done_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            minutes      REAL,
+            ok           INTEGER NOT NULL DEFAULT 1,
+            note         TEXT,
+            recorded_by  TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_release_drills_kind ON release_drills(kind, done_at)",
     )
 
 
@@ -658,6 +672,59 @@ def page_if_crash_looping(boot_id, db_path=None) -> bool:
     except Exception as e:
         log.error("crash-loop page failed: %s", e)
         return False
+
+
+# ── the quarterly release drills (release-safety audit 10/26/26, A05-05 /
+# A05-10) ───────────────────────────────────────────────────────────────────
+# Recorded by scripts/record_drill.py after each rehearsal (docs/ops/
+# RECOVERY.md → Release drills); the Engineering system card shows the last
+# of each and warns past DRILL_STALE_DAYS.
+DRILL_KINDS = {"rollback": "Rollback drill", "pg_restore": "Postgres restore drill"}
+DRILL_STALE_DAYS = 100
+
+
+def record_drill(kind, minutes=None, ok=True, note=None, recorded_by=None, db_path=None, done_at=None) -> int:
+    if kind not in DRILL_KINDS:
+        raise ValueError(f"unknown drill {kind!r} (one of {', '.join(DRILL_KINDS)})")
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        cur = conn.execute("INSERT INTO release_drills (kind, done_at, minutes, ok, note, recorded_by) "
+                           "VALUES (?, COALESCE(?, datetime('now')), ?, ?, ?, ?)",
+                           (kind, done_at, None if minutes is None else float(minutes), 1 if ok else 0,
+                            (note or None) and str(note)[:500], (recorded_by or None) and str(recorded_by)[:100]))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def drill_status(db_path=None, now=None) -> dict:
+    """{kind: {label, done_at, age_days, minutes, ok, state}} — state "ok",
+    "stale" (over DRILL_STALE_DAYS, or the last one failed) or "never"."""
+    from models import get_conn, DB_PATH
+    now = now or datetime.utcnow()
+    out = {k: {"label": label, "done_at": None, "age_days": None, "minutes": None, "ok": None, "state": "never"}
+           for k, label in DRILL_KINDS.items()}
+    try:
+        conn = get_conn(db_path or DB_PATH)
+    except Exception as e:
+        return {"error": str(e)[:120], **out}
+    try:
+        for kind in DRILL_KINDS:
+            row = conn.execute("SELECT done_at, minutes, ok FROM release_drills WHERE kind = ? "
+                               "ORDER BY done_at DESC, id DESC LIMIT 1", (kind,)).fetchone()
+            if not row:
+                continue
+            done = _parse_utc(row[0])
+            age = (now - done).days if done else None
+            out[kind].update(done_at=row[0], age_days=age, minutes=row[1], ok=bool(row[2]),
+                             state="stale" if (not row[2] or age is None or age > DRILL_STALE_DAYS) else "ok")
+    except sqlite3.OperationalError as e:
+        return {"error": str(e)[:120], **out}
+    finally:
+        conn.close()
+    return out
 
 
 # ── a slow boot pages (release-safety audit 10/26/26, A05-09) ───────────────
@@ -1304,6 +1371,7 @@ def system_report(db_path=None) -> dict:
                         "marker": _sm.read_volume_marker(path)}
     report["backup"] = _sm.backup_health(db_path)
     report["drill"] = _last_run("restore_drill", db_path)
+    report["release_drills"] = drill_status(db_path)
 
     lease = None
     try:
