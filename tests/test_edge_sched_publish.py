@@ -325,36 +325,75 @@ def _post_save(app, headers, rows, **body):
 
 
 def test_two_saves_on_the_same_base_version_give_one_200_and_one_409(db, save_app, monkeypatch):
+    """Two managers save the same week on the same base version at once.
+
+    Staged where it matters (release-safety audit 10/26/26 A02-04 — the old
+    barrier sat on list_versions, which only the LOSING save calls, so it
+    always broke and the test skipped after 33 s, checking nothing): the
+    first save is inside the week service's write transaction — the lock
+    taken (BEGIN IMMEDIATE; on Postgres the advisory lock it maps to), its
+    version check passed, about to write — when the second save enters the
+    service with the same base version. The second must wait for the lock
+    and then see version 2: one 200, one 409 with the diff, the winner's rows
+    stored. A check made outside the lock, or no lock, lets both land.
+    Never skipped: a stage that cannot be set fails."""
+    import time as _time
     rid = _restaurant(db, module_labor=1)
     hid = _save(db, rid, W1, _week_csv(W1))
     sv.append(rid, hid, "generated", _week_csv(W1), saved_by="Cavnar AI")
     headers = _bearer(db, rid)
-    barrier = threading.Barrier(2)
-    real_list = sv.list_versions
+    first_in_lock, second_entering = threading.Event(), threading.Event()
+    entered, guard, held = [], threading.Lock(), []
+    real_save, real_write = sv.save_studio_week, sv.write_on
 
-    def racing_list(*a, **k):
-        out = real_list(*a, **k)
-        try:
-            barrier.wait(timeout=30)
-        except threading.BrokenBarrierError:
-            pass
-        return out
-    monkeypatch.setattr(sv, "list_versions", racing_list)
+    def staged_save(*a, **k):
+        with guard:
+            entered.append(threading.current_thread().name)
+            second = len(entered) == 2
+        if second:
+            # the first save is inside the lock with its check passed
+            if not first_in_lock.wait(30):
+                raise AssertionError("the first save never reached its write")
+            second_entering.set()
+        return real_save(*a, **k)
+
+    def staged_write(*a, **k):
+        with guard:
+            first = not held
+            held.append(1)
+        if first:
+            first_in_lock.set()
+            if not second_entering.wait(30):
+                raise AssertionError("the second save never reached the week service")
+            # Long enough for the second save to reach the lock and wait on it.
+            _time.sleep(0.4)
+        return real_write(*a, **k)
+    monkeypatch.setattr(sv, "save_studio_week", staged_save)
+    monkeypatch.setattr(sv, "write_on", staged_write)
     edits = {"Cy": _rows(_week_csv(W1, people=(("Cy", "11:00am", "3:00pm", 4), ("Bob", "5:00pm", "9:00pm", 4)))),
              "Ana": _rows(_week_csv(W1, people=(("Ana", "11:00am", "2:00pm", 3), ("Bob", "5:00pm", "9:00pm", 4))))}
-    statuses = {}
+    responses = {}
 
     def save(key):
-        statuses[key] = _post_save(save_app, headers, edits[key], history_id=hid, version=1).status_code
-    threads = [threading.Thread(target=save, args=(k,)) for k in edits]
+        r = _post_save(save_app, headers, edits[key], history_id=hid, version=1)
+        responses[key] = (r.status_code, r.get_json())
+    threads = [threading.Thread(target=save, args=(k,), name=k) for k in edits]
     [t.start() for t in threads]
     [t.join(60) for t in threads]
-    if barrier.broken:
-        pytest.skip("the race window was not staged (a thread missed the barrier under load)")
-    assert sorted(statuses.values()) == [200, 409], statuses
-    winner = next(k for k, s in statuses.items() if s == 200)
+    assert first_in_lock.is_set() and second_entering.is_set(), "the race was not staged"
+    statuses = {k: v[0] for k, v in responses.items()}
+    assert sorted(statuses.values()) == [200, 409], responses
+    winner = next(k for k, st in statuses.items() if st == 200)
+    loser = next(k for k, st in statuses.items() if st == 409)
+    assert winner == entered[0] and loser == entered[1]          # the one that held the lock won
+    body = responses[loser][1]
+    assert body["conflict"] and body["latest_version"] == 2
     stored = _one(db, "SELECT schedule_csv FROM schedule_history WHERE id=?", hid)["schedule_csv"]
-    assert _rows(stored) == edits[winner]
+
+    def shifts(rows):
+        return sorted((r["date"], r["employee"], r["role"], r["shift_start"], r["shift_end"]) for r in rows)
+    assert shifts(_rows(stored)) == shifts(edits[winner])
+    assert [v["version"] for v in sv.list_versions(rid, hid)] == [1, 2]         # one write, no second version
 
 
 def test_a_save_behind_a_newer_version_is_refused_with_the_diff(db, save_app):
