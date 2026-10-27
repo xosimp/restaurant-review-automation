@@ -21,10 +21,11 @@ def test_the_table_is_created_at_boot(db_path):
     import models
     conn = models.get_conn(db_path)
     try:
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(rollout_flags)").fetchall()}
+        rows = conn.execute("SELECT feature, percent, allow_json, deny_json, note, updated_by, updated_at "
+                            "FROM rollout_flags").fetchall()
     finally:
         conn.close()
-    assert {"feature", "percent", "allow_json", "deny_json", "note", "updated_by", "updated_at"} <= cols
+    assert rows == []
 
 
 def test_a_feature_nothing_sets_is_the_default(db_path):

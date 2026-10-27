@@ -276,10 +276,7 @@ def _serve():
             kw["data"] = msg["data"]
         r = c.open(msg["path"], method=msg["method"], **kw)
         text = r.get_data(as_text=True)
-        try:
-            body = r.get_json(silent=True)
-        except Exception:
-            body = None
+        body = r.get_json(silent=True)          # None for a body that is not JSON
         return {"status": r.status_code, "headers": dict(r.headers), "text": text, "json": body}
 
     def do_call(msg):
