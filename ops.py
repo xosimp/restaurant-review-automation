@@ -1090,6 +1090,22 @@ def pending_retry_scopes() -> dict:
     return out
 
 
+def db_now_stamp():
+    """The database's own UTC "YYYY-MM-DD HH:MM:SS" (datetime('now') — the
+    clock every ledger stamps with), or None when it cannot be read."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT datetime('now')").fetchone()
+        finally:
+            conn.close()
+        return str(row[0])[:19] if row and row[0] else None
+    except Exception as e:
+        log.warning(f"the database clock unreadable: {e}")
+        return None
+
+
 def failed_restaurants(jobs, since) -> set:
     """The restaurant ids whose failures `jobs` (names) captured since
     `since` (a UTC "YYYY-MM-DD HH:MM:SS"): what a partial retry re-runs

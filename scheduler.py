@@ -5545,8 +5545,10 @@ class _PulsedOps:
             with self._retry_lock:
                 retry = self._retries.get((claim, period))
         only = retry.get("only") if retry and retry.get("partial") else None
+        # On the database's clock, which stamps the failures it is compared
+        # with (job_failures.created_at) — never the app's.
         return {"only": frozenset(only) if only is not None else None, "swept": False,
-                "t0": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}
+                "t0": _ops.db_now_stamp() or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}
 
     def _already_running(self, name, claim):
         for n in {name, claim or name}:
@@ -5623,6 +5625,18 @@ class _PulsedOps:
         key = (claim, period)
         state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else None
         failed = outcome.get("raised") or state == _ops.RUN_FAILED
+        if (outcome.get("scope") or {}).get("only") is not None:
+            # This run WAS the one partial retry, narrowed to the restaurants
+            # that failed: however it ended, the period stays spent — a
+            # failed-retry backoff here would re-run the whole sweep, the
+            # restaurants that succeeded included (re-audit B7 P3).
+            with self._retry_lock:
+                self._retries.pop(key, None)
+            _ops.clear_retry(claim, period)
+            if failed or state == _ops.RUN_PARTIAL:
+                log.warning(f"{name}'s partial retry for {period} still failed; the period stays spent — the failures "
+                            "are in the job failures")
+            return
         retryable = spec.get("retry") and not spec.get("sends") and len(jobs_registry.jobs_for_claim(claim)) <= 1
         partial_retry, only = False, None
         if not failed and state == _ops.RUN_PARTIAL and retryable:

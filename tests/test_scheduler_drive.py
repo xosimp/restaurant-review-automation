@@ -11,7 +11,13 @@ claims:
     SLA is started, and no job runs twice under one claimed period;
   * the 2026 DST changes, 00:30-03:30 local on 11/1 (fall back: the 1am
     hour twice) and 3/8 (spring forward: no 2am): every claimed job runs
-    once, the 2am jobs run exactly once, and no hour-keyed job runs twice.
+    once, the 2am jobs run exactly once, and no hour-keyed job runs twice;
+  * a Sunday, a Monday and a Tuesday morning: every registry job with a
+    WEEKLY SLA is started (the Monday block is where a shadowed condition
+    would stop them all — re-audit B7 P3), and the 1st of a quarter and the
+    2nd of a month start the monthly and quarterly jobs;
+  * a real partial run inside the loop: a sweep that fails 3 of 10
+    restaurants is retried once, 30 minutes later, for those 3 only.
 
 The clock is time_machine's (requirements-dev.txt); SQLite's own
 datetime('now') is the real one, which nothing here compares against the
@@ -57,12 +63,14 @@ def drive(db_path, monkeypatch):
     runs, claims, errors = [], [], []
     real_run_job = ops.run_job
     stub = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    real_bodies = set()          # jobs whose own (test-stubbed) function runs, not the empty stub
 
     def fake_run_job(name, fn, *args, **kwargs):
         runs.append((name, kwargs.get("claim") or _claim_of(name), scheduler._chi_now()))
+        if name in real_bodies:
+            return real_run_job(name, fn, *args, context=kwargs.get("context", ""), claim=kwargs.get("claim"))
         return real_run_job(name, lambda: dict(stub), context=kwargs.get("context", ""), claim=kwargs.get("claim"))
     monkeypatch.setattr(ops, "run_job", fake_run_job)
-
     real_claim = scheduler._PulsedOps.claim_period
 
     def claim_period(self, job, period):
@@ -99,6 +107,7 @@ def drive(db_path, monkeypatch):
         for lane in scheduler._LANES.values():
             lane.join(10)
         return runs, claims, errors
+    run.real_bodies = real_bodies
     return run
 
 
@@ -181,3 +190,64 @@ def test_the_dst_change_runs_every_claimed_job_once(drive, day):
     assert ran.get("issue_scan") == len(hours)
     # Nothing claimed was left unrun (a claim with no run is a lost period).
     _no_lost_claim(runs, claims)
+
+
+_WEEKLY = 8 * 24 * 60
+
+
+def test_driven_sunday_monday_and_tuesday_mornings_start_every_weekly_job(drive):
+    # 11/8/26 is a Sunday, after the DST change: its early jobs, Monday's
+    # block, Tuesday's recipe drafts. Ticks every 20 minutes.
+    for start, minutes in ((datetime(2026, 11, 8, 3, 0, tzinfo=CHI), 3 * 60),
+                           (datetime(2026, 11, 9, 4, 0, tzinfo=CHI), 8 * 60),
+                           (datetime(2026, 11, 10, 4, 0, tzinfo=CHI), 2 * 60)):
+        runs, claims, errors = drive(start, minutes=minutes, step=20)
+    _no_loop_error(errors)
+    _no_double_run(runs, claims)
+    _no_lost_claim(runs, claims)
+    weekly = {n for n, s in jobs_registry.JOBS.items() if s.get("sla_minutes") == _WEEKLY}
+    missing = sorted(weekly - set(_ran(runs)))
+    assert not missing, f"weekly registry jobs the loop never started in their week's mornings: {missing}"
+
+
+def test_the_first_of_a_quarter_and_the_second_of_a_month_start_their_jobs(drive):
+    # Thursday 10/1/26 (a quarter's first day) and Friday 10/2 after the 2am
+    # backup (its queue row has no consumer here: settled at the followers'
+    # latest hour).
+    drive(datetime(2026, 10, 1, 8, 0, tzinfo=CHI), minutes=2 * 60, step=20)
+    runs, claims, errors = drive(datetime(2026, 10, 2, 1, 40, tzinfo=CHI),
+                                 minutes=(scheduler.BACKUP_FOLLOWERS_LATEST_HOUR - 1) * 60 + 20, step=30)
+    _no_loop_error(errors)
+    ran = _ran(runs)
+    assert ran.get("quarterly_summaries"), "the quarter's summaries never started on its first day"
+    assert ran.get("restore_drill") == 1, "the monthly restore drill was not queued on the 2nd"
+    _no_double_run(runs, claims)
+
+
+def test_a_partial_sweep_in_the_loop_is_retried_once_for_the_failed_restaurants(drive, monkeypatch):
+    """The partial-retry path end to end, in the real loop on its lane:
+    forecast_scoring fails 3 of 10 restaurants at 5am; 30 minutes later it
+    runs again for those 3 — never the 7 that succeeded (re-audit B7 P3)."""
+    swept = []
+
+    def forecast_scoring():
+        mine = []
+
+        def one(rid):
+            mine.append(rid)
+            if rid in (2, 5, 8):
+                raise RuntimeError(f"restaurant {rid}'s forecast unreadable")
+        scheduler.resumable_sweep("forecast_scoring_test", list(range(1, 11)), one, 60, job="forecast_scoring")
+        swept.append(sorted(mine))
+        bad = sum(1 for r in mine if r in (2, 5, 8))
+        return {"attempted": len(mine), "ok": len(mine) - bad, "failed": bad, "skipped": 0, "hit_bound": False}
+    monkeypatch.setattr(scheduler, "run_forecast_scoring", forecast_scoring)
+    drive.real_bodies.add("forecast_scoring")
+    runs, claims, errors = drive(datetime(2026, 10, 27, 3, 50, tzinfo=CHI), minutes=2 * 60 + 20)
+    _no_loop_error(errors)
+    assert swept[0] == list(range(1, 11)) or sorted(swept[0]) == list(range(1, 11)), swept
+    # The three fail again on the retry: the period stays spent — never a
+    # failed-retry backoff that would run all ten once more.
+    assert swept[1:] == [[2, 5, 8]], f"the retry re-ran restaurants that had succeeded: {swept}"
+    at = [a for n, _k, a in runs if n == "forecast_scoring"]
+    assert len(at) == 2 and at[1] - at[0] >= timedelta(minutes=jobs_registry.PARTIAL_RETRY_MINUTES), at
