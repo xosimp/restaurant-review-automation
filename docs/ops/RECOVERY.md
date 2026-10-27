@@ -107,7 +107,18 @@ Three things page, and they fail independently:
 3. **The external uptime monitor** on `https://dashboard.cavnar.ai/health`,
    every 1–5 minutes, alerting unless the body contains `"status":"ok"`,
    with SMS contacts. Its hosted status page is the one that survives this
-   process; `/status` is served by the same process it reports on.
+   process; `/status` is served by the same process it reports on. The
+   cavnar-watchdog Worker now does this too: a body without `"status":"ok"`
+   for 30 minutes alerts once, naming its `problems` (Audit #25 A07-09).
+4. **A paging service for the in-process pages** (`OPS_PAGER_KIND` with
+   `OPS_PAGER_ROUTING_KEY` for PagerDuty, or `OPS_PAGER_WEBHOOK_URL`).
+   Every degraded-platform page (overdue or failing jobs, the backup, the
+   queue, the AI) goes from inside the web process over the app's own
+   Twilio and Resend keys; set, the paging service is tried FIRST on every
+   page and needs neither, so a page lands while a key is being rotated.
+   Each page records which channels failed (`operator_alerts.channels`).
+   **Set it** — until then a revoked Twilio and Resend key leaves only the
+   admins' push.
 
 Also: Railway's own deploy and crash notifications, and Sentry (handled and
 unhandled 5xx are reported; the release is the commit).
@@ -1108,6 +1119,10 @@ record it — the Engineering system card shows the last of each and warns past
 - **Heartbeat.** `HEALTHCHECK_PING_URL` on Railway is `https://cavnar-watchdog.cavnarai-account.workers.dev/ping/<PING_TOKEN>`;
   the scheduler pings it every tick (`ops.ping_healthcheck`), `/fail` after a failed backup or digest.
 - **Uptime.** A cron every 5 minutes fetches `/health` and expects 200 with `"db":"ok"`.
+- **Degraded** (Audit #25 A07-09). A 200 whose body has not said `"status":"ok"` for 30 minutes (`DEGRADED_MINUTES`) alerts
+  once — "Cavnar AI is degraded", with the body's `problems` — on every configured channel (deduplicated as
+  `cavnar-watchdog-degraded` on PagerDuty), and once more when `"status":"ok"` is back. The in-app pages for those
+  problems ride the app's own email and text keys; this copy does not.
 - Silence past 20 minutes, or two failing `/health` checks in a row, alerts once, and once more when it recovers. A
   `/fail` alerts on its own at the first check that sees it — kept in its own KV key until a channel took the alert,
   36 hours at most (scale re-audit 10/20/26 R8-13; it used to ride the heartbeat's key and was overwritten by the next

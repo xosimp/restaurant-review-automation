@@ -13,6 +13,12 @@
 // 2. Uptime: every 5 minutes the cron fetches /health and expects 200 with
 //    "db":"ok". Two failing checks in a row page Will (a deploy's restart is
 //    shorter than that); a recovery sends one "back up" email.
+// 3. Degraded (Audit #25 A07-09): /health is a 200 while the platform is
+//    DEGRADED (a stale scheduler, a full disk, a stale backup, overdue jobs —
+//    its `problems`), and every page about those comes from inside the web
+//    process, over the app's own Twilio and Resend keys. A body without
+//    "status":"ok" for DEGRADED_MINUTES alerts once from out here, naming
+//    the problems, and once more when it clears.
 // Alerts go by Resend from the app's own sender to every ALERT_TO address
 // (comma-separated), and — so a Resend outage cannot silence the one
 // monitor outside Railway (scale audit 10/19/26 OPS-4) — to every channel
@@ -36,6 +42,8 @@ const PING_WRITE_MINUTES = 4;
 // A failure not yet alerted is kept this long (a day and a half: past the
 // next night's backup, which says the same again if it fails again).
 const FAIL_KEEP_HOURS = 36;
+// A degraded /health this long (30 minutes: six checks) alerts.
+const DEGRADED_MINUTES = 30;
 
 export default {
   async fetch(request, env) {
@@ -79,17 +87,36 @@ async function check(env) {
   }
   if (ping && now - ping.at > STALE_MINUTES * 60000)
     problems.push(`No heartbeat from the scheduler for ${Math.round((now - ping.at) / 60000)} minutes — its jobs have stopped.`);
+  let degraded = null;      // the /health problems while it answers 200 without "status":"ok"
   try {
     const r = await fetch(HEALTH_URL, { headers: { "User-Agent": "cavnar-watchdog" }, cf: { cacheTtl: 0 } });
     if (r.status !== 200) problems.push(`dashboard.cavnar.ai/health answered ${r.status}.`);
     else {
       const j = await r.json().catch(() => null);
       if (!j || j.db !== "ok") problems.push(`dashboard.cavnar.ai/health says the database is ${j ? j.db : "unreadable"}.`);
+      else if (j.status !== "ok") degraded = (Array.isArray(j.problems) ? j.problems : []).map(String).slice(0, 6);
     }
   } catch (e) {
     problems.push(`dashboard.cavnar.ai/health could not be reached (${e.message}).`);
   }
   const prev = JSON.parse((await env.WATCH.get("state")) || '{"streak":0,"alerted":false}');
+  // Degraded: since when (kept across checks), alerted once past
+  // DEGRADED_MINUTES, resolved once when "status":"ok" is back.
+  let degradedSince = degraded ? (prev.degraded_since || now) : null;
+  let degradedAlerted = degraded ? Boolean(prev.degraded_alerted) : false;
+  if (degraded && !degradedAlerted && now - degradedSince >= DEGRADED_MINUTES * 60000) {
+    degradedAlerted = await notify(env, "trigger", "Cavnar AI is degraded",
+      `dashboard.cavnar.ai/health has not said "status":"ok" for ${Math.round((now - degradedSince) / 60000)} ` +
+      "minutes. Its problems:\n" + (degraded.length ? degraded.join("\n") : "(none listed)") +
+      "\n\nChecked from outside Railway by the cavnar-watchdog Worker: the in-app pages for these ride the " +
+      "app's own email and text keys. You'll get one more message when it clears.", "cavnar-watchdog-degraded");
+  } else if (!degraded && prev.degraded_alerted && !problems.length) {
+    if (!(await notify(env, "resolve", "Cavnar AI is no longer degraded",
+      'dashboard.cavnar.ai/health says "status":"ok" again.', "cavnar-watchdog-degraded"))) {
+      degradedAlerted = true;            // try the "cleared" message again next check
+      degradedSince = null;
+    }
+  }
   const streak = problems.length ? (prev.streak || 0) + 1 : 0;
   let alerted = Boolean(prev.alerted);
   if (problems.length && streak >= FAILS_BEFORE_ALERT && !alerted) {
@@ -100,8 +127,10 @@ async function check(env) {
   }
   // Written only when it changed: a healthy hour is no writes at all.
   if (streak !== (prev.streak || 0) || alerted !== Boolean(prev.alerted) ||
-      JSON.stringify(problems) !== JSON.stringify(prev.problems || [])) {
-    await env.WATCH.put("state", JSON.stringify({ streak, alerted, checked_at: now, problems }));
+      JSON.stringify(problems) !== JSON.stringify(prev.problems || []) ||
+      (degradedSince || null) !== (prev.degraded_since || null) || degradedAlerted !== Boolean(prev.degraded_alerted)) {
+    await env.WATCH.put("state", JSON.stringify({ streak, alerted, checked_at: now, problems,
+      degraded_since: degradedSince, degraded_alerted: degradedAlerted }));
   }
 }
 

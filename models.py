@@ -1333,6 +1333,32 @@ def _pg_url_for(db_path):
     return None
 
 
+def atomic(conn, name="cavnar_unit"):
+    """`with atomic(conn):` — the statements inside are one unit on `conn`,
+    all or nothing (Audit #25 A07-15). Every statement is atomic on its own
+    (db_dialect's per-statement savepoint, matching SQLite), so a failure a
+    handler swallowed inside a multi-statement unit used to commit the rest
+    half-applied; here the unit is one SAVEPOINT: an exception rolls every
+    statement in it back and is re-raised. Nested units are fine (each its
+    own name). On SQLite, the outermost unit outside a transaction commits
+    when it ends."""
+    import contextlib as _ctx
+
+    @_ctx.contextmanager
+    def _unit():
+        # Prefixed: a bare name can be a reserved word on Postgres ("outer").
+        sp = "cv_" + "".join(c if c.isalnum() or c == "_" else "_" for c in str(name or "unit").lower())[:40]
+        conn.execute(f"SAVEPOINT {sp}")
+        try:
+            yield conn
+        except BaseException:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            conn.execute(f"RELEASE SAVEPOINT {sp}")
+            raise
+        conn.execute(f"RELEASE SAVEPOINT {sp}")
+    return _unit()
+
+
 import re as _re_alter
 _ADD_COLUMN_RE = _re_alter.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", _re_alter.I)
 

@@ -3219,6 +3219,13 @@ function aiQuality(q){
       ${un.length ? `<div class="lbl">Refused, truncated or unparseable</div>${un.slice(0, 6).map(u => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(u.action)} <span class="chip">${esc(u.outcome)}</span></span><span class="n">${fmtN(u.n)}${u.pct_of_calls != null ? ' · ' + u.pct_of_calls + '% of calls' : ''}</span></div>`).join('')}` : ''}
       <div class="lbl">The model's own confidence · a year of scored claims</div>${modelConfHtml(q.model_confidence)}
       ${(q.models || []).length ? `<details class="more-d" style="margin:0 -18px"><summary>Models in force</summary><div style="padding:0 18px 12px">${q.models.map(m => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span class="ink2">${esc(m.purpose)}</span><span class="mono">${esc(m.model)}${m.overridden ? ' <span class="chip warn">' + esc(m.env) + '</span>' : ''}</span></div>`).join('')}</div></details>` : ''}
+      ${(q.templates || []).length ? `<details class="more-d" style="margin:0 -18px"><summary>Prompt templates · refused or fell back, per call</summary><div style="padding:0 18px 12px">${table([
+        {h:'Caller', key:'caller', cell:r => `<span class="mono">${esc(r.caller || '')}</span>${r.current ? '' : ' <span class="chip">older</span>'}`},
+        {h:'Template', key:'template_hash', cell:r => `<span class="mono dim">${esc(String(r.template_hash || '').slice(0, 8))}</span>`},
+        {h:'First seen', key:'first_seen', cell:r => `<span class="num">${fmtDT(r.first_seen)}</span>`},
+        {h:'Calls', key:'calls', r:true, cell:r => `<span class="num">${fmtN(r.calls)}</span>`},
+        {h:'Refused or fell back', key:'refusal_rate', r:true, cell:r => `<span class="num">${r.refusal_rate == null ? '—' : (r.refusal_rate * 100).toFixed(1) + '%'}</span>`},
+        {h:'Cost', key:'cost_usd', r:true, cell:r => `<span class="num">$${Number(r.cost_usd || 0).toFixed(2)}</span>`}], q.templates, {id:'aiq-tpl', limit:12, empty:'No traced call in this window.'})}</div></details>` : ''}
     </div></div>`;
 }
 function aiCalls(){

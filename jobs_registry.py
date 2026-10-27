@@ -23,8 +23,10 @@ Fields
 ------
 cadence       when it runs, for people (the loop is the source of truth)
 sla_minutes   the most minutes that may pass between SUCCESSFUL runs
-              (job_runs.ok 1 or 2) before it is overdue; None = no SLA (a
-              quarterly job outlives job_runs' 45-day retention)
+              (job_runs.ok 1, or a partial ok 2 that failed under half of
+              what it attempted — ops._healthy_run, Audit #25 A07-03) before
+              it is overdue; None = no SLA (a quarterly job outlives
+              job_runs' 45-day retention)
 sends         it can email, text or push a person (an owner, a guest, the
               operator). "Run now" refuses these unless
               scheduler.scheduling_allowed() (#9): a laptop has production's
@@ -43,7 +45,9 @@ claim         the claim_period job key, where it differs from the name
 retry         a failed run gives its period back for up to
               RETRY_BACKOFF_MINUTES attempts (non-sending daily/weekly jobs
               only: an hourly job's next hour is its retry, and a sending
-              job must not be sent twice)
+              job must not be sent twice); a partial run that failed at
+              least PARTIAL_RETRY_SHARE of what it attempted, once, after
+              PARTIAL_RETRY_MINUTES
 lane          run on this bounded worker lane beside the loop, not on the
               loop thread (scheduler._LANES) — the weekly Intel sweeps
               run for hours and blocked briefs, DSR and intraday (#98);
@@ -84,6 +88,12 @@ HEARTBEAT_STALE_MINUTES = 15
 # after the last one the period stays spent and the failure is the digest's
 # and the SLA's to report (#56).
 RETRY_BACKOFF_MINUTES = (10, 30, 90)
+# A PARTIAL run of a retry=True job that failed at least this share of what
+# it attempted gives its period back once, this many minutes later (Audit
+# #25 A07-12, scheduler._PulsedOps._after): a provider blip that failed a
+# third of the nightly learners left those restaurants a period stale.
+PARTIAL_RETRY_SHARE = 0.2
+PARTIAL_RETRY_MINUTES = 30
 
 # A job with no bound of its own is stuck after this long.
 DEFAULT_MAX_MINUTES = 60
@@ -707,6 +717,16 @@ JOBS = {
         description="Rank each workflow's routes by quality per dollar over 28 days of runs, recommend changes "
                     "for the AI routes console, and revert an override owners accept clearly less often",
         target=("ai_learning", "run_learning"), max_minutes=10, retry=True),
+    "ai_smoke_eval": dict(
+        # Off unless AI_SMOKE_EVAL=1 (a run that attempts nothing). Model
+        # calls only, bounded by AI_SMOKE_EVAL_BUDGET_USD a pass; sends
+        # nothing. Never retried: a failed pass is next Monday's.
+        cadence="Mon 5am CT (AI lane; off unless AI_SMOKE_EVAL=1)", sla_minutes=_W, sends=False, runnable=True,
+        label="AI smoke eval",
+        description="Replay a few frozen production inputs of each top AI surface on its production model, score "
+                    "the answers with the deterministic checks and record how far they are from the baseline "
+                    "(scripts/run_ai_eval.py)",
+        target=("ai_eval", "run_smoke_eval"), max_minutes=30, lane="ai"),
 
     # ── staff reminders, every 10 minutes (employee audit H3/M8) ─────────
     "staff_reminders": dict(

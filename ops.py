@@ -1229,6 +1229,20 @@ QUEUE_BACKLOG_ALERT_SECONDS = int(float(os.getenv("QUEUE_BACKLOG_ALERT_HOURS", "
 # is no longer reaching every restaurant each period, and a bounded run was
 # counted a success (job_runs.ok 2), so no SLA saw it.
 BOUND_ALERT_RUNS = max(2, int(os.getenv("BOUND_ALERT_RUNS", "3")))
+# A job whose last FAILING_ALERT_RUNS finished runs each failed at least
+# FAILING_ALERT_SHARE of what it attempted (or crashed), or attempted nothing
+# while restaurants were eligible, warns (Audit #25 A07-03): a sweep failing
+# for 49 of 50 stores was a partial run — counted a success, never paged.
+FAILING_ALERT_RUNS = max(2, int(os.getenv("JOB_FAILING_ALERT_RUNS", "2")))
+FAILING_ALERT_SHARE = float(os.getenv("JOB_FAILING_ALERT_SHARE", "0.5"))
+# Failed job_queue rows (dead letters) per kind in the last hour that warn
+# (A07-07): QUEUE_FAILED_ALERT_ROWS of one kind, or QUEUE_FAILED_ALERT_SHARE
+# of the kind's finished rows with at least QUEUE_FAILED_ALERT_MIN failed.
+# A failed owner press or auto-draft (QUEUE_FAILED_URGENT_KINDS) is urgent.
+QUEUE_FAILED_ALERT_ROWS = int(os.getenv("QUEUE_FAILED_ALERT_ROWS", "5"))
+QUEUE_FAILED_ALERT_SHARE = float(os.getenv("QUEUE_FAILED_ALERT_SHARE", "0.2"))
+QUEUE_FAILED_ALERT_MIN = 2
+QUEUE_FAILED_URGENT_KINDS = ("schedule_generate", "auto_draft")
 
 # How long past its own deadline (set_async_job_deadline) a job may still be
 # writing its result before a poll calls it dead.
@@ -2137,9 +2151,70 @@ PLATFORM_ALERT_COOLDOWN_MINUTES = 60
 PLATFORM_WARN_COOLDOWN_MINUTES = 24 * 60
 
 
+def run_failed_share(ok, result_json):
+    """The share of what one finished run attempted that failed: 1.0 for a
+    failed run (ok 0 — it raised, or every attempt failed), failed/attempted
+    from its stored counts, and None when it counted nothing it attempted (a
+    clean run without counts, a bound-only partial, a run with no blob)."""
+    import json as _json
+    try:
+        if int(ok) == RUN_FAILED:
+            return 1.0
+    except (TypeError, ValueError):
+        return None
+    try:
+        b = _json.loads(result_json) if result_json else None
+    except (TypeError, ValueError):
+        b = None
+    if not isinstance(b, dict):
+        return None
+    attempted, failed = _int(b.get("attempted")), _int(b.get("failed"))
+    if attempted <= 0:
+        return None
+    return min(1.0, failed / float(attempted))
+
+
+def _healthy_run(ok, result_json) -> bool:
+    """Whether a finished run counts as a success for the SLA (A07-03): a
+    clean run (ok 1), or a partial one (ok 2) that failed under
+    FAILING_ALERT_SHARE of what it attempted — a run that failed 9 of 10
+    restaurants is not a success however it is scored."""
+    try:
+        ok = int(ok)
+    except (TypeError, ValueError):
+        return False
+    if ok == RUN_OK:
+        return True
+    if ok != RUN_PARTIAL:
+        return False
+    share = run_failed_share(ok, result_json)
+    return share is None or share < FAILING_ALERT_SHARE
+
+
+def _last_healthy_finish(conn, job, scan=20):
+    """finished_at of `job`'s newest healthy run (_healthy_run), or None.
+    The newest `scan` successful-or-partial runs are read through
+    idx_job_runs_job and judged here (their counts are JSON); past them,
+    the newest clean run — any healthy partial older than the scanned ones
+    is older than all of them, so at worst this reads a little early."""
+    rows = conn.execute("SELECT finished_at, ok, result_json FROM job_runs WHERE job=? AND ok IN (1, 2) "
+                        "AND finished_at IS NOT NULL ORDER BY started_at DESC LIMIT ?", (job, int(scan))).fetchall()
+    for r in rows:
+        if _healthy_run(r[1], r[2]):
+            return r[0]
+    if len(rows) < scan:
+        return None
+    row = conn.execute("SELECT finished_at FROM job_runs WHERE job=? AND ok=1 AND finished_at IS NOT NULL "
+                       "ORDER BY started_at DESC LIMIT 1", (job,)).fetchone()
+    return row[0] if row else None
+
+
 def jobs_overdue(now=None, db_path=None) -> list:
     """[{job, max_hours, last_ok_at, hours_since}] for every EXPECTED_JOBS
-    entry whose last successful run is older than its SLA. A job that has
+    entry whose last successful run is older than its SLA — a clean run, or
+    a partial one that failed under FAILING_ALERT_SHARE of what it attempted
+    (_healthy_run; A07-03: a job whose every run failed 49 of 50 stores was
+    never overdue). A job that has
     never succeeded counts only once job_runs is older than its SLA (a fresh
     database is not "overdue") — and a job with no run at all under its name
     only once its SLA has passed since this database first expected it
@@ -2165,9 +2240,7 @@ def jobs_overdue(now=None, db_path=None) -> list:
         except sqlite3.OperationalError:
             since = {}
         for job, hours in EXPECTED_JOBS.items():
-            row = conn.execute("SELECT finished_at FROM job_runs WHERE job=? AND ok IN (1, 2) "
-                               "AND finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1", (job,)).fetchone()
-            last = row[0] if row else None
+            last = _last_healthy_finish(conn, job)
             base = last or first
             if last is None and since.get(job) and str(since[job]) > str(first) and conn.execute(
                     "SELECT 1 FROM job_runs WHERE job=? LIMIT 1", (job,)).fetchone() is None:
@@ -2239,12 +2312,102 @@ def jobs_bound_capped(db_path=None, runs=None, use_cache=True) -> list:
     return out
 
 
+_failing_cache = {}
+
+
+def _run_idle(result_json) -> bool:
+    """A run that attempted nothing and skipped nothing while restaurants
+    were eligible for it (its own `eligible` count), and was not cut short:
+    the eligibility query or the per-restaurant body broke, and the run read
+    as clean (A07-03)."""
+    import json as _json
+    try:
+        b = _json.loads(result_json) if result_json else None
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(b, dict) or _int(b.get("eligible")) <= 0:
+        return False
+    return _int(b.get("attempted")) == 0 and _int(b.get("skipped")) == 0 and not b.get("hit_bound")
+
+
+def jobs_failing(db_path=None, runs=None, use_cache=True) -> list:
+    """[{job, runs, why: "failing"|"idle", share, attempted, failed,
+    eligible}] for every registered job whose last `runs`
+    (FAILING_ALERT_RUNS) finished runs ALL failed at least
+    FAILING_ALERT_SHARE of what they attempted (a crashed run counts as all
+    failed), or ALL attempted nothing while restaurants were eligible
+    (_run_idle) — Audit #25 A07-03. One indexed read per job, kept ten
+    minutes like jobs_bound_capped. Never raises: [] unreadable."""
+    import json as _json
+    n = int(runs or FAILING_ALERT_RUNS)
+    key = (db_path or "", n)
+    hit = _failing_cache.get(key)
+    if use_cache and hit and time.monotonic() - hit[0] < _BOUND_TTL_SECONDS:
+        return list(hit[1])
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+    except Exception as e:
+        log.warning(f"jobs_failing unreadable: {e}")
+        return []
+    out = []
+    try:
+        for job in jobs_registry.JOBS:
+            rows = conn.execute("SELECT ok, result_json FROM job_runs WHERE job=? AND finished_at IS NOT NULL "
+                                "AND ok IS NOT NULL ORDER BY started_at DESC LIMIT ?", (job, n)).fetchall()
+            if len(rows) < n:
+                continue
+            shares = [run_failed_share(r[0], r[1]) for r in rows]
+            try:
+                last = _json.loads(rows[0][1]) if rows[0][1] else {}
+            except (TypeError, ValueError):
+                last = {}
+            last = last if isinstance(last, dict) else {}
+            common = {"job": job, "runs": n, "attempted": last.get("attempted"), "failed": last.get("failed"),
+                      "eligible": last.get("eligible")}
+            if all(s is not None and s >= FAILING_ALERT_SHARE for s in shares):
+                out.append(dict(common, why="failing", share=round(shares[0], 2)))
+            elif all(_run_idle(r[1]) for r in rows):
+                out.append(dict(common, why="idle", share=None))
+    except Exception as e:
+        log.warning(f"jobs_failing unreadable: {e}")
+        return []
+    finally:
+        conn.close()
+    _failing_cache[key] = (time.monotonic(), list(out))
+    return out
+
+
+def queue_failed_kinds(q) -> list:
+    """[{kind, failed, finished, share, urgent}] for every job_queue kind
+    whose failed rows (dead letters: failed on their last try) in the last
+    hour reach QUEUE_FAILED_ALERT_ROWS, or QUEUE_FAILED_ALERT_SHARE of the
+    kind's finished rows with at least QUEUE_FAILED_ALERT_MIN failed
+    (A07-07). From job_queue.stats()'s `kinds`: failed_1h, finished_1h."""
+    out = []
+    for kind, k in sorted(((q or {}).get("kinds") or {}).items()):
+        failed = _int((k or {}).get("failed_1h"))
+        finished = _int((k or {}).get("finished_1h"))
+        if failed <= 0:
+            continue
+        share = failed / float(max(finished, failed))
+        if failed >= QUEUE_FAILED_ALERT_ROWS or (failed >= QUEUE_FAILED_ALERT_MIN
+                                                  and share >= QUEUE_FAILED_ALERT_SHARE):
+            out.append({"kind": kind, "failed": failed, "finished": max(finished, failed),
+                        "share": round(share, 2), "urgent": kind in QUEUE_FAILED_URGENT_KINDS})
+    return out
+
+
 def queue_problems(q, worker_expected=None) -> list:
     """[(warn kind, sentence)] about the job queue from job_queue.stats():
       * the queue worker process silent past QUEUE_WORKER_ALERT_SECONDS while
         it is meant to run (INF-4) — the web process has the queue;
       * a non-generation group's oldest runnable row waiting past
-        QUEUE_BACKLOG_ALERT_SECONDS (INF-6).
+        QUEUE_BACKLOG_ALERT_SECONDS (INF-6);
+      * a kind's failed rows in the last hour past its threshold
+        (queue_failed_kinds, A07-07): "queue_failed:<kind>", or
+        "queue_failed_urgent:<kind>" for an owner's press or the auto-draft
+        — check_platform_sla pages those as urgent.
     `worker_expected`: whether gunicorn's master supervises a queue worker
     here (QUEUE_WORKER_SUPERVISED, which it sets before the web worker
     forks); None reads it."""
@@ -2272,6 +2435,12 @@ def queue_problems(q, worker_expected=None) -> list:
                         f"{age / 3600:.1f} hours (alert past {QUEUE_BACKLOG_ALERT_SECONDS // 3600}) with "
                         f"{int(g.get('queued') or 0)} queued — raise QUEUE_{grp.upper()}_CONCURRENCY or see "
                         "docs/plans/POSTGRES_AND_WORKERS_PLAN.md."))
+    for f in queue_failed_kinds(q):
+        what = "queue_failed_urgent" if f["urgent"] else "queue_failed"
+        out.append((f"{what}:{f['kind']}",
+                    f"{f['failed']} {f['kind']} queue row{'s' if f['failed'] != 1 else ''} failed on their last try "
+                    f"in the last hour ({int(round(f['share'] * 100))}% of {f['finished']} finished) — each "
+                    f"try's error is in the job failures (queue:{f['kind']})."))
     return out
 
 
@@ -2466,13 +2635,17 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or (out.get("requests") or {}).get("error_rate_over")
                 or (out.get("requests") or {}).get("error_floor_over")
                 or any(r.get("page") == "urgent" for r in out.get("rpower_rules") or [])
+                or out.get("queue_urgent")
                 or not write_ok)
 
 
 def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
-    """The scheduler's watchdog, run from a REQUEST thread: {heartbeat_minutes,
-    loop_minutes, running_job, jobs_overdue, disk, write_ok, backup,
-    dsr_missing, problems, alerted}.
+    """The scheduler's watchdog: {heartbeat_minutes, loop_minutes,
+    running_job, jobs_overdue, disk, write_ok, backup, dsr_missing, problems,
+    alerted, ...}. Run with send=True every five minutes by the web process's
+    supervisor thread (platform_monitor.PlatformSupervisor), never from the
+    scheduler it watches; /health calls it read-only (send=False), which
+    pages nothing and skips the reads only paging needs.
 
     Pages Will (page_operator: SMS, email and push — the cooldown claimed
     only after one of them went out) when:
@@ -2489,7 +2662,16 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         E): an inbound webhook refusing every request, no verified Resend
         event while mail goes out, Twilio account errors, an operator
         address suppressed. Read only when paging (send=True) — /health's
-        read-only call does not publish or need them.
+        read-only call does not publish or need them;
+      * Audit #25 (read only when paging): a job whose last runs failed at
+        least half of what they attempted, or attempted nothing while
+        restaurants were eligible (jobs_failing, A07-03); a queue kind's
+        failed rows (queue_problems, A07-07 — an owner's press or the
+        auto-draft urgent); an AI surface's refusals and fallbacks over
+        twice its 14-day rate, the schedule generations' fallback share
+        over twice its baseline, a DSR night still provisional at noon, the
+        weekly smoke eval off its baseline (ai_quality_watch, A07-04,
+        A07-11, A07-06).
 
     Only where the scheduler is meant to run (scheduler.scheduling_allowed):
     a laptop has no scheduler and must not page anyone. Owners are never
@@ -2499,7 +2681,8 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
            "disk": None, "pg_volume": None, "write_ok": None, "backup": None, "dsr_missing": [],
            "dsr_missing_paged": False, "messaging": [], "problems": [],
            "schedule_generation": None, "schedule_inputs": None, "schedule_capped": None, "queue": None,
-           "bound_capped": [], "requests": None, "alerted": False}
+           "bound_capped": [], "requests": None, "alerted": False,
+           "jobs_failing": [], "queue_urgent": False, "ai_watch": []}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -2589,8 +2772,14 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         out["dsr_missing_paged"] = True
         warn_kinds.add("dsr_missing")
         names = ", ".join(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"][:4])
+        # A night still provisional (it went out without its sales and never
+        # became final — Audit #23 A6-20) is said as such, apart from a
+        # missing one (Audit #25 A07-11: the line read "missing" for both).
+        prov = sum(1 for m in out["dsr_missing"] if m.get("status") == "provisional")
+        split = (f" ({len(out['dsr_missing']) - prov} missing, {prov} still provisional — sent without its sales "
+                 "and never final)") if prov else ""
         problems.append(f"Daily Sales Report missing past its deadline for {len(out['dsr_missing'])} "
-                        f"restaurant{'s' if len(out['dsr_missing']) != 1 else ''}: {names}.")
+                        f"restaurant{'s' if len(out['dsr_missing']) != 1 else ''}{split}: {names}.")
     if out["messaging"]:
         warn_kinds.add("messaging")
     problems.extend(f"Messaging: {m}" for m in out["messaging"])
@@ -2657,7 +2846,10 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     # The queue worker alive and the bulk / POS backlog (scale audit 10/19/26
     # INF-4, INF-6).
     for kind, sentence in queue_problems(q):
-        warn_kinds.add(kind)
+        if kind.startswith("queue_failed_urgent:"):
+            out["queue_urgent"] = True      # an owner's press or the auto-draft: _has_urgent
+        else:
+            warn_kinds.add(kind)
         problems.append(sentence)
     # Sweeps their bound cuts short every pass (INF-7): coverage, not
     # success. Read where the supervisor pages (send) — kept ten minutes.
@@ -2669,6 +2861,33 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                  if b.get("eligible") and b.get("attempted") is not None else "")
         problems.append(f"{b['job']} hit its time bound on each of its last {b['runs']} runs{reach} — it no "
                         "longer covers every restaurant each period.")
+    # Jobs failing most of what they attempt, or attempting nothing while
+    # restaurants are eligible (Audit #25 A07-03): partial runs read as
+    # successes, so neither the SLA nor any other rule saw them.
+    if send:
+        out["jobs_failing"] = jobs_failing(db_path=db_path)
+    for f in out["jobs_failing"]:
+        warn_kinds.add(f"job_failing:{f['job']}")
+        if f["why"] == "idle":
+            problems.append(f"{f['job']} attempted nothing on each of its last {f['runs']} runs while "
+                            f"{f.get('eligible')} restaurants were eligible — its per-restaurant work is not running.")
+        else:
+            counts = (f" (the last: {f['failed']} of {f['attempted']})"
+                      if f.get("attempted") not in (None, "") and f.get("failed") is not None else "")
+            problems.append(f"{f['job']} failed at least {int(FAILING_ALERT_SHARE * 100)}% of what it attempted on "
+                            f"each of its last {f['runs']} runs{counts} — the errors are in the job failures.")
+    # The AI's output quality, the schedule's fallbacks, DSR nights stuck
+    # provisional and the weekly smoke eval (Audit #25 A07-04, A07-11,
+    # A07-06): each a warning, read only where the supervisor pages.
+    if send:
+        try:
+            import ai_quality_watch as _aqw
+            out["ai_watch"] = _aqw.platform_problems(db_path=db_path)
+        except Exception as e:
+            log.warning(f"the AI quality watch unavailable to the platform check: {e}")
+    for w in out["ai_watch"]:
+        warn_kinds.add(w["key"])
+        problems.append(w["line"])
     # Customer requests failing or slow (scale audit 10/19/26 OPS-7), from the
     # persisted per-minute rollups: a 5xx rate over the last minutes, and a
     # p95 over the SLO held for a quarter of an hour.
@@ -2831,6 +3050,24 @@ def pager_configured():
     return bool((os.getenv("OPS_PAGER_WEBHOOK_URL") or "").strip())
 
 
+def pager_wanted() -> bool:
+    """Whether a paging service is MEANT to get every page: OPS_PAGER_KIND
+    is set, or a webhook URL is. A page then always tries it (Audit #25
+    A07-09) — set but missing its key, it is reported as a failed channel,
+    never silently skipped."""
+    return bool((os.getenv("OPS_PAGER_KIND") or "").strip() or (os.getenv("OPS_PAGER_WEBHOOK_URL") or "").strip())
+
+
+def pager_misconfigured() -> str:
+    """Why the paging service OPS_PAGER_KIND names cannot be reached, or ""."""
+    if not pager_wanted() or pager_configured():
+        return ""
+    kind = (os.getenv("OPS_PAGER_KIND") or "").strip().lower()
+    if kind == "pagerduty":
+        return "OPS_PAGER_KIND=pagerduty but OPS_PAGER_ROUTING_KEY is not set"
+    return f"OPS_PAGER_KIND={kind or '(unset)'} but OPS_PAGER_WEBHOOK_URL is not set"
+
+
 def send_to_pager(key, subject, lines) -> bool:
     """One event to the configured paging service. True when it took it;
     never raises."""
@@ -2926,6 +3163,12 @@ def page_operator(key, subject, lines, cooldown_minutes=PLATFORM_ALERT_COOLDOWN_
             _page_local.key = None
         res = {"sent": bool(got), "channels": dict(getattr(got, "channels", None) or {}),
                "error": getattr(got, "error", None)}
+        # Which channels were tried and did not take it (A07-09): a page that
+        # went out by push alone, or with the pager refusing, says so.
+        res["failed"] = sorted(k for k, v in res["channels"].items() if v is False)
+        if res["failed"]:
+            log.warning(f"operator page {key}: channels failed: {', '.join(res['failed'])}"
+                        + (f" ({res['error']})" if res.get("error") else ""))
         if res["sent"]:
             _stamp_cooldown(key)
         _record_operator_alert(key, subject, res)
@@ -2961,31 +3204,53 @@ def alert_will(subject, lines, key=None):
     it proves nothing — so only the text and the email count as delivered.
 
     Returns an AlertResult: truthy when a text, the email or the pager
-    went out, with each channel's outcome in .channels."""
+    went out, with each channel's outcome in .channels.
+
+    The paging service goes FIRST and is always tried when OPS_PAGER_KIND
+    (or a webhook URL) is set (Audit #25 A07-09): it is the channel that
+    needs none of the app's own keys, so neither a Twilio or Resend key
+    revoked mid-rotation nor a failure building the text or the email can
+    stand between a page and it. Set but missing its key, it is a failed
+    channel with the reason, never silently skipped."""
     import html as _html
     channels, errors = {}, []
     lines = [str(x) for x in (lines or [])]
+    if pager_wanted():
+        why_not = pager_misconfigured()
+        if why_not:
+            channels["pager"] = False
+            errors.append(f"pager: {why_not}")
+            log.error(f"alert_will pager not reachable: {why_not}")
+        else:
+            try:
+                channels["pager"] = bool(send_to_pager(key or getattr(_page_local, "key", None) or subject,
+                                                       subject, lines))
+            except Exception as e:          # send_to_pager never raises; belt and braces for the one channel
+                channels["pager"] = False
+                log.error(f"alert_will pager failed: {e}")
+            if not channels["pager"]:
+                errors.append("pager not accepted")
     phones = oncall_phones()
     if phones:
-        import notify as _notify
         body = (subject + ": " + " ".join(lines[:3]))[:320]
         texted = 0
-        for phone in phones:
-            try:
-                if _notify.send_sms(phone, body, use_case="alert"):
-                    texted += 1
-                else:
-                    errors.append("sms not accepted")
-            except Exception as e:
-                errors.append(f"sms: {e}")
-                log.error(f"alert_will sms failed: {e}")
+        try:
+            import notify as _notify
+            for phone in phones:
+                try:
+                    if _notify.send_sms(phone, body, use_case="alert"):
+                        texted += 1
+                    else:
+                        errors.append("sms not accepted")
+                except Exception as e:
+                    errors.append(f"sms: {e}")
+                    log.error(f"alert_will sms failed: {e}")
+        except Exception as e:
+            errors.append(f"sms: {e}")
+            log.error(f"alert_will sms unavailable: {e}")
         channels["sms"] = texted > 0
         if len(phones) > 1:
             channels["sms_reached"] = texted
-    if pager_configured():
-        channels["pager"] = send_to_pager(key or getattr(_page_local, "key", None) or subject, subject, lines)
-        if not channels["pager"]:
-            errors.append("pager not accepted")
     try:
         import emails as _emails
         b = _emails.BRAND
@@ -3621,6 +3886,11 @@ _RETENTION_DAYS = {
     "ai_runs":            int(os.getenv("RETAIN_AI_RUNS_DAYS", "180")),
     "ai_run_requests":    int(os.getenv("RETAIN_AI_RUN_REQUESTS_DAYS", "30")),
     "ai_route_recommendations": int(os.getenv("RETAIN_AI_ROUTE_RECS_DAYS", "365")),
+    # Each scored run of an AI evaluation set (ai_eval.record_run, Audit #25
+    # R13): aggregate scores, a few rows a week from the smoke eval. The
+    # sets themselves (ai_eval_items) are never pruned — a baseline is only
+    # comparable on the set it was measured on.
+    "ai_eval_runs":       int(os.getenv("RETAIN_AI_EVAL_RUNS_DAYS", "400")),
     # The send gate's verdicts on exact guest texts (ai_reviewer.gate_send,
     # re-audit 10/7/26 #8): a verdict stands GATE_VERDICT_DAYS (30), after
     # which the text is read again; a row past that is never read.
@@ -3871,7 +4141,7 @@ _RETENTION_FLOOR_DAYS = {
     "ai_batch_jobs": 7, "ai_batch_items": 7,
     # The learner reads 28 days of runs and the revert compares the 28 before
     # an override; a replay needs a fortnight of kept requests to sample.
-    "ai_runs": 60, "ai_run_requests": 14, "ai_route_recommendations": 90,
+    "ai_runs": 60, "ai_run_requests": 14, "ai_route_recommendations": 90, "ai_eval_runs": 90,
     # A send-gate verdict is read GATE_VERDICT_DAYS (30) after it was given.
     "ai_gate_verdicts": 30,
     # A cache: a pruned row is rebuilt on the next packet that needs it.
