@@ -236,8 +236,8 @@
   "why": "notify/escalate jobs over their own rows; acknowledge() via the issue's token (the credential); _resolve/reassign are scoped or gated by get_issue(restaurant_id, issue_id)"
  },
  "job_queue.py::jobs": {
-  "n": 15,
-  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (the durable queue's claim/lease/finish by its own row id and lease owner)"
+  "n": 16,
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (the durable queue's claim/lease/finish by its own row id and lease owner; defer_unknown hands back a claimed row by its id + lease owner)"
  },
  "labor_live.py::live_labor_moves": {
   "n": 3,
