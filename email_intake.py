@@ -268,7 +268,13 @@ def _unsigned_dmarc_fail(auth) -> bool:
         return False
     if str(auth.get("dmarc") or "unknown").lower() != "fail":
         return False
-    return all(str(auth.get(k) or "unknown").lower() in ("gray", "unknown", "none", "neutral") for k in ("spf", "dkim"))
+    # An SPF or DKIM PASS here is for some other domain than the From's (DMARC
+    # failed, so it is unaligned): no weaker than gray. Fintech's mail has read
+    # {spf pass, dkim gray, dmarc fail} since 10/20/26, and requiring gray held
+    # six daily files unread for a week (owner approved the change, 10/27/26).
+    # Only a FAIL keeps mail off the file check.
+    return all(str(auth.get(k) or "unknown").lower() in ("gray", "unknown", "none", "neutral", "pass")
+               for k in ("spf", "dkim"))
 
 
 def auth_verdict(auth) -> tuple:
