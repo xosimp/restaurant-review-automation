@@ -302,6 +302,13 @@ def trim(payload) -> dict:
         out["products"] = prods[:PRODUCT_CAP]
         out["products_total"] = len(prods)
         out["products_cap"] = PRODUCT_CAP
+        # Every product a drink can pour from, uncapped and compact, for the
+        # pickers (Pours from, a recipe card's product, a link): the capped
+        # list is the paged table's (owner, 10/27/26 - Baileys, at $158 of
+        # spend, sat below the first 100 and was missing from every picker).
+        out["pickable"] = [{"product_key": p.get("product_key"), "product": p.get("product"),
+                            "category": p.get("category"), "distributor": p.get("distributor")}
+                           for p in prods if isinstance(p, dict) and p.get("category") not in ("fee", "deposit")]
     return out
 
 

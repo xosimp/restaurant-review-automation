@@ -70,7 +70,7 @@ def _lines(restaurant_id, db_path=None, backoffice=True) -> list:
         rows = conn.execute(
             "SELECT i.id AS invoice_id, i.distributor, i.distributor_key, i.invoice_number, i.invoice_date, "
             "i.ref_invoice_number, i.po_number, i.balanced, l.item_code, l.description, l.upc, l.uom, "
-            "l.uom_inferred, l.qty, l.unit_price, l.cost, l.deposit, l.adjustment, l.discount, l.kind, "
+            "l.uom_inferred, l.qty, l.unit_price, l.cost, l.deposit, l.adjustment, l.discount, l.kind, l.ppc, "
             "f.created_at AS received_at "
             "FROM fintech_invoice_lines l JOIN fintech_invoices i ON i.id=l.invoice_id "
             "LEFT JOIN fintech_files f ON f.id=i.file_id "
@@ -107,8 +107,16 @@ def _lines(restaurant_id, db_path=None, backoffice=True) -> list:
         info.append(v)
         if r["kind"] == "item":
             item_cat[v[0]] = v[1]
+    # The bottles a case holds (the export's PPC): a printout line, which
+    # never states it, takes its product's from the export (owner, 10/27/26).
+    ppc_of = {}
+    for r, (key, _cls, _rebate) in zip(rows, info):
+        if r.get("ppc") and r["uom"] in ("CA", "CS"):
+            ppc_of[key] = r["ppc"]
     mixers = {}
     for r, (key, cls, rebate) in zip(rows, info):
+        if not r.get("ppc") and r["uom"] in ("CA", "CS") and key in ppc_of:
+            r["ppc"] = ppc_of[key]
         cat, sure = cls
         if r["kind"] == "charge" and key in item_cat:
             cat, sure = item_cat[key]

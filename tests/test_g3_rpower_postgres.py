@@ -116,6 +116,13 @@ def test_the_archives_new_statements_on_the_partitioned_tables(scratch_db, tmp_p
     try:
         c.execute("INSERT INTO pos_archive_state (restaurant_id, provider, prices_read_at) "
                   "VALUES (?, 'rpower', datetime('now'))", (rid,))
+        # Every button already on the kept list: a first-night button reads
+        # the list that morning (10/27/26), which is not what this checks.
+        for (iid,) in c.execute("SELECT DISTINCT item_id FROM pos_ticket_lines WHERE restaurant_id=? "
+                                "AND item_id IS NOT NULL", (rid,)).fetchall():
+            c.execute("INSERT INTO pos_menu_prices (restaurant_id, provider, item_id, level_id, item_name, level, "
+                      "price, seen_at) VALUES (?, 'rpower', ?, 'L0', 'x', 'Level 1', 0, datetime('now')) "
+                      "ON CONFLICT DO NOTHING", (rid, iid))
         c.commit()
     finally:
         c.close()

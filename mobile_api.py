@@ -3492,6 +3492,12 @@ def mobile_bar_drink_map(current_user):
         try:
             on_menu = conn.execute("SELECT 1 FROM pos_menu_prices WHERE restaurant_id=? AND provider=? "
                                    "AND item_id=? LIMIT 1", (int(rid), provider, item_id)).fetchone()
+            # A button the POS has sold here is this restaurant's, whether or
+            # not its price list has been read since (owner, 10/27/26: a new
+            # button waited up to a week to be matchable).
+            if not on_menu:
+                on_menu = conn.execute("SELECT 1 FROM pos_ticket_lines WHERE restaurant_id=? AND provider=? "
+                                       "AND item_id=? AND kind='sale' LIMIT 1", (int(rid), provider, item_id)).fetchone()
         finally:
             conn.close()
         if not on_menu:

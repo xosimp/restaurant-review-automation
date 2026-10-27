@@ -1560,7 +1560,22 @@ def _prices_due(restaurant_id, provider, night_iso, db_path) -> bool:
             "AND (l.fraction IS NULL OR l.fraction = 0 OR l.fraction = 1) "
             "AND (l.regular_price IS NULL OR l.regular_price = 0 OR ABS(l.regular_price - l.price) < 0.01) "
             "AND ABS(l.price - p.price) >= 0.01", (restaurant_id, provider, night_iso)).fetchone()[0]
-        return int(moved or 0) >= PRICE_MOVED_MIN_ITEMS
+        if int(moved or 0) >= PRICE_MOVED_MIN_ITEMS:
+            return True
+        # A button sold for the first time last night that the kept list
+        # does not carry: read the list this morning, not up to a week on
+        # (owner, 10/27/26 - Anthony's new Peach Crown button could not be
+        # matched in the Bar until its price was on file). Only a first
+        # night, so an open-price key never read the list every night.
+        new = conn.execute(
+            "SELECT 1 FROM pos_ticket_lines l WHERE l.restaurant_id=? AND l.provider=? AND l.business_date=? "
+            "AND l.kind='sale' AND l.item_kind='dish' AND l.item_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM pos_menu_prices p WHERE p.restaurant_id=l.restaurant_id "
+            "AND p.provider=l.provider AND p.item_id=l.item_id) "
+            "AND NOT EXISTS (SELECT 1 FROM pos_ticket_lines e WHERE e.restaurant_id=l.restaurant_id "
+            "AND e.provider=l.provider AND e.item_id=l.item_id AND e.business_date<?) LIMIT 1",
+            (restaurant_id, provider, night_iso, night_iso)).fetchone()
+        return new is not None
     finally:
         conn.close()
 

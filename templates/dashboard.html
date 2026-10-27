@@ -48089,6 +48089,12 @@ function sfw2RuleCheck(chk) {
 .br-t{width:100%;border-collapse:collapse;font-size:15px;margin-top:14px}
 .br-t th{font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);text-align:left;padding:10px 12px;border-bottom:1px solid var(--hb-line2)}
 .br-t td{padding:13px 12px;border-bottom:1px solid var(--hb-line2);color:var(--ink2);vertical-align:middle}
+/* The product sort's body sits on its summary's 20px gutter - its note, search and table edges line up
+   instead of running to the card's edges (owner, 10/27/26). */
+#br-prod-b{padding:0 20px 18px}
+#br-prod-b>.br-note{margin-top:2px}
+#br-prod-b .br-t th:first-child,#br-prod-b .br-t td:first-child{padding-left:0}
+#br-prod-b .br-t th:last-child,#br-prod-b .br-t td:last-child{padding-right:0}
 .br-t td.n,.br-t th.n{text-align:right;white-space:nowrap}
 .br-t td b{color:var(--ink);font-weight:600}
 .br-t .m{display:block;font-size:13.5px;color:var(--ink3);margin-top:3px}
@@ -49082,8 +49088,11 @@ function sfw2RuleCheck(chk) {
   var WUNITS = [['each', 'bottles or cans'], ['oz', 'oz'], ['keg', 'kegs']];
   var THEO = {owner_pour: 'your pour', stated_pour: 'the size on the button', default_pour: 'the default pour', one_each: 'one a drink', recipe_card: 'the recipe card', rpower_alt_qty: 'the POS’s own quantity', rpower_cost: 'the POS’s own cost'};
   function units(n, word) { var v = Math.round((+n || 0) * 10) / 10; return hn(v.toLocaleString('en-US')) + ' ' + esc2(word === 'oz' ? 'oz' : (Math.abs(v) === 1 ? word : word + 's')); }
+  /* Every product a drink can pour from (the payload's uncapped pickable list; the capped products list is the paged
+     table's - owner, 10/27/26: Baileys, past the first 100 by spend, was in no picker). */
+  function allProducts() { return (DATA && (DATA.pickable || DATA.products)) || []; }
   function barProducts(cat) {
-    var ps = (DATA && DATA.products) || [], out = [], i;
+    var ps = allProducts(), out = [], i;
     for (i = 0; i < ps.length; i++) if ((cat ? ps[i].category === cat : LABELS[ps[i].category])) out.push(ps[i]);
     return out;
   }
@@ -49181,8 +49190,8 @@ function sfw2RuleCheck(chk) {
   /* A POS drink as an owner reads it (bar.build.pos_name_map, 10/16/26): the
      POS name stays the key; only what is shown changes. */
   function posName(n) { var m = (DATA && DATA.pos_names) || {}; return m[n] || n; }
-  function prodCat(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; key && i < ps.length; i++) if (ps[i].product_key === key) return ps[i].category; return null; }
-  function prodName(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; i < ps.length; i++) if (ps[i].product_key === key) return ps[i].product; return key; }
+  function prodCat(key) { var ps = allProducts(), i; for (i = 0; key && i < ps.length; i++) if (ps[i].product_key === key) return ps[i].category; return null; }
+  function prodName(key) { var ps = allProducts(), i; for (i = 0; i < ps.length; i++) if (ps[i].product_key === key) return ps[i].product; return key; }
   var SHOW_FIRST = 3;
   /* Comps and voids by bartender shift: the account holder's alone, and in
      loss detection's words — a pattern worth reviewing, never an accusation. */
@@ -49376,7 +49385,7 @@ function sfw2RuleCheck(chk) {
         + '<label>Container (ml)<input class="br-in2" type="number" min="50" max="60000" step="1" data-br-packml="' + esc2(key) + '" value="' + esc2(pu.container_oz ? Math.round(pu.container_oz * 29.5735) : '') + '"></label>'
         + '<button type="button" class="cbtn cbtn-secondary" data-br-pack="' + esc2(key) + '">Save the pack</button></div></div>';
     }
-    var ps = (DATA && DATA.products) || [], opts = '', n = 0;
+    var ps = allProducts(), opts = '', n = 0;
     for (i = 0; i < ps.length && n < 80; i++) {
       var p = ps[i];
       if (p.product_key === key || p.distributor !== r.distributor || p.category !== r.category) continue;
