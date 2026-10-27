@@ -1125,19 +1125,6 @@ import platform_monitor as _pm_boot
 _BOOT_ID = None
 
 try:
-    from models import init_db as _init_db, ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
-    from models import init_staff_notes as _isn, init_staff_availability as _isa
-    from models import init_two_fa_backup_codes as _i2fabc
-    from models import init_competitor_snapshots as _ics
-    from models import init_ai_visibility_queries as _iavq
-    from models import init_staff_capabilities as _isc
-    from models import init_shift_profiles as _isp
-    from models import init_capability_changes as _icc
-    from models import init_ask_memory as _iam
-    from auth import init_auth as _init_auth
-    from webhooks import init_webhooks as _iwh
-    from guest_marketing import init_guest_marketing as _igm
-    from push import init_push as _ipush
     # A requested restore swaps the snapshot in before the first connection
     # (db_restore.py). A refused one raises, so the deploy fails loudly.
     import db_restore as _dbr
@@ -1146,34 +1133,38 @@ try:
     # over an emptied database and make it look like a platform: a volume
     # whose marker says it held client restaurants must still hold them.
     _sm_boot.assert_platform_not_emptied()
-    _init_db()
-    # A database loaded from an off-site copy some other way than
-    # RESTORE_FROM (scripts/run_pg_copy.py into Postgres) still carries its
-    # credentials and link secrets sealed under CREDENTIAL_KEY (scale audit
-    # OPS-1): opened here, once; a few empty reads on every other boot.
-    try:
-        import offsite_backup as _ob_boot
-        from models import get_conn as _gc_boot
-        _c_boot = _gc_boot()
+
+    def _boot_db_ready():
+        """Straight after init_db, inside boot_schema."""
+        global _BOOT_ID
+        # A database loaded from an off-site copy some other way than
+        # RESTORE_FROM (scripts/run_pg_copy.py into Postgres) still carries its
+        # credentials and link secrets sealed under CREDENTIAL_KEY (scale audit
+        # OPS-1): opened here, once; a few empty reads on every other boot.
         try:
-            _un = _ob_boot.unseal(_c_boot)
-            _c_boot.commit()
-        finally:
-            _c_boot.close()
-        if _un.get("unsealed") or _un.get("failed"):
-            _boot_log.warning("unsealed an off-site copy's values at boot: %s", _un)
-    except Exception as _e_boot:
-        _boot_log.exception("unseal pass at boot failed: %s", _e_boot)
-    # This boot, in boot_events (#76): the row before it says whether the
-    # last process ended cleanly. After init_db, never before it: creating
-    # the file first would stop adopt_legacy_db from ever running.
-    _BOOT_ID = _pm_boot.record_boot_start()
-    _init_auth()
-    # Telemetry tables (boot events, 5xx log, request rollups) and the
-    # provider probe ledger — created here, never on a request.
-    _pm_boot.init_platform_tables()
-    import provider_health as _ph_boot
-    _ph_boot.init_provider_health()
+            import offsite_backup as _ob_boot
+            from models import get_conn as _gc_boot
+            _c_boot = _gc_boot()
+            try:
+                _un = _ob_boot.unseal(_c_boot)
+                _c_boot.commit()
+            finally:
+                _c_boot.close()
+            if _un.get("unsealed") or _un.get("failed"):
+                _boot_log.warning("unsealed an off-site copy's values at boot: %s", _un)
+        except Exception as _e_boot:
+            _boot_log.exception("unseal pass at boot failed: %s", _e_boot)
+        # This boot, in boot_events (#76): the row before it says whether the
+        # last process ended cleanly. After init_db, never before it: creating
+        # the file first would stop adopt_legacy_db from ever running.
+        _BOOT_ID = _pm_boot.record_boot_start()
+
+    # The whole boot schema in one call (release-safety audit 10/26/26
+    # A05-07): init_db, then auth, telemetry, provider probes, webhooks,
+    # guest marketing, push and the rest of the init_* chain — the same
+    # function worker.py, /health's reference schema and the tests build
+    # with, so /health checks every table this boot migrates.
+    _models_boot.boot_schema(on_db_ready=_boot_db_ready)
     # The public status page's service rows. Seeded here, once, rather than
     # by /status on every public GET (SEC-38); the scheduler's health check
     # also re-seeds, so a service added to SERVICES appears without a deploy.
@@ -1183,21 +1174,6 @@ try:
     # with the push that ships them (missing titles only).
     import whats_new as _wn_boot
     _wn_boot.sync()
-    _isn()
-    _isa()
-    _ec()
-    _iel()
-    _ioe()
-    _iwh()
-    _igm()
-    _ipush()
-    _i2fabc()
-    _ics()
-    _iavq()
-    _isc()
-    _isp()
-    _icc()
-    _iam()
     # A previous process may have been killed mid-generation, leaving a job
     # pending forever and a client polling an answer that will never come.
     try:
@@ -1205,8 +1181,7 @@ try:
         _ops_boot.sweep_stale_jobs()
     except Exception:
         pass
-    from sales_audits import init_sales_audits as _isa2, ensure_first_audit as _efa
-    _isa2()
+    from sales_audits import ensure_first_audit as _efa
     _efa()
     # A reply rule that changed clears the draft flags it no longer raises
     # (drafter.recheck_draft_flags) - off the boot path, a few regex reads.

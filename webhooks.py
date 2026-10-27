@@ -105,10 +105,11 @@ def init_webhooks(db_path=DB_PATH):
         # Which event a delivery row was (#75): the id the endpoint received.
         "ALTER TABLE webhook_deliveries ADD COLUMN event_id TEXT",
     ):
-        try:
-            conn.execute(col_sql)
-        except Exception:
-            pass
+        # "duplicate column" / "already exists" mean applied; anything else
+        # fails the boot (release-safety audit 10/26/26 A05-07 — it was
+        # swallowed, and a failed ALTER booted "OK").
+        from models import _apply_migration
+        _apply_migration(conn, col_sql)
     conn.commit()
     conn.close()
 

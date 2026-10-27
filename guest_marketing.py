@@ -347,10 +347,11 @@ def init_guest_marketing(db_path=DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_gcq_restaurant ON guest_campaign_queue(restaurant_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_guest_campaigns_status ON guest_campaigns(status, restaurant_id)",
     ):
-        try:
-            conn.execute(col_sql)
-        except Exception:
-            pass
+        # "duplicate column" / "already exists" mean applied; anything else
+        # fails the boot (release-safety audit 10/26/26 A05-07 — it was
+        # swallowed, and a failed ALTER or index booted "OK").
+        from models import _apply_migration
+        _apply_migration(conn, col_sql)
     conn.commit()
     try:
         _backfill_consent_scopes(conn)

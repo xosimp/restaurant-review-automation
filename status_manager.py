@@ -517,21 +517,37 @@ _reference_schema = {}
 
 
 def _reference_columns():
-    """{table: {columns}} of a database built by this code's own init_db and
-    ensure_columns — the schema every deploy migrates to. Built once per
-    process in a scratch file."""
+    """{table: {columns}} of a database built by this code's own boot schema
+    (models.boot_schema: init_db, ensure_columns AND the init_* chain — auth,
+    webhooks, guest marketing, push, telemetry; release-safety audit
+    10/26/26 A05-07) — the schema every deploy migrates to. Read from the
+    image's reference_schema.json when the build wrote one for THIS code
+    (A05-09: the build phase pays for the scratch boot, not every deploy's
+    boot); otherwise built once per process in a scratch file."""
     if "cols" in _reference_schema:
         return _reference_schema["cols"]
+    cols = load_reference_artifact()
+    if cols is not None:
+        _reference_schema["cols"] = cols
+        _reference_schema["source"] = "artifact"
+        return cols
+    cols = build_reference_columns()
+    _reference_schema["cols"] = cols
+    _reference_schema["source"] = "built"
+    return cols
+
+
+def build_reference_columns():
+    """{table: {columns}} of a scratch database built by models.boot_schema."""
     import contextlib
     import io
     import tempfile
     import sqlite3
-    from models import init_db, ensure_columns
+    import models
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "reference.db")
         with contextlib.redirect_stdout(io.StringIO()):
-            init_db(path)
-            ensure_columns(db_path=path)
+            models.boot_schema(path)
         conn = sqlite3.connect(path)
         try:
             tables = [r[0] for r in conn.execute(
@@ -539,8 +555,77 @@ def _reference_columns():
             cols = {t: {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')} for t in tables}
         finally:
             conn.close()
-    _reference_schema["cols"] = cols
     return cols
+
+
+# The reference schema built at image-build time (release-safety audit
+# 10/26/26 A05-09): scripts/build_reference_schema.py, run by the Nixpacks
+# build phase (nixpacks.toml), writes it beside the code with a hash of the
+# code it was built from. Every boot used to pay a full scratch boot (~4 s
+# locally, more on Railway) inside the deploy's outage for it.
+REFERENCE_SCHEMA_FILE = "reference_schema.json"
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_NOT_APP_CODE = {"tests", "scripts", "ios", "docs", "static", "templates", "public", "brand", "node_modules",
+                 "migrations", "__pycache__", ".git", ".claude", ".github", "demo_store"}
+
+
+def reference_schema_path() -> str:
+    return os.getenv("REFERENCE_SCHEMA_PATH") or os.path.join(_APP_DIR, REFERENCE_SCHEMA_FILE)
+
+
+def schema_code_hash(root=None) -> str:
+    """sha256 over the app's Python source (names and bytes, sorted), so an
+    artifact built from other code than this process runs is never used.
+    ~20-50 ms, once per process."""
+    import hashlib
+    root = root or _APP_DIR
+    h = hashlib.sha256()
+    files = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _NOT_APP_CODE and not d.startswith("."))
+        for name in filenames:
+            if name.endswith(".py"):
+                files.append(os.path.relpath(os.path.join(dirpath, name), root))
+    for rel in sorted(files):
+        h.update(rel.encode())
+        with open(os.path.join(root, rel), "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()
+
+
+def write_reference_artifact(path=None, cols=None) -> str:
+    """Build the reference schema (or take `cols`) and write it with this
+    code's hash. Returns the path written."""
+    import json
+    import time as _time
+    cols = cols if cols is not None else build_reference_columns()
+    path = path or reference_schema_path()
+    body = {"code_hash": schema_code_hash(), "built_at": _time.strftime("%Y-%m-%d %H:%M:%S", _time.gmtime()),
+            "tables": {t: sorted(c) for t, c in sorted(cols.items())}}
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(body, f, separators=(",", ":"))
+    os.replace(tmp, path)
+    return path
+
+
+def load_reference_artifact(path=None):
+    """{table: {columns}} from the build's artifact, or None when there is
+    none, it cannot be read, or it was built from other code."""
+    import json
+    path = path or reference_schema_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            body = json.load(f)
+        if body.get("code_hash") != schema_code_hash():
+            log.warning("reference schema artifact %s was built from other code; building it here", path)
+            return None
+        return {t: set(c) for t, c in (body.get("tables") or {}).items()}
+    except Exception as e:
+        log.warning("reference schema artifact %s unreadable (%s); building it here", path, e)
+        return None
 
 
 def warm_reference_schema():

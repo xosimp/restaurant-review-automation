@@ -112,11 +112,10 @@ def main():
     import models
     models.require_volume()
 
-    # Same boot the web process does: the schema must exist before any job
+    # Same boot schema the web process builds (models.boot_schema — release-
+    # safety audit 10/26/26 A05-07): the schema must exist before any job
     # touches it, and this process may well start first.
-    from models import init_db, ensure_columns
-    init_db()
-    ensure_columns()
+    models.boot_schema()
     log.info("schema ready")
 
     # The job queue's consumer, when this process is the worker

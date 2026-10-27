@@ -140,9 +140,11 @@ two equal), and the variable `RUN_SCHEDULER_IN_WEB=0` on the service.
 
 **`worker.py`'s boot.** It does what the web boot does first — since the
 integration wave (9/29/26) worker.py calls both at the top of main(), before
-`init_db()`: `logging_setup.configure()` (the JSON log, bound
+the schema: `logging_setup.configure()` (the JSON log, bound
 `process=worker`) and `models.require_volume()` (refuse to run on Railway
-without the volume). Then it runs `init_db()` + `ensure_columns()`, refuses
+without the volume). Then it runs `models.boot_schema()` — the web boot's
+whole schema chain, `init_db()`, `ensure_columns()` and the `init_*` steps
+(release-safety audit 10/26/26, A05-07) — refuses
 unless `scheduler.scheduling_allowed()`, closes orphaned runs, starts the
 lease keeper and runs `scheduler_loop()` (restarting the loop, never
 exiting, if it raises), and on SIGTERM calls `ops.shutdown_scheduler()`. The web process's

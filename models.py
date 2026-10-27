@@ -1311,7 +1311,11 @@ def add_missing_columns(db_path, alters) -> int:
     schema — SQLite re-parses the whole schema to refuse it — so a boot (and
     every test that ran init_auth) paid ~0.2 s for columns already there.
     A statement that is not an ADD COLUMN, or whose check fails, is tried
-    as before."""
+    as before — under _apply_migration's rule (release-safety audit
+    10/26/26 A05-07): "duplicate column" / "already exists" mean applied,
+    anything else raises and fails the boot. Every failure used to be
+    swallowed, so a users ALTER that timed out on its lock booted "OK" and
+    every sign-in naming the column failed."""
     conn = boot_conn(db_path)
     have, ran = {}, 0
     try:
@@ -1330,17 +1334,11 @@ def add_missing_columns(db_path, alters) -> int:
                             pass
                 if have[table] is not None and col in have[table]:
                     continue
-            try:
-                conn.execute(sql)
-                conn.commit()
+            if _apply_migration(conn, sql):
                 ran += 1
                 if m and have.get(m.group(1)) is not None:
                     have[m.group(1)].add(m.group(2).lower())
-            except Exception:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
+            conn.commit()
     finally:
         conn.close()
     return ran
@@ -2842,7 +2840,10 @@ def init_db(db_path: str = DB_PATH):
         # Temporary passwords are no longer persisted (security audit A3):
         # they are emailed once and a fresh one is minted at contract
         # signing. Anything still stored is a plaintext login credential.
-        "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''",
+        # Once per database (schema_migrations — release-safety audit
+        # 10/26/26 A05-08): nothing has written the column since.
+        ("temp_password_scrub_a3",
+         "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''"),
         "ALTER TABLE restaurants ADD COLUMN weekly_plan_enabled INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN send_delay_minutes INTEGER DEFAULT 0",
         # The weekly digest's model answer per (restaurant, prompt
@@ -3389,13 +3390,15 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE marketing_content_log ADD COLUMN metrics_synced_at TEXT",
         # ...and a post nobody ever measured holds NULL, not 0: blank, never
         # zero. Only rows the sync never stamped and that hold nothing but the
-        # column defaults; idempotent, so it is safe on every boot.
-        "UPDATE marketing_content_log SET reach=NULL, impressions=NULL, engaged=NULL, likes=NULL, "
-        "comments=NULL, shares=NULL WHERE metrics_synced_at IS NULL "
-        "AND (reach IS NOT NULL OR impressions IS NOT NULL OR engaged IS NOT NULL OR likes IS NOT NULL "
-        "     OR comments IS NOT NULL OR shares IS NOT NULL) "
-        "AND COALESCE(reach,0)=0 AND COALESCE(impressions,0)=0 AND COALESCE(engaged,0)=0 "
-        "AND COALESCE(likes,0)=0 AND COALESCE(comments,0)=0 AND COALESCE(shares,0)=0",
+        # column defaults. Once per database (A05-08): a row written since is
+        # read as unmeasured by marketing_signals.MEASURED_SQL either way.
+        ("marketing_unmeasured_null_mb7",
+         "UPDATE marketing_content_log SET reach=NULL, impressions=NULL, engaged=NULL, likes=NULL, "
+         "comments=NULL, shares=NULL WHERE metrics_synced_at IS NULL "
+         "AND (reach IS NOT NULL OR impressions IS NOT NULL OR engaged IS NOT NULL OR likes IS NOT NULL "
+         "     OR comments IS NOT NULL OR shares IS NOT NULL) "
+         "AND COALESCE(reach,0)=0 AND COALESCE(impressions,0)=0 AND COALESCE(engaged,0)=0 "
+         "AND COALESCE(likes,0)=0 AND COALESCE(comments,0)=0 AND COALESCE(shares,0)=0"),
         # Toast-driven food cost engine — persistent per-ingredient records
         # replacing the old re-parsed inventory_csv blob, plus a stock-event
         # ledger (recount/receiving/depletion/waste) and a recipe/BOM mapping
@@ -4132,10 +4135,12 @@ def init_db(db_path: str = DB_PATH):
         # the same ingredient could be bound to a dish twice and the plate
         # cost silently double-counted it. Collapse any existing duplicates
         # first, keeping the most recently added row, or the unique index
-        # can't be created and the guarantee would silently not exist.
-        """DELETE FROM recipe_ingredients WHERE id NOT IN (
+        # can't be created and the guarantee would silently not exist. Once per
+        # database (A05-08): the unique index below keeps it true after.
+        ("recipe_pair_dedup",
+         """DELETE FROM recipe_ingredients WHERE id NOT IN (
                SELECT MAX(id) FROM recipe_ingredients GROUP BY menu_item_id, ingredient_id
-           )""",
+           )"""),
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_pair ON recipe_ingredients(menu_item_id, ingredient_id)",
         # Units sold per dish per day. compute_daily_depletion already reads
         # exactly this from Toast to drive depletion and then discarded it,
@@ -4873,11 +4878,24 @@ def init_db(db_path: str = DB_PATH):
         # correction does not learn an event week as the forecast's lean.
         "ALTER TABLE forecast_log ADD COLUMN explained_by TEXT",
     ]
+    _pg_boot = _dialect.is_postgres(conn)
     try:
+        conn.execute(SCHEMA_MIGRATIONS_DDL)
+        conn.commit()
         for m in migrations:
+            if isinstance(m, tuple):
+                # (name, data rewrite): once per database, recorded in
+                # schema_migrations (release-safety audit 10/26/26 A05-08).
+                _run_once_sql(conn, m[0], m[1])
+                continue
             # "no such table": a few of these touch a table an init_* helper
             # creates later in boot (users, on a fresh file).
             _apply_migration(conn, m, also_tolerate=("no such table",))
+            if _pg_boot:
+                # One transaction per statement on Postgres (A05-16): a new
+                # column's ACCESS EXCLUSIVE lock, or an index's SHARE lock, is
+                # held for its own statement, not until the end of the list.
+                conn.commit()
         conn.commit()
     except Exception:
         conn.close()
@@ -5278,10 +5296,18 @@ def init_db(db_path: str = DB_PATH):
     grandfather_pos_live_mirror(db_path=db_path)
     grandfather_pos_guest_match(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
-    # back to Cavnar's default, alerts off (Benchmarking re-audit #3).
-    backfill_seeded_targets(db_path=db_path)
-    # After init_dsr: its POS evidence is one of the tables it reads.
-    backfill_missing_sales_null(db_path=db_path)
+    # back to Cavnar's default, alerts off (Benchmarking re-audit #3). Once
+    # per seeding rule (schema_migrations, A05-08): a change to
+    # thresholds.seeded_targets ships with a new name here.
+    run_once("seeded_targets_rule_v1", lambda: backfill_seeded_targets(db_path=db_path, raise_errors=True),
+             db_path=db_path)
+    # After init_dsr: its POS evidence is one of the tables it reads. Once
+    # per database (A05-08): run on every boot it also turned a day whose
+    # labor arrived before its sales into "unknown" at the next deploy.
+    # Deferrable past the boot budget, like the backfills below.
+    _boot_backfill(_boot_t0, "missing-sales rewrite", lambda: run_once(
+        "missing_sales_null_ca3_f3", lambda: backfill_missing_sales_null(db_path=db_path, raise_errors=True),
+        db_path=db_path))
     # The demo seed's labor days written before they carried source 'seed'
     # (memory audit 9/29/26, "eligibility"), once.
     stamp_seed_provenance(db_path=db_path)
@@ -5384,6 +5410,140 @@ def _boot_backfill(boot_started, name, fn) -> bool:
     except Exception as e:
         _log.warning("[%s] boot backfill skipped: %s", name, e)
     return True
+
+
+# ── Run-once boot data migrations (release-safety audit 10/26/26, A05-08) ───
+#
+# A data rewrite at boot (an UPDATE or DELETE that fixes legacy rows) runs
+# ONCE per database and records itself here, instead of re-running on every
+# boot forever: every boot's scan made each deploy's outage longer, and a
+# rewrite meant for legacy rows kept matching rows written since (a labor day
+# whose sales had not arrived yet turned "unknown" at the next deploy). The
+# name is the migration's identity: a rewrite whose rule changes ships under
+# a new name. tests/test_ws2_boot_schema.py boots twice and holds the second
+# boot to no rewrite outside its recorded list of recurring ones.
+SCHEMA_MIGRATIONS_DDL = """CREATE TABLE IF NOT EXISTS schema_migrations (
+    name        TEXT PRIMARY KEY,
+    applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    rows        INTEGER,
+    ms          INTEGER
+)"""
+
+
+def migration_applied(conn, name) -> bool:
+    row = conn.execute("SELECT 1 FROM schema_migrations WHERE name=?", (name,)).fetchone()
+    return row is not None
+
+
+def _record_migration(conn, name, rows=None, ms=None):
+    conn.execute("INSERT OR IGNORE INTO schema_migrations (name, rows, ms) VALUES (?,?,?)",
+                 (name, None if rows is None else int(rows), None if ms is None else int(ms)))
+
+
+def _run_once_sql(conn, name, sql) -> bool:
+    """One data-rewrite statement of init_db's list, once per database, in
+    its own transaction with its ledger row. Returns whether it ran now; a
+    failure raises (the boot's DATA-11 rule: never serve half-migrated)."""
+    import time as _t
+    if migration_applied(conn, name):
+        return False
+    started = _t.monotonic()
+    cur = conn.execute(sql)
+    _record_migration(conn, name, rows=getattr(cur, "rowcount", None), ms=(_t.monotonic() - started) * 1000)
+    conn.commit()
+    return True
+
+
+def run_once(name, fn, db_path=None) -> bool:
+    """Run the data migration `fn()` once per database and record it in
+    schema_migrations. Returns whether it ran now. `fn` raising leaves it
+    unrecorded (the next boot tries again) and is logged, never raised — the
+    stance every boot backfill already had."""
+    import time as _t
+    _log = logging.getLogger(__name__)
+    conn = get_conn(db_path)
+    try:
+        conn.execute(SCHEMA_MIGRATIONS_DDL)
+        conn.commit()
+        if migration_applied(conn, name):
+            return False
+    finally:
+        conn.close()
+    started = _t.monotonic()
+    try:
+        rows = fn()
+    except Exception as e:
+        _log.warning("[%s] run-once data migration failed, retried next boot: %s", name, e)
+        return False
+    conn = get_conn(db_path)
+    try:
+        _record_migration(conn, name, rows=rows if isinstance(rows, int) else None,
+                          ms=(_t.monotonic() - started) * 1000)
+        conn.commit()
+    finally:
+        conn.close()
+    return True
+
+
+def applied_migrations(db_path=None) -> list:
+    """schema_migrations, newest first, for the console and the tests."""
+    conn = get_conn(db_path)
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT name, applied_at, rows, ms FROM schema_migrations ORDER BY applied_at DESC, name").fetchall()]
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+
+# ── The whole boot schema, in one place (release-safety audit A05-07, R20) ──
+#
+# hosted_dashboard, worker.py, status_manager's reference schema (what
+# /health compares the live database with) and the test suite's template all
+# build the schema through boot_schema(), so the auth, webhook, guest
+# marketing and push tables are migrated — and checked by /health — exactly
+# like init_db's. Schema only: the seeds (status services, release notes, the
+# first sales audit, the admin login) stay in hosted_dashboard.
+
+def boot_schema(db_path=None, on_db_ready=None):
+    """Run every boot DDL step on `db_path` (the platform's database when
+    None): init_db, then the init_* chain hosted_dashboard runs after it, in
+    its order, ensure_columns again once their tables exist. `on_db_ready()`
+    runs straight after init_db (the web boot records its boot row there).
+    Raises on a migration failure, as init_db does."""
+    path = db_path or DB_PATH
+    init_db(path)
+    if on_db_ready is not None:
+        on_db_ready()
+    import auth
+    import guest_marketing
+    import platform_monitor
+    import provider_health
+    import push
+    import sales_audits
+    import webhooks
+    auth.init_auth(path)
+    # Telemetry tables (boot events, 5xx log, request rollups) and the
+    # provider probe ledger.
+    platform_monitor.init_platform_tables(db_path=path)
+    provider_health.init_provider_health(db_path=path)
+    init_staff_notes(path)
+    init_staff_availability(path)
+    ensure_columns(path)
+    init_email_log(path)
+    init_onboarding_emails(path)
+    webhooks.init_webhooks(path)
+    guest_marketing.init_guest_marketing(path)
+    push.init_push(path)
+    init_two_fa_backup_codes(path)
+    init_competitor_snapshots(path)
+    init_ai_visibility_queries(path)
+    init_staff_capabilities(path)
+    init_shift_profiles(path)
+    init_capability_changes(path)
+    init_ask_memory(path)
+    sales_audits.init_sales_audits(db_path=path)
 
 
 def run_deferred_boot_backfills() -> int:
@@ -14766,7 +14926,7 @@ def backfill_organizations(db_path: str = DB_PATH) -> int:
         return 0
 
 
-def backfill_seeded_targets(db_path: str = DB_PATH) -> int:
+def backfill_seeded_targets(db_path: str = DB_PATH, raise_errors: bool = False) -> int:
     """Re-check every SEEDED target against today's seeding rule
     (thresholds.seeded_targets — like-for-like definition, confirmed
     service model) and put the ones that no longer qualify back to Cavnar's
@@ -14812,11 +14972,13 @@ def backfill_seeded_targets(db_path: str = DB_PATH) -> int:
             print(f"[backfill] seeded targets: {n} restaurant(s) reset to Cavnar AI's starting target")
         return n
     except Exception as e:
+        if raise_errors:
+            raise
         print(f"[backfill] seeded-target check skipped: {e}")
         return 0
 
 
-def backfill_missing_sales_null(db_path: str = DB_PATH) -> int:
+def backfill_missing_sales_null(db_path: str = DB_PATH, raise_errors: bool = False) -> int:
     """Rewrite the $0 "missing sales" rows the old per-day archive wrote as
     what they were: unknown (CA3 F3).
 
@@ -14859,6 +15021,8 @@ def backfill_missing_sales_null(db_path: str = DB_PATH) -> int:
         finally:
             conn.close()
     except Exception as e:
+        if raise_errors:
+            raise
         print(f"[backfill] missing-sales rewrite skipped: {e}")
         return 0
 

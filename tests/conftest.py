@@ -344,33 +344,10 @@ def _build_default_schema():
     """Give the throwaway default database the same schema hosted_dashboard
     builds at boot, so a call that passes no db_path meets real tables —
     as it did when the default was the developer's reviews.db, but now
-    empty of anyone's data. Mirrors hosted_dashboard.py's module-level init."""
+    empty of anyone's data. hosted_dashboard.py's own boot schema
+    (models.boot_schema — release-safety audit 10/26/26 A05-07)."""
     import models
-    from auth import init_auth
-    from webhooks import init_webhooks
-    from guest_marketing import init_guest_marketing
-    from push import init_push
-    from sales_audits import init_sales_audits
-    import platform_monitor
-    import provider_health
-    init_db()
-    init_auth()
-    # F's telemetry tables and provider probe ledger, created at boot right
-    # after init_auth (hosted_dashboard); the code tolerates their absence,
-    # but a test on the default database should meet what production has.
-    platform_monitor.init_platform_tables()
-    provider_health.init_provider_health()
-    models.init_staff_notes()
-    models.init_staff_availability()
-    ensure_columns()
-    for fn in ("init_email_log", "init_onboarding_emails", "init_two_fa_backup_codes",
-               "init_competitor_snapshots", "init_ai_visibility_queries", "init_staff_capabilities",
-               "init_shift_profiles", "init_capability_changes", "init_ask_memory"):
-        getattr(models, fn)()
-    init_webhooks()
-    init_guest_marketing()
-    init_push()
-    init_sales_audits()
+    models.boot_schema()
 
 
 _build_default_schema()
@@ -769,24 +746,10 @@ _PG_TEMPLATE = None
 
 
 def _boot_schema(path):
-    """hosted_dashboard's init_* chain after init_db, on `path` (schema only)."""
-    import auth
-    import guest_marketing
+    """hosted_dashboard's whole boot schema on `path` (models.boot_schema:
+    init_db, ensure_columns and the init_* chain — schema only)."""
     import models
-    import platform_monitor
-    import provider_health
-    import push
-    import sales_audits
-    import webhooks
-    auth.init_auth(db_path=path)
-    models.init_two_fa_backup_codes(db_path=path)
-    models.init_email_log(db_path=path)
-    push.init_push(db_path=path)
-    webhooks.init_webhooks(db_path=path)
-    guest_marketing.init_guest_marketing(path)
-    sales_audits.init_sales_audits(db_path=path)
-    platform_monitor.init_platform_tables(db_path=path)
-    provider_health.init_provider_health(db_path=path)
+    models.boot_schema(path)
 
 
 def _db_template():
@@ -800,8 +763,6 @@ def _db_template():
     if _DB_TEMPLATE is None:
         import sqlite3
         path = os.path.join(_tempfile.mkdtemp(prefix="cavnar-test-template-"), "template.db")
-        init_db(db_path=path)
-        ensure_columns(db_path=path)
         # And the rest of hosted_dashboard's boot schema (tables only, no
         # seeds): most files ran init_auth and friends in a per-test fixture,
         # and on a bare copy that was the users/sessions/memberships tables
@@ -819,8 +780,6 @@ def _db_template():
             atexit.register(_pg_drop, _PG_TEMPLATE)
             _pg_copy_into(path, _PG_TEMPLATE)
             models._PG_ROUTES[path] = _pg_url(_PG_TEMPLATE)
-            init_db(db_path=path)
-            ensure_columns(db_path=path)
             _boot_schema(path)
         conn = sqlite3.connect(path)
         try:
