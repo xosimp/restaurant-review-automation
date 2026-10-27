@@ -673,8 +673,10 @@ and the build after it (release-safety audit 10/26/26, A05-05 / A05-14):
 - **Indexes on existing tables are built before the deploy**, CONCURRENTLY,
   with `scripts/build_index.py`, and listed in
   `migrations/prebuilt_indexes.txt`; the boot creates an index only on a
-  table created in the same release (`migrations/schema_baseline.json`,
-  refreshed after each promotion with `scripts/schema_baseline.py --update`).
+  table created in the same release — held on every push against the
+  previous release itself (`scripts/upgrade_boot_check.py`), and locally
+  against `migrations/schema_baseline.json`, refreshed from the promoted
+  release with `scripts/schema_baseline.py --update --ref <sha>`.
 - **A new UNIQUE index ships with its dedup**, counted read-only on
   production first; a boot that meets duplicates records the index as missing
   (`/health` `constraint_missing`) instead of failing.

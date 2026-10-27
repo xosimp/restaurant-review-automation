@@ -809,8 +809,11 @@ def prune_login_history(days: int = None, db_path: str = DB_PATH) -> int:
     being expired, revoked or deduped, which is the whole reason it exists
     separately from `sessions`. "Append-only" was never meant to mean
     "unbounded"; a staff tier writes a row per employee per shift, so the
-    table outgrows everything else in the file. Runs at boot; returns how many
-    rows it removed so a test can assert the window is actually applied.
+    table outgrows everything else in the file. The nightly retention
+    registry is the prune that runs (the boot's call was dropped, blind
+    re-audit 10/27/26); this stays for a by-hand run on the same window.
+    Returns how many rows it removed so a test can assert the window is
+    actually applied.
     """
     if days is None:
         # The one registry's window (ops, RETAIN_LOGIN_HISTORY_DAYS) — never

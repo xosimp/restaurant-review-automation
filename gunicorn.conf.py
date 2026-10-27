@@ -233,7 +233,7 @@ def _begin_drain():
         _state["terminated"].add(proc.pid)
         try:
             proc.terminate()
-        except Exception:
+        except OSError:                  # it exited in between: nothing to tell
             pass
 
 
@@ -261,10 +261,7 @@ def post_worker_init(worker):
     def _on_term(signum, frame):
         jq = sys.modules.get("job_queue")
         if jq is not None and hasattr(jq, "stop_claiming"):
-            try:
-                jq.stop_claiming()
-            except Exception:
-                pass
+            jq.stop_claiming()           # sets an Event: nothing in it to fail
         if callable(prev):
             prev(signum, frame)
     signal.signal(signal.SIGTERM, _on_term)
