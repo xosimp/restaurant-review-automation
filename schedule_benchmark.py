@@ -687,12 +687,13 @@ def build(spec, today=None, week="next") -> dict:
     else:
         week_start = next_week_start(wsd, today)
     week_dates = [(_date.fromisoformat(week_start) + _td(days=i)).isoformat() for i in range(7)]
-    # A week further out than the next one is drafted as the press the day
-    # before it would draft it: its history runs up to then (with it ending
-    # months earlier, the engine rightly reads the restaurant as having no
-    # recent weeks — measured 10/26/26: a week 10+ weeks out drafted 84 of
-    # the diner's 106 shifts).
-    if _date.fromisoformat(week_start) - today > _td(days=7):
+    # A DST (or stated) week further out than the next one is drafted as the
+    # press the day before it would draft it: its history runs up to then
+    # (with it ending months earlier, the engine rightly reads the
+    # restaurant as having no recent weeks — measured 10/26/26: a week 10+
+    # weeks out drafted 84 of the diner's 106 shifts). The next week keeps
+    # today's history, holiday skip included.
+    if week != "next" and _date.fromisoformat(week_start) - today > _td(days=7):
         today = _date.fromisoformat(week_start) - _td(days=1)
     sib_ids = []
     for sib in spec["siblings"]:
