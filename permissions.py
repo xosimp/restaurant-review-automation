@@ -336,6 +336,27 @@ def is_principal(user) -> bool:
     return bool(user.get("is_admin")) or has_permission(user, TEAM_INVITE)
 
 
+def support_view_as(user) -> bool:
+    """A support login (the read-only Cavnar staff role) acting through
+    view-as: the session user is the owner's identity, so it holds every
+    owner permission, but the person behind it is support."""
+    return bool(isinstance(user, dict) and str(user.get("acting_admin_role") or "").strip().lower() == "support")
+
+
+def sees_salaries(user) -> bool:
+    """Whether `user` may read salaried people's pay — the all-in labor %
+    included, since beside the hourly one it gives the salaries away. The
+    account holder (is_principal) and a Cavnar admin, never a manager or
+    member, and never support acting through view-as (blind re-audit
+    10/26/26 B3: the view-as identity is the owner's, so support read the
+    salaries while answering a ticket). models.viewer_sees_salaries asks
+    this of the request's login; a job building for one recipient asks it
+    of that recipient."""
+    if not user or support_view_as(user):
+        return False
+    return is_principal(user)
+
+
 def counts_as_owner(user=None) -> bool:
     """A view-as session on a restaurant whose owner gave the admin full
     control (restaurants.admin_control_until, set from the console with an

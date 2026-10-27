@@ -144,9 +144,21 @@ final class CommandSheetViewModel {
 
     // MARK: Inline answers
 
-    private struct DecideBody: Encodable { let decision: String }
-    // swiftlint:disable:next identifier_name
-    private struct NeedsCoverFlag: Decodable { var needs_cover: Bool? = nil }
+    private struct DecideBody: Encodable {
+        let decision: String
+        /// Who runs the floor, when approving leaves a published minute with
+        /// no manager (409 needs_cover — the drop rule, STRESS-16; time off
+        /// and availability changes, blind re-audit B2).
+        var coveredBy: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case decision
+            case coveredBy = "covered_by"
+        }
+    }
+
+    /// An approval the server held back for who runs the floor
+    /// (FloorCoverAsk), asked over the sheet.
+    var floorCover: FloorCoverAsk?
     private struct DecideResult: Decodable {
         let ok: Bool
         let error: String?
@@ -157,7 +169,7 @@ final class CommandSheetViewModel {
     /// Approve / Deny a time-off or shift request in place — the same decide
     /// routes the Labor rows post. A drop approved here opens the shift for
     /// anyone to claim; naming a replacement stays in Labor.
-    func decide(_ item: CommandWaitingItem, approve: Bool) async {
+    func decide(_ item: CommandWaitingItem, approve: Bool, coveredBy: String? = nil) async {
         guard let req = item.request else { return }
         let path = req.kind == "time_off"
             ? "/mobile/api/labor/time-off/\(req.id)/decide"
@@ -167,7 +179,8 @@ final class CommandSheetViewModel {
         rowBusy.insert(item.key)
         defer { rowBusy.remove(item.key) }
         do {
-            let r: DecideResult = try await client.send(path, method: .post, body: DecideBody(decision: approve ? "approve" : "deny"))
+            let r: DecideResult = try await client.send(
+                path, method: .post, body: DecideBody(decision: approve ? "approve" : "deny", coveredBy: coveredBy))
             if r.ok {
                 rowOutcome[item.key] = approve ? (r.warning.map { "Approved — \($0)" } ?? "Approved") : "Denied"
                 Haptic.success()
@@ -175,11 +188,15 @@ final class CommandSheetViewModel {
                 rowOutcome[item.key] = r.error ?? "That didn't go through."
             }
         } catch let error as APIClient.APIError {
-            // A drop that leaves no manager on the floor is never approved on
-            // a warning (409 needs_cover, STRESS-16): nothing changed, and
-            // the answer — who runs the floor instead — is given on Labor.
-            if error.status == 409, error.decodeBody(NeedsCoverFlag.self)?.needs_cover == true {
-                rowOutcome[item.key] = error.message + " Open Labor to say who runs the floor instead."
+            // An approval that leaves no manager on the floor is never made
+            // on a warning (409 needs_cover): nothing changed, and it goes
+            // only with who runs the floor instead — asked here.
+            if approve, let gap = error.floorGap {
+                rowOutcome[item.key] = gap
+                floorCover = FloorCoverAsk(gap: gap, verb: "Approve") { [weak self] who in
+                    await self?.decide(item, approve: true, coveredBy: who)
+                }
+                Haptic.warning()
             } else {
                 rowOutcome[item.key] = error.message
             }

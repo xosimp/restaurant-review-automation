@@ -46,6 +46,15 @@ def require_volume(environ=None, db_path=None):
               "this database is lost on every deploy.")
         return None
     mount = (env.get("RAILWAY_VOLUME_MOUNT_PATH") or "").strip()
+    if not mount and (env.get("VOLUME_OPTIONAL") or "").strip().lower() in ("1", "true", "yes", "on"):
+        # No volume, on purpose (release-safety audit 10/26/26, P3): allowed
+        # only where nothing durable needs one — the database is Postgres,
+        # the markers and backups have object storage, and no blob is kept
+        # on local disk. Otherwise refused, as before.
+        _volume_optional_ready(env)
+        logging.getLogger(__name__).warning("VOLUME_OPTIONAL: running on Railway with no volume — database on Postgres, markers and "
+              "backups in object storage.")
+        return None
     if not mount:
         raise RuntimeError("Refusing to boot: this is Railway but no volume is attached "
                            "(RAILWAY_VOLUME_MOUNT_PATH is unset), so the database would be an empty "
@@ -60,6 +69,28 @@ def require_volume(environ=None, db_path=None):
         raise RuntimeError(f"Refusing to boot: the database ({db_path or DB_PATH}) is not on the "
                            f"volume ({mount}).")
     return mount
+
+def _volume_optional_ready(env):
+    """Raise unless a volume-less boot keeps everything durable: Postgres
+    (DATABASE_URL), an object store for markers and backups (BACKUP_S3_* or
+    BLOB_S3_*), and no BLOB_STORE=local without an explicit BLOB_STORE_DIR."""
+    url = (env.get("DATABASE_URL") or "").strip()
+    pinned_sqlite = (env.get("DB_BACKEND") or "").strip().lower() == "sqlite"
+    if not url.startswith(("postgres://", "postgresql://")) or pinned_sqlite:
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL is set but the database is not Postgres — a "
+                           "SQLite file in the container is lost on every deploy. Attach the volume.")
+    s3 = all((env.get(f"BACKUP_S3_{k}") or "").strip() for k in ("ENDPOINT", "BUCKET", "ACCESS_KEY_ID",
+                                                                  "SECRET_ACCESS_KEY")) or \
+        all((env.get(f"BLOB_S3_{k}") or "").strip() for k in ("ENDPOINT", "BUCKET", "ACCESS_KEY_ID",
+                                                                "SECRET_ACCESS_KEY"))
+    if not s3:
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL is set but no object storage is configured "
+                           "(BACKUP_S3_* or BLOB_S3_*): the restore guard's and the emptied-database "
+                           "markers would not survive a deploy. Configure it, or attach the volume.")
+    if (env.get("BLOB_STORE") or "").strip().lower() == "local" and not (env.get("BLOB_STORE_DIR") or "").strip():
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL with BLOB_STORE=local keeps blobs on the "
+                           "container's disk. Use BLOB_STORE=s3 (or db).")
+
 
 # ── The one time axis every review query uses ─────────────────────────────────
 #
@@ -601,6 +632,12 @@ class Restaurant:
     two_fa_pending: str             = None
     two_fa_method: str              = "email"  # "email" or "sms" — which channel a verification code goes to; set once setup verifies, not at send-test time
     timezone: str                   = "America/Chicago"  # IANA name; all per-restaurant "today"/trend math uses this
+    # When somebody set or confirmed that zone (UTC): any write of `timezone`
+    # through update_restaurant stamps it — the owner's or an admin's
+    # settings, a create with a zone given, the POS's own at connect. NULL is
+    # the column's Chicago default nobody chose; data_health.timezone_problem
+    # flags it (blind re-audit 10/26/26 B2).
+    timezone_confirmed_at: Optional[str] = None
     onboarding_dismissed: int       = 0
     internal_notes: Optional[str]   = None
     service_tier: str               = "trial"   # trial / starter_reviews / starter_labor / starter_inventory / starter_marketing / full
@@ -1237,10 +1274,13 @@ class _HandleFinal:
             _release(conn, self.key, self.tid, self.tainted)
 
 
-def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
+def get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
     # None is the platform's own database (blind re-audit 10/11/26: callers
     # thread an optional db_path=None through — owner_rules did, and
     # sqlite3.connect(None) failed every generation's staff-note read).
+    # The default is None, not DB_PATH, so a bare get_conn() reads DB_PATH
+    # when it is CALLED (audit #25 A04-07): a default bound at definition
+    # time never followed a patched models.DB_PATH.
     if db_path is None:
         db_path = DB_PATH
     # Postgres behind the same door when DATABASE_URL names one (db_dialect —
@@ -1299,6 +1339,32 @@ def _pg_url_for(db_path):
     return None
 
 
+def atomic(conn, name="cavnar_unit"):
+    """`with atomic(conn):` — the statements inside are one unit on `conn`,
+    all or nothing (Audit #25 A07-15). Every statement is atomic on its own
+    (db_dialect's per-statement savepoint, matching SQLite), so a failure a
+    handler swallowed inside a multi-statement unit used to commit the rest
+    half-applied; here the unit is one SAVEPOINT: an exception rolls every
+    statement in it back and is re-raised. Nested units are fine (each its
+    own name). On SQLite, the outermost unit outside a transaction commits
+    when it ends."""
+    import contextlib as _ctx
+
+    @_ctx.contextmanager
+    def _unit():
+        # Prefixed: a bare name can be a reserved word on Postgres ("outer").
+        sp = "cv_" + "".join(c if c.isalnum() or c == "_" else "_" for c in str(name or "unit").lower())[:40]
+        conn.execute(f"SAVEPOINT {sp}")
+        try:
+            yield conn
+        except BaseException:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            conn.execute(f"RELEASE SAVEPOINT {sp}")
+            raise
+        conn.execute(f"RELEASE SAVEPOINT {sp}")
+    return _unit()
+
+
 import re as _re_alter
 _ADD_COLUMN_RE = _re_alter.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", _re_alter.I)
 
@@ -1311,7 +1377,11 @@ def add_missing_columns(db_path, alters) -> int:
     schema — SQLite re-parses the whole schema to refuse it — so a boot (and
     every test that ran init_auth) paid ~0.2 s for columns already there.
     A statement that is not an ADD COLUMN, or whose check fails, is tried
-    as before."""
+    as before — under _apply_migration's rule (release-safety audit
+    10/26/26 A05-07): "duplicate column" / "already exists" mean applied,
+    anything else raises and fails the boot. Every failure used to be
+    swallowed, so a users ALTER that timed out on its lock booted "OK" and
+    every sign-in naming the column failed."""
     conn = boot_conn(db_path)
     have, ran = {}, 0
     try:
@@ -1330,17 +1400,11 @@ def add_missing_columns(db_path, alters) -> int:
                             pass
                 if have[table] is not None and col in have[table]:
                     continue
-            try:
-                conn.execute(sql)
-                conn.commit()
+            if _apply_migration(conn, sql):
                 ran += 1
                 if m and have.get(m.group(1)) is not None:
                     have[m.group(1)].add(m.group(2).lower())
-            except Exception:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
+            conn.commit()
     finally:
         conn.close()
     return ran
@@ -1367,11 +1431,38 @@ def boot_conn(db_path: str = DB_PATH):
 
 def _db_backend() -> str:
     """db_dialect.backend() without importing it on SQLite: "postgres" only
-    when DATABASE_URL is a postgres URL and DB_BACKEND does not pin sqlite."""
+    when DATABASE_URL is a postgres URL, DB_BACKEND does not pin sqlite, and
+    this process may use it — on Railway, or ALLOW_LOCAL_PG=1
+    (config.platform_database_url_allowed; audit #25 A01-06).
+
+    On Railway, a DATABASE_URL that is set but unusable (not a Postgres URL,
+    or refused for want of a marker on the container) raises instead of
+    quietly serving the SQLite file — the frozen pre-cutover copy there
+    (config.database_url_problem, blind re-audit 10/27/26 B8 P3)."""
     url = os.getenv("DATABASE_URL") or ""
     if not url.startswith(("postgres://", "postgresql://")):
+        if url.strip():
+            _refuse_unusable_database_url()
         return "sqlite"
-    return "sqlite" if (os.getenv("DB_BACKEND") or "").strip().lower() == "sqlite" else "postgres"
+    if (os.getenv("DB_BACKEND") or "").strip().lower() == "sqlite":
+        return "sqlite"
+    import config as _cfg_be
+    if not _cfg_be.platform_database_url_allowed():
+        _refuse_unusable_database_url()
+        import db_dialect
+        db_dialect.note_refused_url("DATABASE_URL")
+        return "sqlite"
+    return "postgres"
+
+
+def _refuse_unusable_database_url():
+    """Raise when config.database_url_problem names one (loudly, every
+    time: a process that would serve the wrong database must not start)."""
+    import config as _cfg_du
+    problem = _cfg_du.database_url_problem()
+    if problem:
+        logging.getLogger(__name__).critical(problem)
+        raise RuntimeError(problem)
 
 
 def checkpoint(db_path: str = DB_PATH) -> None:
@@ -1638,6 +1729,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "weather_cached_at", "TEXT"),
         ("restaurants", "weather_hourly_json", "TEXT"),
         ("restaurants", "geocode_failed_at", "TEXT"),
+        ("restaurants", "timezone_confirmed_at", "TEXT"),
         # Morning brief (audit #18): on by default — it is the owner's own
         # phone, and a brief that has to be discovered in settings is a brief
         # nobody gets. Hour is restaurant-local.
@@ -2284,15 +2376,70 @@ _MIGRATION_ALREADY_APPLIED = ("duplicate column name", "already exists")
 
 def _apply_migration(conn, sql, also_tolerate=()):
     """Run one boot migration. True if it applied, False if it was already
-    applied; any other failure raises."""
+    applied; any other failure raises — except an index this boot could not
+    build (release-safety audit 10/26/26 A05-15 / A05-04): a UNIQUE index
+    over duplicate rows, or a new index that ran past its build limit on
+    Postgres, is recorded (note_missing_index: ops.capture, /health
+    degraded) and the boot goes on. An all-tenant outage until a rollback,
+    redeployed into the same failure, was the alternative."""
     try:
         conn.execute(sql)
         return True
+    except sqlite3.IntegrityError as e:
+        if _UNIQUE_INDEX_RE.match(sql):
+            note_missing_index(_UNIQUE_INDEX_RE.match(sql).group(1), e, unique=True)
+            return False
+        raise
     except sqlite3.OperationalError as e:
         msg = str(e).lower()
         if any(s in msg for s in _MIGRATION_ALREADY_APPLIED + tuple(also_tolerate)):
             return False
+        m = _ANY_INDEX_RE.match(sql)
+        if m and "index build timed out" in msg:
+            note_missing_index(m.group(2), e, unique=bool(m.group(1)))
+            return False
         raise
+
+
+# ── Indexes a boot could not build (release-safety audit A05-15 / A05-04) ───
+_UNIQUE_INDEX_RE = _re_alter.compile(r"^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)", _re_alter.I)
+_ANY_INDEX_RE = _re_alter.compile(r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)", _re_alter.I)
+# {index name: {"unique": bool, "error": str}} — this process's boot. /health
+# reads it (constraint_missing for a UNIQUE one, index_missing otherwise);
+# the next boot that builds the index clears it.
+BOOT_MISSING_INDEXES = {}
+
+
+def note_missing_index(name, error, unique=True):
+    """Record an index this boot did not build, once per process: logged,
+    ops.capture (the console's failures, Sentry) and /health degraded. A
+    unique index over duplicates ships with its dedup, verified read-only on
+    production before the deploy (ARCHITECTURE_MANIFEST.md, Release
+    compatibility); this is the net when that was missed."""
+    if name in BOOT_MISSING_INDEXES:
+        return
+    BOOT_MISSING_INDEXES[name] = {"unique": bool(unique), "error": str(error)[:300]}
+    why = "INVALID" if "INVALID" in str(error) else "duplicate rows" if unique else "build limit"
+    logging.getLogger(__name__).error("boot: index %s not built (%s) — %s", name, why, error)
+    try:
+        import ops
+        exc = error if isinstance(error, BaseException) else RuntimeError(str(error))
+        ops.capture(exc, job="boot_index_missing", context=f"index={name} unique={int(bool(unique))}")
+    except Exception as cap_e:
+        logging.getLogger(__name__).warning("could not record the missing index %s: %s", name, cap_e)
+
+
+def create_unique_index(conn, sql) -> bool:
+    """A boot CREATE UNIQUE INDEX outside init_db's list: True when it is in
+    place, False when duplicate rows refused it (recorded, the boot goes
+    on). Any other error raises."""
+    try:
+        conn.execute(sql)
+        return True
+    except sqlite3.IntegrityError as e:
+        m = _UNIQUE_INDEX_RE.match(sql)
+        note_missing_index(m.group(1) if m else sql[:60], e, unique=True)
+        return False
 
 
 # The tracker columns the learning sync reads (intelligence.feedback.sync):
@@ -2483,6 +2630,8 @@ def _ensure_place_id_uniqueness(conn):
                 print(f"[migrate] google_place_id {d[0]} is on live restaurants {d[1]} — "
                       f"reviews for it can only reach one of them. Clear it on the duplicates, "
                       f"or mark them is_demo=1, then redeploy to enable the unique index.")
+            note_missing_index("idx_restaurants_place_id_live",
+                               f"google_place_id on more than one live restaurant: {dupes[0][0]} ({dupes[0][1]})")
             return
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurants_place_id_live "
@@ -2842,7 +2991,10 @@ def init_db(db_path: str = DB_PATH):
         # Temporary passwords are no longer persisted (security audit A3):
         # they are emailed once and a fresh one is minted at contract
         # signing. Anything still stored is a plaintext login credential.
-        "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''",
+        # Once per database (data_migrations — release-safety audit
+        # 10/26/26 A05-08): nothing has written the column since.
+        ("temp_password_scrub_a3",
+         "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''"),
         "ALTER TABLE restaurants ADD COLUMN weekly_plan_enabled INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN send_delay_minutes INTEGER DEFAULT 0",
         # The weekly digest's model answer per (restaurant, prompt
@@ -3389,13 +3541,15 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE marketing_content_log ADD COLUMN metrics_synced_at TEXT",
         # ...and a post nobody ever measured holds NULL, not 0: blank, never
         # zero. Only rows the sync never stamped and that hold nothing but the
-        # column defaults; idempotent, so it is safe on every boot.
-        "UPDATE marketing_content_log SET reach=NULL, impressions=NULL, engaged=NULL, likes=NULL, "
-        "comments=NULL, shares=NULL WHERE metrics_synced_at IS NULL "
-        "AND (reach IS NOT NULL OR impressions IS NOT NULL OR engaged IS NOT NULL OR likes IS NOT NULL "
-        "     OR comments IS NOT NULL OR shares IS NOT NULL) "
-        "AND COALESCE(reach,0)=0 AND COALESCE(impressions,0)=0 AND COALESCE(engaged,0)=0 "
-        "AND COALESCE(likes,0)=0 AND COALESCE(comments,0)=0 AND COALESCE(shares,0)=0",
+        # column defaults. Once per database (A05-08): a row written since is
+        # read as unmeasured by marketing_signals.MEASURED_SQL either way.
+        ("marketing_unmeasured_null_mb7",
+         "UPDATE marketing_content_log SET reach=NULL, impressions=NULL, engaged=NULL, likes=NULL, "
+         "comments=NULL, shares=NULL WHERE metrics_synced_at IS NULL "
+         "AND (reach IS NOT NULL OR impressions IS NOT NULL OR engaged IS NOT NULL OR likes IS NOT NULL "
+         "     OR comments IS NOT NULL OR shares IS NOT NULL) "
+         "AND COALESCE(reach,0)=0 AND COALESCE(impressions,0)=0 AND COALESCE(engaged,0)=0 "
+         "AND COALESCE(likes,0)=0 AND COALESCE(comments,0)=0 AND COALESCE(shares,0)=0"),
         # Toast-driven food cost engine — persistent per-ingredient records
         # replacing the old re-parsed inventory_csv blob, plus a stock-event
         # ledger (recount/receiving/depletion/waste) and a recipe/BOM mapping
@@ -4132,10 +4286,12 @@ def init_db(db_path: str = DB_PATH):
         # the same ingredient could be bound to a dish twice and the plate
         # cost silently double-counted it. Collapse any existing duplicates
         # first, keeping the most recently added row, or the unique index
-        # can't be created and the guarantee would silently not exist.
-        """DELETE FROM recipe_ingredients WHERE id NOT IN (
+        # can't be created and the guarantee would silently not exist. Once per
+        # database (A05-08): the unique index below keeps it true after.
+        ("recipe_pair_dedup",
+         """DELETE FROM recipe_ingredients WHERE id NOT IN (
                SELECT MAX(id) FROM recipe_ingredients GROUP BY menu_item_id, ingredient_id
-           )""",
+           )"""),
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_pair ON recipe_ingredients(menu_item_id, ingredient_id)",
         # Units sold per dish per day. compute_daily_depletion already reads
         # exactly this from Toast to drive depletion and then discarded it,
@@ -4872,12 +5028,32 @@ def init_db(db_path: str = DB_PATH):
         # audit 9/29/26, "forecasts": event_memory.night_facts), so the bias
         # correction does not learn an event week as the forecast's lean.
         "ALTER TABLE forecast_log ADD COLUMN explained_by TEXT",
+        # The pay basis a salary-sensitive forecast (forecast_log.SALARY_KINDS:
+        # the prime-cost projection, the labor week) was made on — "all_in"
+        # (salaries in, the owner's view) or "hourly" — scored on the same
+        # basis and calibrated only against rows of it; NULL = frozen before
+        # the basis was kept, never calibrated against (blind re-audit
+        # 10/26/26 B8/B4: an hourly-era lean corrected an all-in projection).
+        "ALTER TABLE forecast_log ADD COLUMN pay_basis TEXT",
     ]
+    _pg_boot = _dialect.is_postgres(conn)
     try:
+        conn.execute(DATA_MIGRATIONS_DDL)
+        conn.commit()
         for m in migrations:
+            if isinstance(m, tuple):
+                # (name, data rewrite): once per database, recorded in
+                # data_migrations (release-safety audit 10/26/26 A05-08).
+                _run_once_sql(conn, m[0], m[1])
+                continue
             # "no such table": a few of these touch a table an init_* helper
             # creates later in boot (users, on a fresh file).
             _apply_migration(conn, m, also_tolerate=("no such table",))
+            if _pg_boot:
+                # One transaction per statement on Postgres (A05-16): a new
+                # column's ACCESS EXCLUSIVE lock, or an index's SHARE lock, is
+                # held for its own statement, not until the end of the list.
+                conn.commit()
         conn.commit()
     except Exception:
         conn.close()
@@ -5052,10 +5228,21 @@ def init_db(db_path: str = DB_PATH):
     # index (blob_store — RM-14).
     from pg_shadow import init_pg_shadow
     init_pg_shadow(db_path)
+    # The interactive lane's shared copy of a polled turn's events, read by
+    # a poll another gunicorn worker serves (ai_lane, audit #25 WS10).
+    from ai_lane import init_ai_lane
+    init_ai_lane(db_path)
+    # Cohort rollout flags (rollout — audit #25 P3): a change on for some
+    # restaurants first, set from the console.
+    from rollout import init_rollout
+    init_rollout(db_path)
     # Home's slow blocks kept as per-restaurant read models (home_snapshots,
     # scale audit 10/19/26 FE-01).
     from home_snapshots import init_home_snapshots
     init_home_snapshots(db_path)
+    # The iPhone app's decode-failure reports (client_compat, audit #25 A06-04).
+    from client_compat import init_client_compat
+    init_client_compat(db_path)
     # The publish outbox: one row per person a Send, a changes send or a
     # resend tells, delivered and retried apart from the stamp (schedule
     # audit 10/10/26 ARCH-19, ARCH-20, BUGSLIFE-9).
@@ -5278,10 +5465,18 @@ def init_db(db_path: str = DB_PATH):
     grandfather_pos_live_mirror(db_path=db_path)
     grandfather_pos_guest_match(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
-    # back to Cavnar's default, alerts off (Benchmarking re-audit #3).
-    backfill_seeded_targets(db_path=db_path)
-    # After init_dsr: its POS evidence is one of the tables it reads.
-    backfill_missing_sales_null(db_path=db_path)
+    # back to Cavnar's default, alerts off (Benchmarking re-audit #3). Once
+    # per seeding rule (data_migrations, A05-08): a change to
+    # thresholds.seeded_targets ships with a new name here.
+    run_once("seeded_targets_rule_v1", lambda: backfill_seeded_targets(db_path=db_path, raise_errors=True),
+             db_path=db_path)
+    # After init_dsr: its POS evidence is one of the tables it reads. Once
+    # per database (A05-08): run on every boot it also turned a day whose
+    # labor arrived before its sales into "unknown" at the next deploy.
+    # Deferrable past the boot budget, like the backfills below.
+    _boot_backfill(_boot_t0, "missing-sales rewrite", lambda: run_once(
+        "missing_sales_null_ca3_f3", lambda: backfill_missing_sales_null(db_path=db_path, raise_errors=True),
+        db_path=db_path))
     # The demo seed's labor days written before they carried source 'seed'
     # (memory audit 9/29/26, "eligibility"), once.
     stamp_seed_provenance(db_path=db_path)
@@ -5384,6 +5579,217 @@ def _boot_backfill(boot_started, name, fn) -> bool:
     except Exception as e:
         _log.warning("[%s] boot backfill skipped: %s", name, e)
     return True
+
+
+# ── Run-once boot data migrations (release-safety audit 10/26/26, A05-08) ───
+#
+# A data rewrite at boot (an UPDATE or DELETE that fixes legacy rows) runs
+# ONCE per database and records itself in the data_migrations ledger (fix
+# round E's, which a few migrations already used — one ledger, not two),
+# instead of re-running on every boot forever: every boot's scan made each
+# deploy's outage longer, and a rewrite meant for legacy rows kept matching
+# rows written since (a labor day whose sales had not arrived yet turned
+# "unknown" at the next deploy). The name is the migration's identity: a
+# rewrite whose rule changes ships under a new name. tests/
+# test_ws2_boot_schema.py boots twice and holds the second boot to no
+# rewrite outside its recorded list of recurring ones.
+DATA_MIGRATIONS_DDL = """CREATE TABLE IF NOT EXISTS data_migrations (
+            name        TEXT PRIMARY KEY,
+            applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            detail      TEXT
+        )"""
+
+
+def migration_applied(conn, name) -> bool:
+    row = conn.execute("SELECT 1 FROM data_migrations WHERE name=?", (name,)).fetchone()
+    return row is not None
+
+
+def _record_migration(conn, name, rows=None, ms=None):
+    detail = ", ".join(p for p in ((f"rows={int(rows)}" if isinstance(rows, int) and rows >= 0 else ""),
+                                   (f"{int(ms)} ms" if ms is not None else "")) if p) or None
+    conn.execute("INSERT OR IGNORE INTO data_migrations (name, detail) VALUES (?, ?)", (name, detail))
+
+
+def _run_once_sql(conn, name, sql, params=()) -> bool:
+    """One data-rewrite statement of init_db's list (or an init_* module's
+    legacy fix — run_once_sql), once per database, in its own transaction
+    with its ledger row. Returns whether it ran now; a failure raises (the
+    boot's DATA-11 rule: never serve half-migrated)."""
+    import time as _t
+    if migration_applied(conn, name):
+        return False
+    started = _t.monotonic()
+    cur = conn.execute(sql, params)
+    _record_migration(conn, name, rows=getattr(cur, "rowcount", None), ms=(_t.monotonic() - started) * 1000)
+    conn.commit()
+    return True
+
+
+def run_once_sql(conn, name, sql, params=()) -> bool:
+    """A boot module's legacy-fix statement, once per database
+    (data_migrations), on its own boot connection `conn`, committed with its
+    ledger row (blind re-audit 10/27/26 B5 P3: 27 rewrites ran on every
+    boot, some scanning hot tables inside each deploy's outage). Raises on
+    failure — the caller logs it, and the next boot tries again."""
+    conn.execute(DATA_MIGRATIONS_DDL)          # a module booted on its own (a test's bare file)
+    return _run_once_sql(conn, name, sql, params)
+
+
+def run_once(name, fn, db_path=None) -> bool:
+    """Run the data migration `fn()` once per database and record it in
+    data_migrations. Returns whether it ran now. `fn` raising leaves it
+    unrecorded (the next boot tries again) and is logged, never raised — the
+    stance every boot backfill already had."""
+    import time as _t
+    _log = logging.getLogger(__name__)
+    conn = get_conn(db_path)
+    try:
+        conn.execute(DATA_MIGRATIONS_DDL)
+        conn.commit()
+        if migration_applied(conn, name):
+            return False
+    finally:
+        conn.close()
+    started = _t.monotonic()
+    try:
+        rows = fn()
+    except Exception as e:
+        _log.warning("[%s] run-once data migration failed, retried next boot: %s", name, e)
+        return False
+    conn = get_conn(db_path)
+    try:
+        _record_migration(conn, name, rows=rows if isinstance(rows, int) else None,
+                          ms=(_t.monotonic() - started) * 1000)
+        conn.commit()
+    finally:
+        conn.close()
+    return True
+
+
+def applied_migrations(db_path=None) -> list:
+    """data_migrations, newest first, for the console and the tests."""
+    conn = get_conn(db_path)
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT name, applied_at, detail FROM data_migrations ORDER BY applied_at DESC, name").fetchall()]
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+
+# ── The whole boot schema, in one place (release-safety audit A05-07, R20) ──
+#
+# hosted_dashboard, worker.py, status_manager's reference schema (what
+# /health compares the live database with) and the test suite's template all
+# build the schema through boot_schema(), so the auth, webhook, guest
+# marketing and push tables are migrated — and checked by /health — exactly
+# like init_db's. Schema only: the seeds (status services, release notes, the
+# first sales audit, the admin login) stay in hosted_dashboard.
+
+# One booter at a time on a Postgres database (blind re-audit 10/27/26 B5
+# P2, "volume retirement"): a transaction-scoped advisory lock on a
+# connection of its own, held for the whole boot DDL. With the volume
+# attached Railway never overlaps two containers, but without it (VOLUME_
+# OPTIONAL) the new container boots while the old one serves, a scheduler
+# process (worker.py --scheduler) boots beside the web worker, and two boots
+# creating the same new table race on Postgres's catalog (pg_type's unique
+# key) or both queue an ALTER on a hot table. The second booter waits for the
+# first, then finds everything applied (catalog-answered, no lock). It waits
+# at most BOOT_LOCK_WAIT_SECONDS — inside Railway's 120 s healthcheck — and
+# then fails its boot: a volume-less service keeps serving on the old
+# container. Transaction-scoped, so a booter that dies releases it, and it
+# holds behind a transaction-mode PgBouncer too.
+BOOT_LOCK_KEY = 7310042027
+BOOT_LOCK_WAIT_SECONDS = float(os.getenv("BOOT_LOCK_WAIT_SECONDS", "90") or 90)
+
+
+@_contextmanager
+def boot_ddl_lock(db_path=None, wait_seconds=None):
+    """Hold the boot DDL lock of `db_path`'s Postgres database for the
+    block; a no-op on SQLite. Raises RuntimeError when another boot holds
+    it past `wait_seconds` (BOOT_LOCK_WAIT_SECONDS)."""
+    import time as _t
+    url = _pg_url_for(db_path or DB_PATH)
+    if not url:
+        yield False
+        return
+    import db_dialect
+    wait = BOOT_LOCK_WAIT_SECONDS if wait_seconds is None else float(wait_seconds)
+    raw = db_dialect._driver_connect(url)
+    _log = logging.getLogger(__name__)
+    try:
+        # The boot can outlast the app's 300 s idle-in-transaction limit only
+        # if it is broken; 600 s here, so a slow honest boot keeps its lock.
+        raw.execute("SET idle_in_transaction_session_timeout = '600s'")
+        started, said = _t.monotonic(), False
+        # The key is our own integer constant, written into the statement:
+        # this raw psycopg connection takes %s placeholders, which the SQL
+        # audit (scripts/pg_sql_audit.py) reads as the app's translated SQL.
+        while not raw.execute(f"SELECT pg_try_advisory_xact_lock({int(BOOT_LOCK_KEY)})").fetchone()[0]:
+            waited = _t.monotonic() - started
+            if waited >= wait:
+                raise RuntimeError(
+                    f"Refusing to boot: another boot has held this database's boot DDL lock for {int(waited)} s "
+                    "(an overlapped deploy, or a scheduler process booting beside the web worker). Boot DDL "
+                    "runs one booter at a time; redeploy once the other boot has finished.")
+            if not said:
+                said = True
+                _log.warning("boot: another boot holds the boot DDL lock; waiting up to %ss", int(wait))
+            _t.sleep(0.5)
+        yield True
+    finally:
+        try:
+            raw.rollback()               # ends the transaction: the lock goes with it
+        finally:
+            raw.close()
+
+
+def boot_schema(db_path=None, on_db_ready=None):
+    """Run every boot DDL step on `db_path` (the platform's database when
+    None): init_db, then the init_* chain hosted_dashboard runs after it, in
+    its order, ensure_columns again once their tables exist. `on_db_ready()`
+    runs straight after init_db (the web boot records its boot row there).
+    Raises on a migration failure, as init_db does. On Postgres the whole
+    chain runs under boot_ddl_lock: one booter at a time."""
+    with boot_ddl_lock(db_path):
+        _boot_schema_steps(db_path, on_db_ready)
+
+
+def _boot_schema_steps(db_path=None, on_db_ready=None):
+    path = db_path or DB_PATH
+    init_db(path)
+    if on_db_ready is not None:
+        on_db_ready()
+    import auth
+    import guest_marketing
+    import platform_monitor
+    import provider_health
+    import push
+    import sales_audits
+    import webhooks
+    auth.init_auth(path)
+    # Telemetry tables (boot events, 5xx log, request rollups) and the
+    # provider probe ledger.
+    platform_monitor.init_platform_tables(db_path=path)
+    provider_health.init_provider_health(db_path=path)
+    init_staff_notes(path)
+    init_staff_availability(path)
+    ensure_columns(path)
+    init_email_log(path)
+    init_onboarding_emails(path)
+    webhooks.init_webhooks(path)
+    guest_marketing.init_guest_marketing(path)
+    push.init_push(path)
+    init_two_fa_backup_codes(path)
+    init_competitor_snapshots(path)
+    init_ai_visibility_queries(path)
+    init_staff_capabilities(path)
+    init_shift_profiles(path)
+    init_capability_changes(path)
+    init_ask_memory(path)
+    sales_audits.init_sales_audits(db_path=path)
 
 
 def run_deferred_boot_backfills() -> int:
@@ -5543,6 +5949,8 @@ def _notify_restaurant_change(restaurant_id):
 # restaurant is created outside update_restaurant).
 _TENANT_NAMES_TTL = 300
 _tenant_names_cache = {"key": None, "at": 0.0, "rows": ()}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("models._tenant_names_cache", _tenant_names_cache)
 # Names too generic to be read as another tenant ("Pizza", "The Bar"), and
 # the platform's own name.
 _TENANT_GENERIC_NAMES = {"other", "bar", "pub", "cafe", "café", "grill", "kitchen", "pizza", "tavern", "bistro",
@@ -5740,6 +6148,16 @@ TARGET_SOURCE_FIELDS = {"labor_target_pct": "labor_target_source", "food_cost_ta
 PROFILE_FIELDS = ("service_model", "concept", "bar_led", "ownership", "opened_year", "category")
 
 
+# Columns that once held a plaintext secret on the restaurants row: the
+# provisioning temp password (security audit A3 — now shown once, never
+# stored) and the 2FA code / pending secret (SEC-20/SEC-39 — two_fa_challenges
+# replaced them). Nothing reads them; update_restaurant refuses to write them
+# (blind re-audit 10/27/26 B5 P3) and the boot scrubbed what was there once
+# (data_migrations temp_password_scrub_a3, legacy_two_fa_scrub). The columns
+# stay (Release compatibility: a rollback's build still names them).
+RETIRED_SECRET_FIELDS = ("temp_password", "two_fa_code", "two_fa_pending")
+
+
 def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                       expected_version: int = None):
     """Update any restaurant fields by dict.
@@ -5757,10 +6175,10 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","bar_cost_target","beer_cost_target","liquor_cost_target","wine_cost_target","comp_void_target_pct","plate_margin_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at","labor_standards_json",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","bar_cost_target","beer_cost_target","liquor_cost_target","wine_cost_target","comp_void_target_pct","plate_margin_target_pct","inventory_updated_at","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at","labor_standards_json",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
-        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","issue_texts","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
+        "two_fa_enabled","two_fa_expires","two_fa_device_token","two_fa_method","login_notify","issue_texts","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_competitor_move","alert_extra_emails","push_sound",
         "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","fiscal_years_json","dsr_enabled","dsr_deadline_hour","dsr_notify","dsr_gross_basis","dsr_late_night_hour","dsr_budget_mode",
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
@@ -5799,13 +6217,20 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "brand_name","brand_color","brand_logo_url",
         "section_count","foh_sections_json","daypart_split","daypart_boundary","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at","weather_hourly_json",
-        "geocode_failed_at", "aivis_city_json",
+        "geocode_failed_at", "aivis_city_json", "timezone_confirmed_at",
         "alert_hold_during_service", "preshift_nudge_hour",
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
         "auto_draft_schedule", "external_scheduling_tool", "auto_draft_weekday", "auto_order_weekday",
         "auto_draft_weekday_chosen",
         "pause_reason", "converted_at", "contract_signed_at",
     }
+    retired = [k for k in RETIRED_SECRET_FIELDS if fields.get(k) not in (None, "")]
+    if retired:
+        # Refused at write time, not only scrubbed once (blind re-audit
+        # 10/27/26 B5 P3): a save path that wrote one would keep a plaintext
+        # credential at rest for good.
+        logging.getLogger(__name__).warning("update_restaurant(%s): refused retired secret column(s) %s",
+                                            restaurant_id, ", ".join(retired))
     if "weekly_revenue_target" in fields:
         # The weekly figure is the owner's; the monthly follows from it (see
         # monthly_from_weekly). Given both, the weekly wins.
@@ -5813,6 +6238,11 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         fields["monthly_revenue_target"] = monthly_from_weekly(fields.pop("weekly_revenue_target"))
     updates = {k: v for k, v in fields.items() if k in allowed}
     _check_bar_targets(updates)
+    if "timezone" in updates and "timezone_confirmed_at" not in updates:
+        # Any write of the zone is somebody setting it (the dataclass and the
+        # column default Chicago, which nobody chose): data_health stops
+        # flagging it (blind re-audit 10/26/26 B2).
+        updates["timezone_confirmed_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     if "auto_draft_weekday" in updates and "auto_draft_weekday_chosen" not in updates:
         # Any write of the draft day is a choice — the owner's picker, an
         # undo, an admin's edit — and is never replaced by the spread
@@ -6999,6 +7429,7 @@ def _restaurant_from_row(row) -> Restaurant:
         weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
         weather_hourly_json=row["weather_hourly_json"] if "weather_hourly_json" in row.keys() else None,
         geocode_failed_at=row["geocode_failed_at"]     if "geocode_failed_at" in row.keys() else None,
+        timezone_confirmed_at=row["timezone_confirmed_at"] if "timezone_confirmed_at" in row.keys() else None,
         aivis_city_json=row["aivis_city_json"]         if "aivis_city_json" in row.keys() else None,
         preshift_nudge_hour=(row["preshift_nudge_hour"] if "preshift_nudge_hour" in row.keys()
                              and row["preshift_nudge_hour"] is not None else 0),
@@ -7092,7 +7523,8 @@ def restaurant_has_module(restaurant_id: int, key: str, db_path: str = DB_PATH) 
             # your listing", which is the true answer.
             return is_full_tier(restaurant)
         return any(m["key"] == key for m in get_active_modules(restaurant))
-    except Exception:
+    except Exception as e:
+        report_gate_open("module", e, restaurant_id=restaurant_id)
         return True
 
 
@@ -8111,12 +8543,16 @@ def init_email_log(db_path: str = DB_PATH):
         _migrate_email_log_to_utc(conn)
         # Suppressions written before scopes had a name store NULL for "all
         # mail"; the stored value says so now, so a reader filtering on
-        # scope='all' sees them (#45). Idempotent.
+        # scope='all' sees them (#45). Once per database (data_migrations —
+        # blind re-audit 10/27/26 B5 P3): suppress_email always names a scope.
         try:
-            conn.execute("UPDATE email_suppressions SET scope='all' WHERE scope IS NULL OR TRIM(scope)=''")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass                       # created by init_db; absent only on a bare file
+            run_once_sql(conn, "email_suppression_scope_all_v1",
+                         "UPDATE email_suppressions SET scope='all' WHERE scope IS NULL OR TRIM(scope)=''")
+        except sqlite3.OperationalError as e:
+            conn.rollback()            # created by init_db; absent only on a bare file
+            if "no such table" not in str(e).lower():
+                logging.getLogger(__name__).warning("email_suppression_scope_all_v1 not applied (retried next "
+                                                    "boot): %s", e)
     finally:
         conn.close()
 
@@ -9313,6 +9749,7 @@ _INPUT_STAMPS = (
 # demand reads it.
 _INPUTS_VOLATILE = frozenset({
     "last_fetched_at", "weather_cached_at", "geocode_failed_at", "aivis_city_json", "inventory_updated_at",
+    "timezone_confirmed_at",
     "competitor_updated_at", "competitor_intel", "ig_token", "ig_token_expires", "fb_token_expires", "fb_page_token",
     "web_analytics_synced_at", "gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_revoked_at",
     "toast_access_token", "toast_token_expires", "toast_last_synced", "square_access_token", "square_last_synced",
@@ -9595,9 +10032,15 @@ def init_demand_signals(db_path: str = DB_PATH):
                 if "duplicate column" not in str(e).lower():
                     raise
     # A scheduled post is kind 'post', not an event (re-audit 9/29/26,
-    # CROSSMODULE-7), and a cancelled or failed post's signal is gone.
+    # CROSSMODULE-7), and a cancelled or failed post's signal is gone. Once
+    # per database (data_migrations — blind re-audit 10/27/26 B5 P3): posts
+    # are written as kind 'post' and a cancel or failure voids its signal
+    # as it happens (marketing_publish._void_post_signal).
     import demand_signals as _ds
-    _ds.migrate_post_signals(conn)
+    conn.execute(DATA_MIGRATIONS_DDL)
+    if not migration_applied(conn, "post_signals_migrated_v1"):
+        moved = _ds.migrate_post_signals(conn)
+        _record_migration(conn, "post_signals_migrated_v1", rows=int(sum(moved.values())))
     conn.commit()
     conn.close()
 
@@ -9781,6 +10224,7 @@ def init_shift_requests(db_path: str = DB_PATH):
         # Duplicates from before the index: the transactional check still
         # guards new requests; the index lands once they are answered.
         print(f"[models] uq_shift_requests_live not created yet: {e}")
+        note_missing_index("uq_shift_requests_live", e)
     # One live request per shift BY ITS ID (ARCH-6): a retimed or renamed
     # shift is still the one shift.
     try:
@@ -9789,6 +10233,7 @@ def init_shift_requests(db_path: str = DB_PATH):
                      "AND shift_id IS NOT NULL AND shift_id <> ''")
     except sqlite3.IntegrityError as e:
         print(f"[models] uq_shift_requests_live_sid not created yet: {e}")
+        note_missing_index("uq_shift_requests_live_sid", e)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_requests_sid ON shift_change_requests(restaurant_id, shift_id)")
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shift_sections'").fetchone():
         if "shift_id" not in {r[1] for r in conn.execute("PRAGMA table_info(shift_sections)")}:
@@ -10112,8 +10557,8 @@ def init_ask_memory(db_path: str = DB_PATH):
     _migrate_ask_memory_key(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_rest "
                  "ON ask_memory(restaurant_id, created_at)")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_memory_fact_author "
-                 "ON ask_memory(restaurant_id, fact, COALESCE(user_id, 0))")
+    create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_memory_fact_author "
+                              "ON ask_memory(restaurant_id, fact, COALESCE(user_id, 0))")
     have = {r[1] for r in conn.execute("PRAGMA table_info(ask_memory)").fetchall()}
     for col, decl in _ASK_MEMORY_COLUMNS:
         if col not in have:
@@ -10661,11 +11106,14 @@ def init_capability_changes(db_path: str = DB_PATH):
     # written "Name · attribute", and the people stitcher reads this column
     # as a name store (people.NAME_STORES) - every "Gideon Kopalchick ·
     # overall" became a person of its own and a same-person question. The
-    # attribute has its own column; old rows are split once, here.
-    conn.execute("UPDATE capability_changes SET attribute=substr(subject, instr(subject, ' · ') + 3), "
+    # attribute has its own column (record_capability_change writes it);
+    # old rows are split once per database (data_migrations — it ran on
+    # every boot until blind re-audit 10/27/26 B5 P3).
+    conn.commit()
+    run_once_sql(conn, "capability_rating_subject_split_v1",
+                 "UPDATE capability_changes SET attribute=substr(subject, instr(subject, ' · ') + 3), "
                  "subject=trim(substr(subject, 1, instr(subject, ' · ') - 1)) "
                  "WHERE kind='rating' AND attribute IS NULL AND instr(subject, ' · ') > 1")
-    conn.commit()
     conn.close()
 
 
@@ -12515,7 +12963,11 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     day with sales in the period carries a trading day's share of the
     salaries (salaried_day_share), the same basis as the Labor page (owner,
     9/30/26). The stored rows stay hourly; hourly_labor_pct and
-    hourly_total_labor carry the shifts alone."""
+    hourly_total_labor carry the shifts alone. `pay_basis` names which
+    every row is on — "all_in" (salaries in), "no_salaries" (a reader who
+    sees salaries, nobody salaried: the two are one) or "hourly" — the key a
+    reader checks before setting two figures side by side (blind re-audit
+    10/26/26 B3/B4: labor_pct meant two things under one name)."""
     from datetime import date as _date_gh, timedelta as _td_gh
     conn = get_conn(db_path)
     try:
@@ -12535,7 +12987,8 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
         conn.close()
     today = _restaurant_today(restaurant_id).isoformat()
     share = 0.0
-    if with_salaries and viewer_sees_salaries():
+    sees = bool(with_salaries and viewer_sees_salaries())
+    if sees:
         try:
             share = float(salaried_day_share(get_restaurant(restaurant_id, db_path)) or 0)
         except Exception:
@@ -12543,6 +12996,7 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     out = []
     for r in rows:
         d = dict(r)
+        d["pay_basis"] = "hourly" if not sees else ("no_salaries" if share <= 0 else "hourly")
         end = str(d.get("period_end") or "")[:10]
         if share > 0 and d.get("total_sales"):
             days = d.get("days")
@@ -12558,6 +13012,7 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
                 d["total_labor"] = round(hourly + d["salaried_cost"], 2)
                 d["labor_pct"] = round(d["total_labor"] / float(d["total_sales"]) * 100, 1)
                 d["includes_salaries"] = True
+                d["pay_basis"] = "all_in"
         if d.get("kind") == LABOR_PERIOD_WEEK:
             try:
                 wk_end = (_date_gh.fromisoformat(str(d["period_start"])[:10]) + _td_gh(days=6)).isoformat()
@@ -12578,6 +13033,10 @@ def _periods_comparable(cur: dict, prev: dict) -> bool:
     if not (cur.get("complete") and prev.get("complete")):
         return False
     if not cur.get("basis") or cur.get("basis") in ("mixed", "unknown") or cur.get("basis") != prev.get("basis"):
+        return False
+    # And on one pay basis (get_labor_history pay_basis): an all-in week is
+    # never compared with an hourly one.
+    if cur.get("pay_basis") != prev.get("pay_basis"):
         return False
     try:
         return (_date_pc.fromisoformat(str(prev["period_end"])[:10]) + _td_pc(days=1)
@@ -12896,6 +13355,7 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
 
 
 _HISTORY_COLUMNS_OK = set()
+_process_caches.register("models._HISTORY_COLUMNS_OK", _HISTORY_COLUMNS_OK)
 
 
 def _row_get(row, key):
@@ -13446,27 +13906,57 @@ class salary_view:
         return False
 
 
+def reads_as_owner(fn):
+    """Decorator: a job body whose every output goes to the account holder
+    alone runs in the owner's salary view (all-in labor) however it is
+    called — the scheduler's run, Run now, a script (jobs_registry
+    salary_view "owner")."""
+    return in_salary_view(True, fn)
+
+
+def in_salary_view(sees, fn):
+    """`fn` wrapped to run in salary_view(sees) on whichever thread calls it
+    — a sweep's pool worker starts with no context of its own, so a job
+    that reports to the owner hands its units over this way (a pooled unit
+    otherwise reads manager-safe, viewer_sees_salaries)."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        with salary_view(sees):
+            return fn(*args, **kwargs)
+    return run
+
+
 def viewer_sees_salaries() -> bool:
     """Whether this read may carry the salaries. Salaries are people's pay
     and the owner's alone (dsr.access OWNER_ONLY_PREFIXES): an all-in labor
     % beside the hourly one gives them away. Work that carries a viewer's
     view (salary_view) - that view; in a request, only the account holder
-    (permissions.is_principal), and NOT when the request has no login on it
-    (blind re-audit 10/20/26 R6-F1: the dashboard page's own login check set
-    none, and None read as yes); outside a request with no view set (a job
-    reporting to the owner) - yes."""
+    (permissions.sees_salaries: never support acting through view-as), and
+    NOT when the request has no login on it (blind re-audit 10/20/26 R6-F1);
+    outside a request with no view set - NO.
+
+    A job is manager-safe by default (blind re-audit 10/26/26 B3 P0): this
+    read yes off a request, so the daily issue scan titled the labor issue
+    with the owner's all-in % and texted it to the routed manager. Work
+    that reports to the owner alone opts in, per recipient, with
+    salary_view(True) (the weekly digest, the monthly and quarterly
+    summaries, each owner's morning brief, the DSR's owner render), and
+    every registered job runs inside salary_view(False) unless it does
+    (ops._job_context)."""
     try:
         carried = _SALARY_VIEW.get()
         if carried is not None:
             return carried
         from flask import g, has_request_context
         if not has_request_context():
-            return True
+            return False
         user = getattr(g, "cavnar_current_user", None)
         if user is None:
             return False
-        from permissions import is_principal
-        return bool(is_principal(user))
+        from permissions import sees_salaries
+        return bool(sees_salaries(user))
     except Exception:
         return False
 
@@ -14419,6 +14909,7 @@ LEARNING_TEST_NAME_WORDS = frozenset({"test", "tests", "testing", "qa", "demo", 
 LEARNING_TEST_NAME_PHRASES = ("cavnar ai",)
 _INTERNAL_HOMES_TTL = 60.0
 _internal_homes_cache = {}
+_process_caches.register("models._internal_homes_cache", _internal_homes_cache)
 
 
 def _learning_get(r, k):
@@ -14697,12 +15188,48 @@ def subscription_allows_access(restaurant_id: int, db_path: str = DB_PATH) -> bo
             "SELECT billing_status FROM restaurants WHERE id=?", (restaurant_id,)
         ).fetchone()
         conn.close()
-    except Exception:
+    except Exception as e:
+        report_gate_open("billing", e, restaurant_id=restaurant_id)
         return True
     if not row:
         return True
     status = (row["billing_status"] or "").strip().lower()
     return status not in BLOCKED_BILLING_STATES
+
+
+# The revenue gates fail OPEN (this one, restaurant_has_module, and auth's
+# billing, module and POS-hold gates): a broken read must not take a paying
+# client's product away. Each failure is reported (audit #25 A03-12) — logged
+# and ops.capture-d — at most once a minute per (gate, exception type) per
+# process: a read that fails, fails on every request, and the console needs
+# the fact, not a row per request.
+_GATE_OPEN_REPORT_SECONDS = 60
+_gate_open_reported = {}
+_process_caches.register("models._gate_open_reported", _gate_open_reported)
+
+
+def report_gate_open(gate, exc, restaurant_id=None, path=""):
+    """Report that the `gate` failed open on `exc`. True when this call
+    reported it, False when it was inside the minute's window (or the report
+    itself failed — it never raises: it runs inside the gate's except)."""
+    import logging
+    import time as _time
+    key = (str(gate), type(exc).__name__)
+    now = _time.monotonic()
+    last = _gate_open_reported.get(key)
+    if last is not None and now - last < _GATE_OPEN_REPORT_SECONDS:
+        return False
+    _gate_open_reported[key] = now
+    logging.getLogger("models").warning("%s gate failed open (restaurant %s): %s: %s", gate, restaurant_id,
+                                        type(exc).__name__, exc)
+    try:
+        import ops
+        ops.capture(exc, job=f"{gate}_gate_open", context=f"restaurant_id={restaurant_id} path={str(path)[:120]}",
+                    restaurant_id=restaurant_id, kind="request")
+    except Exception as report_exc:
+        logging.getLogger("models").warning("could not record a %s gate failing open: %s", gate, report_exc)
+        return False
+    return True
 
 
 def normalize_owner_email(value) -> str:
@@ -14766,7 +15293,7 @@ def backfill_organizations(db_path: str = DB_PATH) -> int:
         return 0
 
 
-def backfill_seeded_targets(db_path: str = DB_PATH) -> int:
+def backfill_seeded_targets(db_path: str = DB_PATH, raise_errors: bool = False) -> int:
     """Re-check every SEEDED target against today's seeding rule
     (thresholds.seeded_targets — like-for-like definition, confirmed
     service model) and put the ones that no longer qualify back to Cavnar's
@@ -14812,11 +15339,13 @@ def backfill_seeded_targets(db_path: str = DB_PATH) -> int:
             print(f"[backfill] seeded targets: {n} restaurant(s) reset to Cavnar AI's starting target")
         return n
     except Exception as e:
+        if raise_errors:
+            raise
         print(f"[backfill] seeded-target check skipped: {e}")
         return 0
 
 
-def backfill_missing_sales_null(db_path: str = DB_PATH) -> int:
+def backfill_missing_sales_null(db_path: str = DB_PATH, raise_errors: bool = False) -> int:
     """Rewrite the $0 "missing sales" rows the old per-day archive wrote as
     what they were: unknown (CA3 F3).
 
@@ -14859,6 +15388,8 @@ def backfill_missing_sales_null(db_path: str = DB_PATH) -> int:
         finally:
             conn.close()
     except Exception as e:
+        if raise_errors:
+            raise
         print(f"[backfill] missing-sales rewrite skipped: {e}")
         return 0
 
@@ -15084,6 +15615,8 @@ def ensure_pos_binding_indexes(db_path: str = DB_PATH) -> dict:
                 pass
             dup = pos_binding_duplicates(provider, db_path=db_path)
             out[provider] = "duplicates" if dup else f"error: {type(e).__name__}"
+            if dup:
+                note_missing_index(name, e)
             logging.getLogger(__name__).error("POS binding index %s not made (%s): duplicates %s",
                                               name, e, dup)
             try:

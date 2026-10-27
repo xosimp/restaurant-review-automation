@@ -23,8 +23,10 @@ Fields
 ------
 cadence       when it runs, for people (the loop is the source of truth)
 sla_minutes   the most minutes that may pass between SUCCESSFUL runs
-              (job_runs.ok 1 or 2) before it is overdue; None = no SLA (a
-              quarterly job outlives job_runs' 45-day retention)
+              (job_runs.ok 1, or a partial ok 2 that failed under half of
+              what it attempted — ops._healthy_run, Audit #25 A07-03) before
+              it is overdue; None = no SLA (a quarterly job outlives
+              job_runs' 45-day retention)
 sends         it can email, text or push a person (an owner, a guest, the
               operator). "Run now" refuses these unless
               scheduler.scheduling_allowed() (#9): a laptop has production's
@@ -43,7 +45,9 @@ claim         the claim_period job key, where it differs from the name
 retry         a failed run gives its period back for up to
               RETRY_BACKOFF_MINUTES attempts (non-sending daily/weekly jobs
               only: an hourly job's next hour is its retry, and a sending
-              job must not be sent twice)
+              job must not be sent twice); a partial run that failed at
+              least PARTIAL_RETRY_SHARE of what it attempted, once, after
+              PARTIAL_RETRY_MINUTES
 lane          run on this bounded worker lane beside the loop, not on the
               loop thread (scheduler._LANES) — the weekly Intel sweeps
               run for hours and blocked briefs, DSR and intraday (#98);
@@ -71,6 +75,16 @@ queue         run as a job_queue row in the queue worker process (the
               (scale re-audit 10/20/26 R8-03, R8-15): out of the web process
               and off the loop. A failed retryable run is retried by the
               queue's own backoff
+salary_view   "owner" for a job whose every output goes to the account holder
+              alone (or is kept per salary view, keyed as the owner's): it
+              runs in models.salary_view(True), all-in labor. Every other job
+              runs in salary_view(False) — hourly labor, no salaries — set by
+              ops._job_context (blind re-audit 10/26/26 B3 P0: off a request
+              every read was the owner's, and the daily issue scan texted a
+              manager the all-in labor %). A job that sends to owners and
+              managers alike builds each recipient's copy in that
+              recipient's view (morning_brief.deliver), never "owner".
+              OWNER_SALARY_JOBS lists them; tests hold the two together
 
 Owner-facing SLAs are about 3 h for hourly jobs, 26 h for daily, 8 days for
 weekly (#31).
@@ -84,6 +98,12 @@ HEARTBEAT_STALE_MINUTES = 15
 # after the last one the period stays spent and the failure is the digest's
 # and the SLA's to report (#56).
 RETRY_BACKOFF_MINUTES = (10, 30, 90)
+# A PARTIAL run of a retry=True job that failed at least this share of what
+# it attempted gives its period back once, this many minutes later (Audit
+# #25 A07-12, scheduler._PulsedOps._after): a provider blip that failed a
+# third of the nightly learners left those restaurants a period stale.
+PARTIAL_RETRY_SHARE = 0.2
+PARTIAL_RETRY_MINUTES = 30
 
 # A job with no bound of its own is stuck after this long.
 DEFAULT_MAX_MINUTES = 60
@@ -150,7 +170,10 @@ JOBS = {
         label="Labor read pre-warm",
         description="Write the Labor read after the POS sync for restaurants whose Labor read was opened in "
                     "the last 7 days, so the morning open is a stored read (bounded, resumable)",
-        target=("scheduler", "run_labor_prewarm"), run_kwargs=_chi_now_kw, max_minutes=25, lane="ai"),
+        target=("scheduler", "run_labor_prewarm"), run_kwargs=_chi_now_kw, max_minutes=25, lane="ai",
+        # The owner's Labor read, kept under the owner's key (insight_store.
+        # salary_kind): a manager's own hourly read is built on open.
+        salary_view="owner"),
     "pos_retry": dict(
         cadence="hourly, until 11am local", sla_minutes=_H, sends=False, runnable=True,
         label="POS retry", description="Retry failed POS syncs whose retry is due (+1h, +3h, +6h; never an auth failure), "
@@ -389,7 +412,10 @@ JOBS = {
         label="Value figures",
         description="Each restaurant's four value figures into value_figures_daily, which the Intelligence page "
                     "sums (bounded, resumable)",
-        target=("intelligence.dashboard", "snapshot_value_figures"), max_minutes=55, lane="intel"),
+        target=("intelligence.dashboard", "snapshot_value_figures"), max_minutes=55, lane="intel",
+        # Read by the operator's Intelligence page only (an admin sees
+        # salaries): the opportunity gap on the owner's all-in basis.
+        salary_view="owner"),
     "value_snapshots": dict(
         cadence="6am CT daily, after outcome evaluations", sla_minutes=_D, sends=False, runnable=True,
         label="Value history",
@@ -500,7 +526,7 @@ JOBS = {
     "open_shift_watch": dict(
         cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
         label="Open shifts",
-        description="Expire shift requests whose shift has passed; follow the week they are about; tell deciders about open shifts still unclaimed 12 hours before they start; put approved availability changes in force on their date",
+        description="Expire shift requests whose shift has passed; follow the week they are about; tell deciders about open shifts still unclaimed 12 hours before they start; put approved availability changes in force on their date; tell the managers of any stretch today or tomorrow on a published week with no manager on (the manager rule's backstop, once per stretch)",
         target=("shift_requests", "run_open_shift_watch"), max_minutes=15),
     "auto_draft_schedule": dict(
         cadence="hourly (6am local on each restaurant's draft day)", sla_minutes=_H, sends=True, runnable=True,
@@ -536,11 +562,14 @@ JOBS = {
         cadence="hourly (2am-9am local on each client's digest day)", sla_minutes=_H, sends=False,
         runnable=True, label="Digest precompute",
         description="Send each digest's narrative through Message Batches before the 9am send (half price)",
-        target=("reporter", "run_digest_precompute"), max_minutes=20, lane="ai"),
+        target=("reporter", "run_digest_precompute"), max_minutes=20, lane="ai",
+        salary_view="owner"),
     "weekly_digests": dict(
         cadence="hourly (9am local on each client's digest day)", sla_minutes=_H, sends=True, runnable=True,
         label="Weekly digests", description="Email weekly digests (bounded, resumable, on the AI lane)",
-        target=("scheduler", "run_weekly_digests"), claim="weekly_digest", max_minutes=30, lane="ai"),
+        target=("scheduler", "run_weekly_digests"), claim="weekly_digest", max_minutes=30, lane="ai",
+        # Sent to the owner's addresses only (get_owner_emails).
+        salary_view="owner"),
     "daily_alerts": dict(
         cadence="hourly (10am local)", sla_minutes=_H, sends=True, runnable=True,
         label="Daily alerts", description="No-response, trend, threshold, labor, competitor and data-source alerts, batched",
@@ -548,11 +577,14 @@ JOBS = {
     "monthly_summary": dict(
         cadence="hourly (9am local on the 1st)", sla_minutes=_H, sends=True, runnable=True,
         label="Monthly summary", description="The monthly business review email",
-        target=("scheduler", "run_monthly_summaries"), max_minutes=30),
+        target=("scheduler", "run_monthly_summaries"), max_minutes=30,
+        # Sent to restaurants.owner_email only.
+        salary_view="owner"),
     "quarterly_summaries": dict(
         cadence="hourly on the 1st of Jan / Apr / Jul / Oct (9am local)", sla_minutes=None, sends=True, runnable=True,
         label="Quarterly summary", description="The quarter that just ended",
-        target=("scheduler", "run_quarterly_summaries"), claim="quarterly_summary", max_minutes=30),
+        target=("scheduler", "run_quarterly_summaries"), claim="quarterly_summary", max_minutes=30,
+        salary_view="owner"),
     "onboarding_emails": dict(
         cadence="hourly (10am local)", sla_minutes=_H, sends=True, runnable=True,
         label="Onboarding", description="Day-2 / 7 / 30 onboarding and the 60 / 90 / 180-day lifecycle emails",
@@ -707,6 +739,16 @@ JOBS = {
         description="Rank each workflow's routes by quality per dollar over 28 days of runs, recommend changes "
                     "for the AI routes console, and revert an override owners accept clearly less often",
         target=("ai_learning", "run_learning"), max_minutes=10, retry=True),
+    "ai_smoke_eval": dict(
+        # Off unless AI_SMOKE_EVAL=1 (a run that attempts nothing). Model
+        # calls only, bounded by AI_SMOKE_EVAL_BUDGET_USD a pass; sends
+        # nothing. Never retried: a failed pass is next Monday's.
+        cadence="Mon 5am CT (AI lane; off unless AI_SMOKE_EVAL=1)", sla_minutes=_W, sends=False, runnable=True,
+        label="AI smoke eval",
+        description="Replay a few frozen production inputs of each top AI surface on its production model, score "
+                    "the answers with the deterministic checks and record how far they are from the baseline "
+                    "(scripts/run_ai_eval.py)",
+        target=("ai_eval", "run_smoke_eval"), max_minutes=30, lane="ai"),
 
     # ── staff reminders, every 10 minutes (employee audit H3/M8) ─────────
     "staff_reminders": dict(
@@ -773,6 +815,21 @@ JOBS = {
 def spec(name):
     """The registry entry for a job run name, or {}."""
     return JOBS.get(name) or {}
+
+
+# The jobs that read in the owner's salary view (`salary_view="owner"`):
+# each one's outputs reach the account holder alone. A new one is added
+# here AND on its entry, with the reason beside it (tests/
+# test_rf3_salary_view.py holds the two equal).
+OWNER_SALARY_JOBS = frozenset({"labor_prewarm", "value_figures", "digest_precompute", "weekly_digests",
+                               "monthly_summary", "quarterly_summaries"})
+
+
+def owner_salary_view(name) -> bool:
+    """Whether a run of `name` reads in the owner's salary view (all-in
+    labor). False for every other job and for a name the registry does
+    not know (an admin task): manager-safe by default."""
+    return spec(name).get("salary_view") == "owner"
 
 
 def max_minutes(name):

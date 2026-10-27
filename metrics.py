@@ -15,6 +15,7 @@ that never happened.
 Windows are inclusive date strings (YYYY-MM-DD). Metric keys may carry a
 parameter after a colon: "weekday_sales:Tuesday", "complaints:service".
 """
+import logging
 from datetime import date, timedelta
 
 import models as _models_mod
@@ -46,32 +47,197 @@ def _d(v):
 
 # ── the metrics ────────────────────────────────────────────────────────────
 
-def _salary_share(rid, db_path):
-    """A trading day's share of the salaries, for the owner's reads (labor %
-    is all-in, owner 9/30/26; models.viewer_sees_salaries), else 0."""
+def _sees_salaries(view):
+    """Whether a read for `view` carries the salaries: "owner" / True yes,
+    "manager" / False no, None the current viewer
+    (models.viewer_sees_salaries — a job outside a request reads as the
+    owner)."""
+    if view in ("owner", True):
+        return True
+    if view in ("manager", False):
+        return False
     try:
-        from models import get_restaurant, salaried_day_share, viewer_sees_salaries
-        if not viewer_sees_salaries():
-            return 0.0
-        return float(salaried_day_share(get_restaurant(rid, db_path) if db_path else get_restaurant(rid)) or 0)
+        from models import viewer_sees_salaries
+        return bool(viewer_sees_salaries())
     except Exception:
+        return False
+
+
+def salary_share_for(rid, view=None, db_path=None) -> float:
+    """A trading day's share of the salaries (models.salaried_day_share) for
+    a read in `view` (_sees_salaries), else 0.0 — never a salary to a viewer
+    who may not see one, and 0.0 with nobody salaried."""
+    if not _sees_salaries(view):
+        return 0.0
+    try:
+        from models import get_restaurant, salaried_day_share
+        return float(salaried_day_share(get_restaurant(rid, db_path) if db_path else get_restaurant(rid)) or 0)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[metrics] salaried day share unreadable for {rid}: {e!r}")
         return 0.0
 
 
-def _labor_pct(rid, start, end, param, db_path):
+def _salary_share(rid, db_path):
+    """A trading day's share of the salaries, for the owner's reads (labor %
+    is all-in, owner 9/30/26; models.viewer_sees_salaries), else 0."""
+    return salary_share_for(rid, None, db_path)
+
+
+LABOR_BASIS_TEXT = {
+    "all_in": "salaries included — each trading day carries a day's share of the salaried staff's pay",
+    "hourly": "hourly staff only — salaries are not in it",
+    "no_salaries": "every wage on file — no salaried staff entered",
+}
+
+
+def labor_figures(rid, start, end, view=None, db_path=None, nights=None, final_only=True) -> dict:
+    """THE labor figure for a window, as one viewer may read it (audit #25
+    F2/R7: labor % had fifteen implementations, each adding the salaries its
+    own way, and the owner was shown an hourly % beside an all-in one).
+
+      hourly_cost    the hourly staff's labor dollars (labor_daily_history
+                     stores labor HOURLY — salaried people's punches are not
+                     in it; their pay is added on read)
+      salaried_cost  a trading day's share of the salaries (models.
+                     salaried_day_share) times the trading days — None for a
+                     viewer who may not see salaries
+      net            the sales the figures are over
+      hourly_pct     hourly_cost / net
+      all_in_pct     (hourly_cost + salaried_cost) / net — None for a viewer
+                     who may not see salaries
+      pct, cost      the viewer's figure: all-in for the owner (owner,
+                     9/30/26: "it's the real %"), hourly for anyone else
+      includes_salaries, basis ("all_in" | "hourly" | "no_salaries"),
+      basis_text (LABOR_BASIS_TEXT), days, by_day {iso: the same per day}
+
+    `view`: "owner" / "manager" / None (the current viewer, _sees_salaries).
+    `nights` ({iso: {"labor": hourly $, "sales": $ or None, "trading":
+    bool}}) are nights measured elsewhere (the nightly report's labor
+    dollars); otherwise the window's days are read from labor_daily_history
+    (final days only unless `final_only` is False), each with labor and
+    sales. A night carries a day's share of the salaries when it traded:
+    `trading`, else when it has sales — the rule analyse_shifts and the
+    nightly report follow. Every figure None (pct None) when there is
+    nothing to divide."""
+    sees = _sees_salaries(view)
+    if nights is None:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT date, labor_cost, sales FROM labor_daily_history WHERE restaurant_id=? AND date>=? "
+                "AND date<=? AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL"
+                + (f" AND {FINAL_SQL}" if final_only else "") + " ORDER BY date",
+                (rid, _d(start), _d(end))).fetchall()
+        finally:
+            conn.close()
+        nights = {}
+        for r in rows:
+            nights.setdefault(_d(r["date"]), {"labor": _f(r["labor_cost"], 0.0), "sales": _f(r["sales"])})
+    share = salary_share_for(rid, True, db_path) if sees else 0.0
+    by_day, hourly_cost, salaried_cost, net = {}, 0.0, 0.0, 0.0
+    for d in sorted(nights):
+        x = nights[d] or {}
+        hourly = _f(x.get("labor"), 0.0)
+        sales = _f(x.get("sales"))
+        sal = share if share > 0 and x.get("trading", bool(sales)) else 0.0
+        hourly_cost += hourly
+        salaried_cost += sal
+        net += sales or 0.0
+        by_day[d] = _labor_figure(hourly, sal, sales, sees, share)
+    out = _labor_figure(hourly_cost, salaried_cost, net, sees, share)
+    out.update(days=len(by_day), by_day=by_day)
+    return out
+
+
+def prime_cost_pct(rid, start, end, db_path=None, with_salaries=None):
+    """(prime cost %, detail) over [start, end] as ONE share of net sales:
+    the food ledger's COGS over the window's net sales, plus labor over net
+    (labor_figures, on the reader's salary view unless `with_salaries` says).
+    Both parts are shares of the same sales, so they add — the food cost %
+    is over FOOD sales (no drink sales), and "food cost % + labor %" ran 12+
+    points over a bar-serving restaurant's prime cost (blind re-audit
+    10/26/26 B3). (None, why) when either part cannot be measured — never
+    a prime cost with one component assumed."""
+    import cogs
+    s, e = _d(start), _d(end)
+    days = (date.fromisoformat(e) - date.fromisoformat(s)).days + 1
+    fc = cogs.build_food_cost_pct(rid, days=days, db_path=db_path, today=date.fromisoformat(e))
+    cogs_d, why = cogs.window_cogs(fc, s, e)
+    if cogs_d is None:
+        return None, why
+    net = _f((fc or {}).get("net_sales"))
+    if not net or net <= 0:
+        net, nwhy = cogs.net_sales_in_window(rid, date.fromisoformat(s), date.fromisoformat(e))
+        net = _f(net)
+        if not net or net <= 0:
+            return None, nwhy or "net sales for the window are unknown"
+    view = None if with_salaries is None else bool(with_salaries)
+    fig = labor_figures(rid, s, e, view=view, db_path=db_path)
+    if not fig["days"] or fig["pct"] is None:
+        return None, "no days with both labor and sales in this window"
+    food_share = float(cogs_d) / net * 100.0
+    return (round(food_share + fig["pct"], 1),
+            f"food {food_share:.1f}% + labor {fig['pct']:.1f}% of net sales — labor {fig['basis_text']}")
+
+
+def _labor_figure(hourly, salaried, net, sees, share) -> dict:
+    """One labor_figures reading (a window's, or one day's)."""
+    net = _f(net)
+    has_net = bool(net and net > 0)
+    includes = bool(sees and share > 0)
+    hourly_pct = round(hourly / net * 100, 1) if has_net else None
+    all_in_pct = round((hourly + salaried) / net * 100, 1) if (sees and has_net) else None
+    basis = "all_in" if includes else ("no_salaries" if sees else "hourly")
+    return {"hourly_cost": round(hourly, 2),
+            "salaried_cost": round(salaried, 2) if sees else None,
+            "net": round(net, 2) if net is not None else None,
+            "hourly_pct": hourly_pct, "all_in_pct": all_in_pct,
+            "pct": all_in_pct if includes else hourly_pct,
+            "cost": round(hourly + (salaried if includes else 0.0), 2),
+            "includes_salaries": includes, "basis": basis, "basis_text": LABOR_BASIS_TEXT[basis]}
+
+
+def daily_labor(rid, days=14, view=None, db_path=None) -> list:
+    """The last `days` days of labor_daily_history that carry a labor %,
+    oldest first — models.get_labor_daily's rows with `labor_pct` and
+    `labor_cost` on the viewer's basis (labor_figures): all-in for the
+    owner, hourly for anyone else, `hourly_labor_pct` beside them and
+    `includes_salaries` / `labor_basis` saying which. The iPhone's daily
+    labor chart and Ask's per-day labor read this, so neither quotes the
+    stored hourly % to an owner whose Labor tab is all-in (audit #25 F2)."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute(
-            "SELECT SUM(labor_cost) AS labor, SUM(sales) AS sales, COUNT(*) AS n "
-            "FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<=? "
-            f"AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL AND {FINAL_SQL}",
-            (rid, _d(start), _d(end))).fetchone()
+        rows = [dict(r) for r in conn.execute(
+            "SELECT date, day_of_week, labor_pct, labor_cost, sales, total_hours FROM labor_daily_history "
+            "WHERE restaurant_id=? AND labor_pct IS NOT NULL ORDER BY date DESC LIMIT ?",
+            (rid, int(days))).fetchall()][::-1]
     finally:
         conn.close()
-    if not row or not row["n"] or not _f(row["sales"]):
+    sees = _sees_salaries(view)
+    share = salary_share_for(rid, True, db_path) if sees else 0.0
+    out = []
+    for r in rows:
+        sales = _f(r.get("sales"))
+        hourly = _f(r.get("labor_cost"))
+        if hourly is None or not sales or sales <= 0:
+            # No sales to put a day's share against: the stored hourly row.
+            out.append(dict(r, hourly_labor_pct=r.get("labor_pct"), includes_salaries=False, labor_basis="hourly"))
+            continue
+        fig = _labor_figure(hourly, share, sales, sees, share)
+        row = dict(r, labor_pct=fig["pct"], labor_cost=fig["cost"], hourly_labor_pct=fig["hourly_pct"],
+                   hourly_labor_cost=fig["hourly_cost"], includes_salaries=fig["includes_salaries"],
+                   labor_basis=fig["basis"])
+        if fig["includes_salaries"]:
+            row["salaried_cost"] = fig["salaried_cost"]
+        out.append(row)
+    return out
+
+
+def _labor_pct(rid, start, end, param, db_path):
+    fig = labor_figures(rid, start, end, db_path=db_path)
+    if not fig["days"] or fig["pct"] is None:
         return None, "no days with both labor and sales in this window"
-    labor = _f(row["labor"]) + _salary_share(rid, db_path) * int(row["n"])
-    return round(labor / _f(row["sales"]) * 100, 1), f"{row['n']} days"
+    return fig["pct"], f"{fig['days']} days"
 
 
 def _sales(rid, start, end, param, db_path):

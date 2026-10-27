@@ -1,0 +1,58 @@
+{
+ "enabled": true,
+ "ok": true,
+ "reports": [
+  {
+   "business_date": "2026-10-25",
+   "finalized_at": "<volatile>",
+   "first_risk": "Cheese American Yellow Sliced 160ct running low (0.8 days left)",
+   "label": "10/25/26",
+   "lead": "Net sales were 12,823.6. Labor ran 23.6%. Keep the dinner pattern for the next schedule.",
+   "lead_missing": null,
+   "missing": [],
+   "net": 12823.6,
+   "overall": 42,
+   "provisional": false,
+   "stats": [
+    {
+     "key": "vs_last_week_pct",
+     "label": "vs last week",
+     "tone": "bad",
+     "value": "-29%"
+    },
+    {
+     "key": "vs_forecast_pct",
+     "label": "vs forecast",
+     "tone": "bad",
+     "value": "-28%"
+    },
+    {
+     "key": "labor_pct",
+     "label": "labor",
+     "tone": "good",
+     "value": "27.1%"
+    },
+    {
+     "key": "guests",
+     "label": "guests",
+     "tone": null,
+     "value": "412"
+    },
+    {
+     "key": "avg_ticket",
+     "label": "avg check",
+     "tone": null,
+     "value": "$73.70"
+    }
+   ],
+   "status": "final",
+   "tone": "bad",
+   "verdict": "Tough day",
+   "version": 1,
+   "vs_budget": null,
+   "vs_yesterday_pct": -22.5
+  }
+ ],
+ "tonight": "2026-10-26",
+ "view": "owner"
+}

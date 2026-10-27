@@ -47,6 +47,8 @@ from csrf import csrf_exempt  # the email unsubscribe links: their token is the 
 
 # Simple in-memory insight cache: {cache_key: (timestamp, value)}
 _insight_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("client_api._insight_cache", _insight_cache)
 _INSIGHT_TTL = 300  # 5 minutes
 
 # The most rows one CSV import will process inline. A year of shifts for a
@@ -99,7 +101,12 @@ def _summarize_later(restaurant_id, conversation_id, user_id=None, correlation_i
         with _SUMMARY_POOL_LOCK:
             if _SUMMARY_POOL is None:
                 from concurrent.futures import ThreadPoolExecutor
-                _SUMMARY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ask-summary")
+                # One thread per process — a bound of 1 cannot be split
+                # between gunicorn workers (pool_sizing: the gateway is the
+                # fleet's ceiling on what summaries spend).
+                import pool_sizing
+                _SUMMARY_POOL = ThreadPoolExecutor(max_workers=pool_sizing.sized("ask_summary", 1),
+                                                   thread_name_prefix="ask-summary")
 
         def _run():
             try:
@@ -147,7 +154,9 @@ def food_insight_text(rid, restaurant, items, is_live, analysis):
         bo_read = food_read_backoffice(rid, restaurant)
         if bo_read:
             return bo_read["text"]
-    cache_key = "inv-insight:%s:%s" % (rid, _analysis_fingerprint(analysis))
+    # Per salary view too (audit #25 F13): the read's prime cost carries the
+    # viewer's labor, all-in for the owner.
+    cache_key = "inv-insight:%s:%s%s" % (rid, _analysis_fingerprint(analysis), salary_view_suffix())
     insight = _cache_get(cache_key)
     if insight is None:
         insight = get_claude_insights(analysis, owner_name=restaurant.owner_name if restaurant else None,
@@ -1985,9 +1994,10 @@ def review_insight_answer(rid, viewer):
     # The stored read this login may be served: the cross-location one only
     # to a login shown its other locations (re-audit 10/8/26 #1).
     sees = bool(_review_sees_locations(rid, viewer))
+    scope = review_read_scope(viewer)
 
     def _stale(note):
-        body, at = review_stored_latest(rid, sees)
+        body, at = review_stored_latest(rid, sees, scope)
         if not (isinstance(body, dict) and body.get("insight")):
             return None
         from ai_guard import freshness as _fresh_sw
@@ -2004,7 +2014,7 @@ def review_insight_answer(rid, viewer):
         stale=_stale,
         pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": []}, 200),
         failed=lambda err, st: ({"insight": err or INSIGHT_UNAVAILABLE, "error": err or INSIGHT_UNAVAILABLE}, st),
-        key={"locations": sees},
+        key={"locations": sees, "scope": scope},
         refresh_job=insight_refresh.refresh_job_arg())
 
 
@@ -2344,10 +2354,41 @@ REVIEW_STORE_KIND = "reviews"
 REVIEW_LOCATIONS_STORE_KIND = "reviews:locations"
 
 
-def review_store_kind(sees_locations) -> str:
+def review_store_kind(sees_locations, scope="") -> str:
     """The insight_store kind of the Reviews read for a login that does
-    (or does not) see its other locations."""
-    return REVIEW_LOCATIONS_STORE_KIND if sees_locations else REVIEW_STORE_KIND
+    (or does not) see its other locations, in its review_read_scope."""
+    return (REVIEW_LOCATIONS_STORE_KIND if sees_locations else REVIEW_STORE_KIND) + (scope or "")
+
+
+def review_read_scope(viewer=None) -> str:
+    """What of the other modules a login's Reviews read may carry
+    (insight_store.review_scope): "" for one who sees the salaries (the
+    owner — all-in labor, waste dollars), ":hourly" for anyone else who
+    sees Food Cost, ":hourly:nofood" for one who does not (a manager). The
+    read's operational evidence — labor %, the week's waste $ — was built
+    in whoever opened Reviews first's view and kept per restaurant, so a
+    manager was served the owner's all-in labor and the margins their role
+    is built without (blind re-audit 10/26/26 B3). Salary view from the
+    request (models.viewer_sees_salaries); Food Cost from the login, or —
+    with no login named — only alongside the salaries."""
+    import insight_store as _ist_rs
+    try:
+        from models import viewer_sees_salaries
+        sees = bool(viewer_sees_salaries())
+    except Exception:
+        sees = False
+    if isinstance(viewer, dict):
+        from permissions import has_permission, FOOD_COST_VIEW
+        food = bool(viewer.get("is_admin")) or has_permission(viewer, FOOD_COST_VIEW)
+    else:
+        food = sees
+    return _ist_rs.review_scope(sees, food)
+
+
+def review_cache_key(rid, viewer=None) -> str:
+    """The process-cache key of the Reviews read this login is served."""
+    return ("review-insight:" + str(rid) + (":locations" if _review_sees_locations(rid, viewer) else "")
+            + review_read_scope(viewer))
 
 
 def review_body_shows_locations(body) -> bool:
@@ -2356,14 +2397,15 @@ def review_body_shows_locations(body) -> bool:
     return bool(isinstance(locs, dict) and locs.get("available"))
 
 
-def review_stored_latest(rid, sees_locations):
+def review_stored_latest(rid, sees_locations, scope=""):
     """(payload, created_at) of the last stored Reviews read this login may
-    be served, else (None, None). The kind matches the login; a row under
-    the plain kind that still carries location themes (written before the
-    kinds were split) is never served to a login that may not see them."""
+    be served, else (None, None). The kind matches the login (its locations
+    and its review_read_scope); a row under the plain kind that still
+    carries location themes (written before the kinds were split) is never
+    served to a login that may not see them."""
     try:
         import insight_store as _ist_rl
-        body, at = _ist_rl.latest(rid, review_store_kind(sees_locations))
+        body, at = _ist_rl.latest(rid, review_store_kind(sees_locations, scope))
     except Exception:
         return None, None
     if not sees_locations and review_body_shows_locations(body):
@@ -2456,9 +2498,13 @@ def _do_review_insight(rid, viewer=None):
     # its other locations' review themes, so a manager of one location never
     # reads a sibling aggregate generated for the owner (re-audit #42).
     _sees_ri = bool(_review_sees_locations(rid, viewer))
-    _ck = "review-insight:" + str(rid) + (":locations" if _sees_ri else "")
+    # And per what of the other modules this login may see (review_read_scope,
+    # blind re-audit 10/26/26 B3): the owner's all-in labor and the waste $
+    # are never in a manager's read.
+    _scope_ri = review_read_scope(viewer)
+    _ck = "review-insight:" + str(rid) + (":locations" if _sees_ri else "") + _scope_ri
     # Its stored row likewise (re-audit 10/8/26 #1): review_store_kind.
-    _sk_ri = review_store_kind(_sees_ri)
+    _sk_ri = review_store_kind(_sees_ri, _scope_ri)
     cached = _cache_get(_ck)
     if cached:
         return _review_insight_recs(rid, dict(cached) if isinstance(cached, dict) else {"insight": cached}), 200
@@ -2644,7 +2690,9 @@ def _do_review_insight(rid, viewer=None):
         # to exist at all.
         import review_intelligence as _ri
         _trend = _ri.rating_trend(rid)
-        _ops_ctx = _ri.operational_context(rid)
+        # In this login's salary view (the request's, or the one its refresh
+        # carried), with Food Cost only for a login that sees it.
+        _ops_ctx = _ri.operational_context(rid, include_food=not _scope_ri.endswith(":nofood"))
         _money = _ri.revenue_at_risk(rid)
         _bench = _ri.competitor_benchmark(rid)
         try:
@@ -2946,7 +2994,8 @@ def _do_review_insight(rid, viewer=None):
                 "severity": _sev,
                 "dayparts": _parts,
                 "locations": _locs,
-                "operational_context": _ops_ctx,
+                # operational_context is the prompt's evidence, never returned:
+                # no client reads it, and it carried labor % and waste $ (B3).
                 "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
                 "stale": False,
             }
@@ -3024,7 +3073,7 @@ def _do_review_insight(rid, viewer=None):
                 detail=_why_ri or "refused whole by the response validation layer")
             if _why_ri == "the reply was empty":
                 _ai_q.mark_outcome(msg, "unparseable", reason="empty reply")
-            _prev_ri, _prev_at = review_stored_latest(rid, _sees_ri)
+            _prev_ri, _prev_at = review_stored_latest(rid, _sees_ri, _scope_ri)
             if isinstance(_prev_ri, dict) and _prev_ri.get("insight"):
                 from ai_guard import freshness as _fresh_rf
                 held = dict(_prev_ri)
@@ -3072,7 +3121,7 @@ def _do_review_insight(rid, viewer=None):
         if not stale:
             # The stored read survives a deploy; the in-memory one does not.
             try:
-                _body_st, _at_st = review_stored_latest(rid, _sees_ri)
+                _body_st, _at_st = review_stored_latest(rid, _sees_ri, _scope_ri)
                 if isinstance(_body_st, dict) and _body_st.get("insight"):
                     stale = (datetime.strptime(str(_at_st)[:19], "%Y-%m-%d %H:%M:%S"), _body_st)
             except Exception:
@@ -5059,7 +5108,7 @@ def labor_read_state(rid) -> dict:
     carries, so every path — first load, cache hit, fallback — has one
     shape and a client caching the response keeps whether it was stale.
     Dated by the note's own generated_at (_labor_note_entry)."""
-    return _labor_read_age(_labor_note_entry(rid, _insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))), False)
+    return _labor_read_age(_labor_note_entry(rid, _insight_cache.get(labor_cache_key(rid))), False)
 
 
 def labor_stale_read(rid, note=None):
@@ -5072,18 +5121,16 @@ def labor_stale_read(rid, note=None):
     is what a stale-while-refresh answer serves while the new one is
     written. `note(as_of)`, when given, is the stale_note instead.
 
-    Only for a viewer who may see the salaries: the kept read is one per
-    restaurant and is the owner's all-in one as often as not, and served to
-    a manager it gave the salaries away beside their hourly figure (blind
-    re-audit 10/20/26 R9-05). Anyone else waits for the read built for them."""
-    from models import viewer_sees_salaries as _vss_stale
-    if not _vss_stale():
-        return None
-    entry = _insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))
+    Each salary view's own read only (blind re-audit 10/20/26 R9-05; audit
+    #25 F13): the owner's is all-in, and served to a manager it gave the
+    salaries away beside their hourly figure. The reads are kept apart —
+    labor_cache_key and insight_store.salary_kind — so a manager's stale
+    read is the last hourly one, never the owner's."""
+    import insight_store as _ist_stale
+    entry = _insight_cache.get(labor_cache_key(rid))
     if not entry:
         try:
-            import insight_store as _ist_stale
-            text, at = _ist_stale.latest(rid, "labor")
+            text, at = _ist_stale.latest(rid, _ist_stale.salary_kind("labor"))
             if isinstance(text, str) and text.strip():
                 entry = (datetime.strptime(str(at)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S"), text)
         except Exception:
@@ -5101,9 +5148,32 @@ LABOR_INSIGHT_CACHE = "labor-insight:"
 # The analysis fingerprint each restaurant's cached Labor read was written
 # from (DH4-21): a read never outlives the figures it narrates — a POS sync
 # that moves them is a miss, as `inv-insight:` keys already were. One entry
-# per restaurant; the read itself stays under LABOR_INSIGHT_CACHE + rid so
-# the stale fallback still finds it.
+# per restaurant and salary view; the read itself stays under
+# labor_cache_key(rid) so the stale fallback still finds it.
 _LABOR_READ_FP = {}
+
+
+def salary_view_suffix() -> str:
+    """"" for a viewer who may see salaries (models.viewer_sees_salaries),
+    ":hourly" for anyone else — appended to a cached read's key whose
+    figures depend on the salary view (audit #25 F13: the owner's all-in
+    Labor read and a manager's hourly one shared one entry, so each view
+    evicted the other and paid for a new read every time)."""
+    import insight_store as _ist_sv
+    return "" if _ist_sv.salary_kind("labor") == "labor" else _ist_sv.HOURLY_SUFFIX
+
+
+def labor_cache_key(rid) -> str:
+    """The Labor read's process-cache key for this viewer's salary view."""
+    return LABOR_INSIGHT_CACHE + str(rid) + salary_view_suffix()
+
+
+def labor_refresh_key():
+    """The background refresh's key for this viewer's salary view (None for
+    the salary view, as before; ":hourly" otherwise): an owner and a manager
+    opening Labor or Food Cost together write two reads, never join one
+    (insight_refresh.start)."""
+    return salary_view_suffix() or None
 
 
 def _labor_fp(analysis):
@@ -5117,10 +5187,10 @@ def _labor_fp(analysis):
 def labor_cached_read(rid, analysis):
     """The cached Labor read for `analysis`, or None — a read written from
     other figures is a miss (DH4-21)."""
-    cached = _cache_get(LABOR_INSIGHT_CACHE + str(rid))
+    cached = _cache_get(labor_cache_key(rid))
     if not cached:
         return None
-    rec, now_fp = _LABOR_READ_FP.get(str(rid)), _labor_fp(analysis)
+    rec, now_fp = _LABOR_READ_FP.get(labor_cache_key(rid)), _labor_fp(analysis)
     # The fingerprint belongs to the read it was stored with; a read that
     # entered the cache any other way carries none.
     if rec is not None and rec[1] is cached and now_fp is not None and rec[0] != now_fp:
@@ -5130,12 +5200,13 @@ def labor_cached_read(rid, analysis):
 
 def labor_cache_put(rid, analysis, text):
     """Cache the Labor read with the fingerprint of the figures behind it."""
-    _cache_set(LABOR_INSIGHT_CACHE + str(rid), text)
+    key = labor_cache_key(rid)
+    _cache_set(key, text)
     fp = _labor_fp(analysis)
     if fp is not None:
-        _LABOR_READ_FP[str(rid)] = (fp, text)
+        _LABOR_READ_FP[key] = (fp, text)
     else:
-        _LABOR_READ_FP.pop(str(rid), None)
+        _LABOR_READ_FP.pop(key, None)
 
 
 def labor_read_text(rid, analysis=None):
@@ -5224,7 +5295,7 @@ def labor_insight_api(current_user):
         pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": [], "rec_items": []}, 200),
         failed=lambda err, st: ({"insight": err or "Unable to load analysis — check back shortly."},
                                 200 if st == 500 else st),
-        refresh_job=insight_refresh.refresh_job_arg())
+        key=labor_refresh_key(), refresh_job=insight_refresh.refresh_job_arg())
     return jsonify(**payload), status
 
 @client_bp.route("/api/inv-insight")
@@ -5245,7 +5316,8 @@ def inv_insight_api(current_user):
 
     def _stale(note):
         import insight_store
-        text, at = insight_store.latest(rid, "food")
+        # This viewer's own salary view's read (audit #25 F13).
+        text, at = insight_store.latest(rid, insight_store.salary_kind("food"))
         if not text or not isinstance(text, str):
             return None
         from ai_guard import freshness as _fresh_food
@@ -5258,7 +5330,7 @@ def inv_insight_api(current_user):
         return out, 200
 
     payload, status = insight_refresh.serve(
-        "food", rid, render=render, refresh=render, stale=_stale,
+        "food", rid, render=render, refresh=render, stale=_stale, key=labor_refresh_key(),
         pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": [], "is_live": True,
                               "source": "live"}, 200),
         failed=lambda err, st: ({"insight": err or INSIGHT_UNAVAILABLE, "error": err or INSIGHT_UNAVAILABLE}, st),
@@ -7846,7 +7918,10 @@ def _do_send_review_request(rid, data, actor=None):
                 + f"We'd love your feedback — leave us a Google review: {review_url}"
             )
             _sms = _notify_rr.send_sms_outcome(customer_phone, sms_text, use_case="guest", restaurant_id=rid)
-            sent_sms = _sms.ok
+            # Twilio took it and never answered: it may have reached the
+            # guest, so it is recorded as asked and never "try again" (a
+            # second tap would text them twice — audit #25 A06-11).
+            sent_sms = _sms.ok or bool(getattr(_sms, "uncertain", False))
             if not sent_sms and not customer_email:
                 why = ("that number can't receive texts" if _sms.permanent
                        else "texting isn't set up" if _sms.status == "not_configured"
@@ -8278,6 +8353,7 @@ def _pplx_wait_turn():
 
 _AIVIS_CACHE_SECS = int(os.getenv("AI_VISIBILITY_CACHE_SECS", "21600"))  # 6 hours
 _aivis_cache = {}
+_process_caches.register("client_api._aivis_cache", _aivis_cache)
 
 
 # Cached per process because a restaurant's address does not normally
@@ -8287,6 +8363,7 @@ _aivis_cache = {}
 # so a wrong one silently scores zero forever.
 _CITY_CACHE_SECS = 86400
 _city_cache = {}
+_process_caches.register("client_api._city_cache", _city_cache)
 # Both per-process caches above are keyed by restaurant / place and were
 # never bounded (scale audit 10/19/26, SEC-19): memory grew with the fleet,
 # per worker. home_brief._cache_put's sweep: oldest first, expired or past

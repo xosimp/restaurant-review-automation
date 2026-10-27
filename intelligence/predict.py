@@ -177,7 +177,9 @@ def _my_dims(restaurant_id, dnas, db_path):
     mine = dnas.get(restaurant_id)
     if mine is None:
         row = dna.latest(restaurant_id, db_path=db_path)
-        if row and int(row.get("version") or 1) >= dna.DNA_VERSION:
+        # == (release-safety audit 10/26/26 A05-05): dims a newer build wrote
+        # are not read by this code after a rollback; the nightly recomputes.
+        if row and int(row.get("version") or 1) == dna.DNA_VERSION:
             mine = row.get("dims")
     return mine or None
 
@@ -236,7 +238,7 @@ def _baseline_history(conn, rids, target, norms) -> dict:
     marks = ",".join("?" for _ in rids)
     try:
         rows = conn.execute(f"SELECT restaurant_id, week, dims_json FROM intel_dna WHERE restaurant_id IN ({marks}) "
-                            f"AND COALESCE(version, 1) >= ? ORDER BY week", (*rids, dna.DNA_VERSION)).fetchall()
+                            f"AND COALESCE(version, 1) = ? ORDER BY week", (*rids, dna.DNA_VERSION)).fetchall()
     except Exception:
         return {}
     out = {}

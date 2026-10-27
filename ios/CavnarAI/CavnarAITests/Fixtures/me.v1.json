@@ -1,0 +1,13 @@
+{
+ "ok": true,
+ "timezone": "America/Chicago",
+ "user": {
+  "can_manage_team": true,
+  "email": "owner@halstedandrye.example",
+  "id": 1,
+  "is_admin": false,
+  "restaurant_id": 1,
+  "role": "client",
+  "username": "halstedowner"
+ }
+}

@@ -100,7 +100,8 @@ def test_new_figures_write_a_new_read(monkeypatch):
 def test_the_read_is_stored_with_the_models_own_text_for_revalidation(monkeypatch):
     rid = _rid()
     _stub(monkeypatch)
-    labor.labor_note(rid, _analysis(), restaurant_name="R", owner_name="Sam")
+    with models.salary_view(True):          # the owner's read, under the owner's kind ("labor")
+        labor.labor_note(rid, _analysis(), restaurant_name="R", owner_name="Sam")
     payload, created = insight_store.latest(rid, "labor")
     assert str(payload).startswith("Sam, labor ran 34%")
     conn = models.get_conn()

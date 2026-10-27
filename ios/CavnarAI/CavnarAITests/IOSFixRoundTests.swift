@@ -474,7 +474,7 @@ final class IOSFixRoundTests: XCTestCase {
     }
 
     func testAManagersWeekHasNoGrossOrLaborColumnOfDashes() throws {
-        let url = Bundle(for: Self.self).url(forResource: "dsr_week", withExtension: "json")!
+        let url = Bundle(for: Self.self).url(forResource: "dsr_week_scenario", withExtension: "json")!
         let all = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
         var week = (all["manager"] as! [String: Any])
         var grid = week["week"] as! [String: Any]

@@ -1,35 +1,54 @@
-"""Unscoped writes on tenant tables, held as a ratchet (scale audit 10/19/26,
-SEC-16).
+"""Unscoped writes and reads on tenant tables, held as a ratchet (scale audit
+10/19/26, SEC-16; widened by audit #25 A03-06, 10/26/26).
 
 Isolation here is the app's own WHERE clauses: a helper checks that a row
-is the session's restaurant's and then writes it by primary key. Every one
-of the ~400 `UPDATE <t> ... WHERE id=?` / `DELETE FROM <t> WHERE id=?`
-statements on a table with a `restaurant_id` column that does not also name
-`restaurant_id` follows such a check today (A7 traced 45 of them: no IDOR).
-Nothing stopped the next one from skipping the check.
-
-This counts them per (file, table) and compares with
-`scripts/tenant_scope_baseline.json`. A NEW unscoped write fails
+is the session's restaurant's and then writes it by primary key. Every
+`UPDATE <t> ... WHERE ... id=?` / `DELETE FROM <t> WHERE ... id IN (...)`
+statement on a table with a `restaurant_id` column that does not also name
+`restaurant_id` must follow such a check. Nothing generic stops the next one
+from skipping it, so this counts them per (file, table) and compares with
+`scripts/tenant_scope_baseline.json`. A NEW unscoped statement fails
 (`tests/test_tenant_scope.py`): scope it (`AND restaurant_id=?`), or — when
 the ownership check is genuinely just above it — raise the count in the
-baseline in the same commit and say which check covers it. A count that
-falls is lowered with `--update`. The window is the statement's own line and
-the two after it (one SQL string across Python string concatenation), up
-to the quote that closes it.
+baseline in the same commit and say in its "why" which check covers it.
 
-    python3 scripts/check_tenant_scope.py            # compare, exit 1 on a new one
-    python3 scripts/check_tenant_scope.py --update   # rewrite the baseline (after review)
+What counts (A03-06 widened it):
+  - every SQL string the code builds: a literal, an implicit concatenation,
+    a triple-quoted block of any length, an f-string (its holes read as
+    `{X}`, so `WHERE id IN ({ph})` counts), and `+` joins — read from the
+    AST, so the statement is read to its end, not a 3-line window;
+  - `id = ?` or `id IN (` ANYWHERE after the statement's WHERE, optionally
+    table-qualified (`r.id = ?`), so `WHERE status=? AND id=?` counts.
+    `review_id=?` / `restaurant_id=?` are other columns and do not;
+  - scoped means `restaurant_id` appears in the statement (for an UPDATE,
+    from its WHERE on — setting restaurant_id is not scoping by it).
+Docstrings are not read; comments never were SQL.
 
-Reads too (blind re-audit 10/20/26 R7-18): a new `SELECT ... FROM <tenant
-table> ... WHERE id=?` that does not name restaurant_id is counted the same
-way against `scripts/tenant_scope_reads_baseline.json` (125 when it began;
-the audit traced none that cross
-tenants). At 1,500 tenants a new read helper called with a request-supplied
-id is a cross-tenant leak no other test catches; Postgres row-level security
-is the stronger guard, not on yet.
+Each baseline entry is {"file::table": {"n": N, "stmts": [...], "why":
+"..."}}: the count, a fingerprint of each counted statement (its text,
+whitespace and case folded) and the ownership check (or the reason no
+tenant's id can reach it — an admin-only route, a job's own rows) that
+covers every site. A statement whose fingerprint is not in its entry fails
+even when the count did not grow (blind re-audit 10/27/26 B1 F14: removing
+one unscoped statement and adding another in the same file passed a count),
+so an edit to an unscoped statement is reviewed too. --update rewrites the
+counts and fingerprints, keeps every "why" and writes "TODO" for a new key;
+the test fails on an empty or TODO reason.
 
-    python3 scripts/check_tenant_scope.py --update-reads   # rewrite the reads baseline
+    python3 scripts/check_tenant_scope.py                # compare, exit 1 on a new one
+    python3 scripts/check_tenant_scope.py --list         # every counted site, file:line
+    python3 scripts/check_tenant_scope.py --update       # rewrite the writes baseline (after review)
+    python3 scripts/check_tenant_scope.py --update-reads # rewrite the reads baseline (after review)
+
+Reads too (blind re-audit 10/20/26 R7-18): a `SELECT ... FROM <tenant
+table> ... WHERE ... id=?` that does not name restaurant_id is counted the
+same way against `scripts/tenant_scope_reads_baseline.json`. At 1,500
+tenants a new read helper called with a request-supplied id is a
+cross-tenant leak; tests/test_cross_tenant_crawl.py walks every route with
+another tenant's ids as the behavioural half of this guard.
 """
+import ast
+import hashlib
 import json
 import os
 import re
@@ -41,12 +60,14 @@ BASELINE = os.path.join(ROOT, "scripts", "tenant_scope_baseline.json")
 READS_BASELINE = os.path.join(ROOT, "scripts", "tenant_scope_reads_baseline.json")
 _FROM = re.compile(r"\bFROM\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.I)
 _DELETE_BEFORE = re.compile(r"DELETE\s*$", re.I)
-_STMT = re.compile(r"\b(UPDATE|DELETE\s+FROM)\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.I)
-_BY_ID = re.compile(r"WHERE\s+(?:[a-z_]+\.)?id\s*=\s*\?", re.I)
-# Where a statement's SQL string ends: a closing quote, then its arguments
-# or the call's close (so the next statement on the next line is not read
-# as part of this one).
-_END = re.compile(r"[\"']\s*(?:,|\))")
+_STMT = re.compile(r"\b(UPDATE(?:\s+OR\s+[A-Za-z]+)?|DELETE\s+FROM)\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.I)
+_WHERE = re.compile(r"\bWHERE\b", re.I)
+# `id = ?` / `id IN (` — bare or table-qualified (`r.id`), never the tail of
+# another column (`review_id`, `restaurant_id`: `_` is a word character, so
+# the look-behind refuses them).
+_BY_ID = re.compile(r"(?:(?<![\w.])[A-Za-z_][A-Za-z0-9_]*\.|(?<![\w.]))id\s*(?:=\s*\?|IN\s*\()", re.I)
+_SCOPED = re.compile(r"restaurant_id", re.I)
+_HOLE = "{X}"
 
 
 def tenant_tables():
@@ -72,84 +93,249 @@ def _sources():
     return [f for f in files if not f.startswith(("tests/", "scripts/"))]
 
 
-def scan(tables=None):
-    tables = tables if tables is not None else tenant_tables()
-    counts = {}
+def _text(node):
+    """The text a string expression builds — a literal, an f-string (holes
+    as {X}), a `+` join or the left side of a `%` — or None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(v.value if isinstance(v, ast.Constant) and isinstance(v.value, str) else _HOLE
+                       for v in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        a, b = _text(node.left), _text(node.right)
+        if a is None and b is None:
+            return None
+        return (a if a is not None else _HOLE) + (b if b is not None else _HOLE)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        return _text(node.left)
+    return None
+
+
+def _strings(source):
+    """[(line, text)] for every outermost string expression in `source` that
+    could hold a statement (a bare string statement — a docstring — is left
+    out)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    out = []
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            continue                                   # a docstring or a bare string
+        if isinstance(node, (ast.Constant, ast.JoinedStr, ast.BinOp)):
+            text = _text(node)
+            if text is not None:
+                upper = text.upper()
+                if "FROM" in upper or "UPDATE" in upper:
+                    out.append((node.lineno, text))
+                if isinstance(node, ast.BinOp):
+                    # an operand that is not itself string text (a call
+                    # that builds SQL of its own) is still read
+                    stack.extend(c for c in (node.left, node.right) if _text(c) is None)
+                continue
+        stack.extend(ast.iter_child_nodes(node))
+    return out
+
+
+_CACHE = {}
+
+
+def _file_strings(path):
+    """_strings of one source file, kept per (path, mtime, size) — the
+    writes and the reads scans read the same files."""
+    full = os.path.join(ROOT, path)
+    st = os.stat(full)
+    key = (full, st.st_mtime_ns, st.st_size)
+    if key not in _CACHE:
+        with open(full, encoding="utf-8") as fh:
+            _CACHE[key] = _strings(fh.read())
+    return _CACHE[key]
+
+
+def _unscoped(tail, scope_from_where=False):
+    """True when the statement text `tail` (from its keyword to the end of
+    the string) picks rows by id after its WHERE and never names
+    restaurant_id."""
+    tail = tail.split(";")[0]
+    w = _WHERE.search(tail)
+    if not w or not _BY_ID.search(tail, w.end()):
+        return False
+    return not _SCOPED.search(tail[w.start():] if scope_from_where else tail)
+
+
+def fingerprint(statement):
+    """A counted statement's identity: its text from the keyword to the end
+    of the statement, whitespace collapsed and case folded, hashed."""
+    norm = " ".join(statement.split(";")[0].split()).lower()
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:12]
+
+
+def _sites(tables, reads, with_text=False):
+    """[(path, line, table)] for every counted statement — with its
+    fingerprint as a fourth item when `with_text`."""
+    out = []
     for path in _sources():
-        lines = open(os.path.join(ROOT, path), encoding="utf-8").read().splitlines()
-        for i, line in enumerate(lines):
-            for m in _STMT.finditer(line):
-                table = m.group(2).lower()
-                if table not in tables:
-                    continue
-                window = " ".join(lines[i:i + 3])
-                tail = window[window.find(m.group(0)):]
-                end = _END.search(tail)
-                tail = tail[:end.start()] if end else tail
-                if not _BY_ID.search(tail) or "restaurant_id" in tail:
-                    continue
-                key = f"{path}::{table}"
-                counts[key] = counts.get(key, 0) + 1
+        for line, text in _file_strings(path):
+            if reads:
+                for m in _FROM.finditer(text):
+                    table = m.group(1).lower()
+                    if table not in tables or _DELETE_BEFORE.search(text[:m.start()]):
+                        continue
+                    if _unscoped(text[m.start():]):
+                        out.append((path, line, table, fingerprint(text[m.start():])) if with_text
+                                   else (path, line, table))
+            else:
+                for m in _STMT.finditer(text):
+                    table = m.group(2).lower()
+                    if table not in tables:
+                        continue
+                    if _unscoped(text[m.start():], scope_from_where=m.group(1).upper().startswith("UPDATE")):
+                        out.append((path, line, table, fingerprint(text[m.start():])) if with_text
+                                   else (path, line, table))
+    return out
+
+
+def _count(sites):
+    counts = {}
+    for path, _line, table, *_ in sites:
+        key = f"{path}::{table}"
+        counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def scan(tables=None):
+    """{"file::table": n} for UPDATE/DELETE on a tenant table by id that do
+    not name restaurant_id."""
+    tables = tables if tables is not None else tenant_tables()
+    return _count(_sites(tables, reads=False))
 
 
 def scan_reads(tables=None):
-    """{"file::table": n} for SELECTs from a tenant table by primary key that
-    do not name restaurant_id (the reads half of the ratchet, R7-18)."""
+    """{"file::table": n} for SELECTs from a tenant table by id that do not
+    name restaurant_id (the reads half of the ratchet, R7-18)."""
     tables = tables if tables is not None else tenant_tables()
-    counts = {}
-    for path in _sources():
-        lines = open(os.path.join(ROOT, path), encoding="utf-8").read().splitlines()
-        for i, line in enumerate(lines):
-            for m in _FROM.finditer(line):
-                table = m.group(1).lower()
-                if table not in tables or _DELETE_BEFORE.search(line[:m.start()]):
-                    continue
-                window = " ".join(lines[i:i + 3])
-                tail = window[window.find(m.group(0)):]
-                end = _END.search(tail)
-                tail = tail[:end.start()] if end else tail
-                if not _BY_ID.search(tail) or "restaurant_id" in tail:
-                    continue
-                key = f"{path}::{table}"
-                counts[key] = counts.get(key, 0) + 1
-    return counts
+    return _count(_sites(tables, reads=True))
 
 
-def compare(counts, baseline):
-    """[(key, now, allowed)] for every key over its baseline."""
-    return [(k, n, baseline.get(k, 0)) for k, n in sorted(counts.items()) if n > baseline.get(k, 0)]
+def fingerprints(tables=None, reads=False):
+    """{"file::table": sorted fingerprints} of the counted statements — the
+    writes, or with `reads` the SELECTs."""
+    tables = tables if tables is not None else tenant_tables()
+    out = {}
+    for path, _line, table, fp in _sites(tables, reads, with_text=True):
+        out.setdefault(f"{path}::{table}", []).append(fp)
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def allowed(entry):
+    """A baseline entry's count: {"n": N, "why": ...} (or a bare int, the
+    format before A03-06)."""
+    if isinstance(entry, dict):
+        return int(entry.get("n") or 0)
+    return int(entry or 0)
+
+
+def _new_statements(prints, entry):
+    """The fingerprints in `prints` that `entry` does not hold (as a
+    multiset: a second copy of a baselined statement is new too); None when
+    the entry carries no fingerprints (the count alone judges it)."""
+    held = entry.get("stmts") if isinstance(entry, dict) else None
+    if held is None:
+        return None
+    left = list(held)
+    new = []
+    for fp in prints:
+        if fp in left:
+            left.remove(fp)
+        else:
+            new.append(fp)
+    return new
+
+
+def compare(counts, baseline, prints=None):
+    """[(key, now, allowed)] for every key over its baseline — or, given the
+    statements' `prints`, holding any statement its entry does not."""
+    out = []
+    for k, n in sorted(counts.items()):
+        entry = baseline.get(k, 0)
+        new = _new_statements(prints.get(k, []), entry) if prints is not None else None
+        if n > allowed(entry) or new:
+            out.append((k, n, allowed(entry)))
+    return out
+
+
+def unexplained(baseline):
+    """Keys whose "why" is missing, empty or TODO."""
+    out = []
+    for k, entry in sorted(baseline.items()):
+        why = entry.get("why") if isinstance(entry, dict) else None
+        if not why or not str(why).strip() or str(why).strip().upper().startswith("TODO"):
+            out.append(k)
+    return out
+
+
+def _load(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {}
+
+
+def _write(path, counts, prints):
+    """Rewrite a baseline to `counts` and `prints`, keeping each surviving
+    key's why."""
+    old = _load(path)
+    out = {}
+    for k, n in sorted(counts.items()):
+        why = old.get(k, {}).get("why") if isinstance(old.get(k), dict) else None
+        out[k] = {"n": n, "stmts": prints.get(k, []), "why": why or "TODO"}
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=1, ensure_ascii=False)
+        fh.write("\n")
+    return out
 
 
 def main(argv):
+    if "--list" in argv:
+        tables = tenant_tables()
+        for kind, reads in (("write", False), ("read", True)):
+            for path, line, table in _sites(tables, reads):
+                print(f"{kind}\t{path}:{line}\t{table}")
+        return 0
     if "--update-reads" in argv:
         reads = scan_reads()
-        with open(READS_BASELINE, "w", encoding="utf-8") as fh:
-            json.dump(dict(sorted(reads.items())), fh, indent=1)
-            fh.write("\n")
-        print(f"reads baseline written: {sum(reads.values())} unscoped id reads in {len(reads)} places")
+        out = _write(READS_BASELINE, reads, fingerprints(reads=True))
+        print(f"reads baseline written: {sum(reads.values())} unscoped id reads in {len(reads)} places; "
+              f"{len(unexplained(out))} need a why")
         return 0
     counts = scan()
     if "--update" in argv:
-        with open(BASELINE, "w", encoding="utf-8") as fh:
-            json.dump(dict(sorted(counts.items())), fh, indent=1)
-            fh.write("\n")
-        print(f"baseline written: {sum(counts.values())} unscoped writes in {len(counts)} places")
+        out = _write(BASELINE, counts, fingerprints())
+        print(f"baseline written: {sum(counts.values())} unscoped writes in {len(counts)} places; "
+              f"{len(unexplained(out))} need a why")
         return 0
-    baseline = json.load(open(BASELINE, encoding="utf-8"))
-    over = compare(counts, baseline)
-    for k, n, allowed in over:
-        print(f"NEW unscoped write: {k} has {n} (baseline {allowed}) — add AND restaurant_id=?, "
-              "or raise the baseline naming the ownership check above it")
+    baseline = _load(BASELINE)
+    over = compare(counts, baseline, fingerprints())
+    for k, n, allowed_n in over:
+        print(f"NEW unscoped write: {k} has {n} (baseline {allowed_n}), or a statement the baseline does not "
+              "hold — add AND restaurant_id=?, or re-baseline (--update) naming the ownership check above it")
     reads = scan_reads()
-    over_reads = compare(reads, json.load(open(READS_BASELINE, encoding="utf-8")))
-    for k, n, allowed in over_reads:
-        print(f"NEW unscoped read: {k} has {n} (baseline {allowed}) — add AND restaurant_id=?, "
-              "or raise the reads baseline naming the ownership check above it")
-    if over or over_reads:
+    reads_baseline = _load(READS_BASELINE)
+    over_reads = compare(reads, reads_baseline, fingerprints(reads=True))
+    for k, n, allowed_n in over_reads:
+        print(f"NEW unscoped read: {k} has {n} (baseline {allowed_n}), or a statement the baseline does not "
+              "hold — add AND restaurant_id=?, or re-baseline (--update-reads) naming the ownership check above it")
+    missing = unexplained(baseline) + unexplained(reads_baseline)
+    for k in missing:
+        print(f"UNEXPLAINED baseline entry: {k} — say which ownership check covers it")
+    if over or over_reads or missing:
         return 1
     print(f"tenant scope ratchet OK — {sum(counts.values())} unscoped id writes and "
-          f"{sum(reads.values())} reads, none new")
+          f"{sum(reads.values())} reads, none new, every one explained")
     return 0
 
 

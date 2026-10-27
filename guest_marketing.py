@@ -29,12 +29,22 @@ A join is not a visit and neither is a YES: neither touches last_visit or
 visit_count. Every consent change is written to guest_consent_events, an
 append-only ledger that outlives the contact row.
 """
+import logging
 import hashlib
 import json
 import os
 import re
 from datetime import datetime, timedelta
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from notify import send_sms, _normalize_phone
 from ai_utils import create_with_retry, extract_text, get_client, model_for
 
@@ -347,10 +357,25 @@ def init_guest_marketing(db_path=DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_gcq_restaurant ON guest_campaign_queue(restaurant_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_guest_campaigns_status ON guest_campaigns(status, restaurant_id)",
     ):
-        try:
-            conn.execute(col_sql)
-        except Exception:
-            pass
+        if col_sql.lstrip().upper().startswith(("UPDATE", "DELETE")):
+            # A data rewrite in the list: a failure over this database's own
+            # rows is recorded and never fails the boot (A05-15's rule — a
+            # boot must not depend on what the data happens to hold).
+            try:
+                conn.execute(col_sql)
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"[guest_marketing] boot data rewrite skipped: {e}")
+                try:
+                    import ops
+                    ops.capture(e, job="guest_marketing_boot_rewrite", context=col_sql[:120])
+                except Exception as cap_e:
+                    logging.getLogger(__name__).warning(f"[guest_marketing] could not record it: {cap_e}")
+            continue
+        # Schema: "duplicate column" / "already exists" mean applied; anything
+        # else fails the boot (release-safety audit 10/26/26 A05-07 — it was
+        # swallowed, and a failed ALTER or index booted "OK").
+        from models import _apply_migration
+        _apply_migration(conn, col_sql)
     conn.commit()
     try:
         _backfill_consent_scopes(conn)
@@ -917,6 +942,8 @@ JOIN_FLEET_PER_RESTAURANT_DEFAULT = 6          # GUEST_JOIN_FLEET_PER_RESTAURANT
 JOIN_RESTAURANT_HOURLY_DEFAULT = 40            # GUEST_JOIN_RESTAURANT_HOURLY_CAP
 JOIN_RESTAURANT_RESERVED_DEFAULT = 10          # GUEST_JOIN_RESTAURANT_RESERVED
 _join_fleet_memo = {"at": 0.0, "n": 0}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("guest_marketing._join_fleet_memo", _join_fleet_memo)
 
 
 def _join_marketing_restaurants(conn) -> int:
@@ -2515,11 +2542,14 @@ def _drain(campaign_id, max_seconds=None, limit=None, db_path=DB_PATH) -> dict:
             break
         last_submit = _time.monotonic()
         err = None
+        maybe = False
         try:
             import notify as _notify_ctx
+            _notify_ctx.clear_last_sms_result()
             # Attributed to the restaurant in sms_log (fix round E, #14).
             with _notify_ctx.sms_context(rid):
                 ok = bool(send_sms(phone, body, use_case="guest", validity_seconds=validity))
+            maybe = not ok and _notify_ctx.last_sms_uncertain()
         except Exception as e:
             ok, err = False, str(e)[:300]
         except BaseException:
@@ -2538,6 +2568,12 @@ def _drain(campaign_id, max_seconds=None, limit=None, db_path=DB_PATH) -> dict:
             sent += 1
             _finish_row(row["id"], campaign_id, "sent", None, db_path, contact=(row["contact_id"], _normalize_phone(phone)),
                         restaurant_id=rid)
+        elif maybe:
+            # Twilio took it and never answered: it may have reached them, so
+            # their frequency claim stands — the next campaign must not text
+            # them early on a text that probably went (audit #25 A06-11).
+            failed += 1
+            _finish_row(row["id"], campaign_id, "failed", _notify_ctx.SMS_UNKNOWN_NOTE, db_path)
         else:
             # A failure never locks the guest out of the next campaign.
             failed += 1

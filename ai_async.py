@@ -271,7 +271,13 @@ def _executor():
     global _pool
     with _pool_lock:
         if _pool is None:
-            _pool = _FairPool(POOL_WORKERS, QUEUE_MAX, TENANT_QUEUE_MAX, PER_TENANT_RUNNING)
+            # OWNER_AI_JOB_WORKERS and OWNER_AI_JOB_PER_TENANT are the
+            # container's bounds: each gunicorn web worker takes its share
+            # (pool_sizing; one worker: all of it). 0 per tenant stays "no
+            # ceiling". The queue bounds are this process's memory: kept.
+            import pool_sizing
+            per_tenant = pool_sizing.per_worker(PER_TENANT_RUNNING) if PER_TENANT_RUNNING else 0
+            _pool = _FairPool(pool_sizing.sized("owner_ai", POOL_WORKERS), QUEUE_MAX, TENANT_QUEUE_MAX, per_tenant)
             import atexit
             atexit.register(_pool.drain, 30)
     return _pool
@@ -281,7 +287,9 @@ def stats() -> dict:
     """The pool's state for the console (waiting, running)."""
     if isinstance(_pool, _FairPool):
         return _pool.stats()
-    return {"workers": POOL_WORKERS, "waiting": 0, "running": 0, "restaurants_running": 0, "queue_max": QUEUE_MAX}
+    import pool_sizing
+    return {"workers": pool_sizing.per_worker(POOL_WORKERS), "waiting": 0, "running": 0, "restaurants_running": 0,
+            "queue_max": QUEUE_MAX}
 
 
 def _json_safe(payload):

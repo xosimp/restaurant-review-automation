@@ -36,7 +36,7 @@ PASSED = {"spf": "pass", "dkim": "pass", "dmarc": "pass"}
 PRINTOUT = """Page: 1
 Store Number   : 000001  St. Charles, IL
 Distributor    : Chicago Beverage System, Inc dba Windy City
-Invoice Number : 101153056
+Invoice Number : 543113065
 Invoice Date   : {d}
 Invoice Total  : $398.00
 Due Date       : {d}
@@ -51,8 +51,8 @@ Item            Description                           Qty      Price           C
 EXPORT = (
     "Vendor Name,Invoice Number,Invoice Date,Invoice Total,Product Number,Product Description,U.P.C,"
     "Unit Of Measure,Item Quantity,Item Cost,Item Adjustment\n"
-    "Breakthru,0128850598,09/15/2026,$264.00,9637400,HIGH NOON VODKA SELTZER,085000000000,CA,6,$42.00,$0.00\n"
-    "Breakthru,0128850598,09/15/2026,$264.00,9039158,TITOS 750,9039158,BO,1,$12.00,$0.00\n"
+    "Breakthru,0233150629,09/15/2026,$264.00,9637400,HIGH NOON VODKA SELTZER,085000000000,CA,6,$42.00,$0.00\n"
+    "Breakthru,0233150629,09/15/2026,$264.00,9039158,TITOS 750,9039158,BO,1,$12.00,$0.00\n"
 )
 
 
@@ -527,7 +527,7 @@ def test_invoices_older_than_a_week_say_the_feed_has_stopped(db):
     assert feed_status(rid, today=date(2026, 7, 27) + timedelta(days=FEED_STALE_DAYS),
                        db_path=db)["stale_days"] is None
     # A future invoice date never dates the feed.
-    fi.ingest_file(rid, "typo.txt", _printout("10/09/2027").replace(b"101153056", b"999"), db_path=db)
+    fi.ingest_file(rid, "typo.txt", _printout("10/09/2027").replace(b"543113065", b"999"), db_path=db)
     assert feed_status(rid, today=date(2026, 10, 14), db_path=db)["invoices_through"] == "2026-07-27"
     # The Bar page's payload carries it.
     import bar_cost
@@ -562,7 +562,7 @@ def test_no_fintech_file_for_two_days_raises_a_data_health_failure(db, monkeypat
     email_intake.receive({"email_id": "e15", "to": [ROUTE], "from": "processor@fintech.net"}, db_path=db)
     _stub_resend(monkeypatch, "e15", {"from": "processor@fintech.net", "authentication": PASSED},
                  [{"id": "a", "filename": "d.txt", "download_url": "u", "size": 5}],
-                 {"u": _printout("10/13/2026").replace(b"101153056", b"101153057")})
+                 {"u": _printout("10/13/2026").replace(b"543113065", b"655013533")})
     assert email_intake.process("e15", db_path=db)["status"] == "done"
     sh = data_health.health_rows(rid, db_path=db)["invoices"]
     assert sh["consecutive_failures"] == 0 and sh["data_through"] == "2026-10-13"
@@ -635,7 +635,7 @@ def test_unsigned_mail_whose_file_vouches_for_itself_is_read_without_a_release(d
     rid = _rid(db)
     _route(db, rid)
     fi.ingest_file(rid, "first.txt", _printout("10/09/2026"), db_path=db)
-    body = _printout("10/14/2026").replace(b"101153056", b"101153099")
+    body = _printout("10/14/2026").replace(b"543113065", b"101153099")
     out = _unsigned_email(db, monkeypatch, rid, "u1", body)
     assert out["status"] == "done" and out["files"][0]["vouched"] is True
     assert _rows(db, "SELECT COUNT(*) AS n FROM fintech_invoices WHERE restaurant_id=?", (rid,))[0]["n"] == 2
@@ -646,13 +646,13 @@ def test_unsigned_mail_with_a_new_distributor_or_a_forged_signature_stays_held(d
     _route(db, rid)
     fi.ingest_file(rid, "first.txt", _printout("10/09/2026"), db_path=db)
     stranger = _printout("10/14/2026").replace(b"Chicago Beverage System, Inc dba Windy City", b"Acme Liquor Wholesale") \
-        .replace(b"101153056", b"55501")
+        .replace(b"543113065", b"55501")
     out = _unsigned_email(db, monkeypatch, rid, "u2", stranger)
     assert out["status"] == "held_auth"
     row = _rows(db, "SELECT detail FROM email_intake WHERE email_id='u2'")[0]
     assert "didn't vouch for themselves" in row["detail"] and "new to this restaurant" in row["detail"]
     forged = {"spf": "fail", "dkim": "gray", "dmarc": "fail"}
-    good = _printout("10/14/2026").replace(b"101153056", b"101153098")
+    good = _printout("10/14/2026").replace(b"543113065", b"101153098")
     assert _unsigned_email(db, monkeypatch, rid, "u3", good, auth=forged)["status"] == "held_auth"
     # DMARC fail with nothing signed: read only because the file vouched (the
     # good file does); the stranger's file under the same verdict stays held.

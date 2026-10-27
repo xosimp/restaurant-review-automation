@@ -1,13 +1,77 @@
 name: CI
 
+# The deploy gate (audit #25: A01-02, A01-05, A04-01, A05-01, A05-17; R2, R5,
+# R17; blind re-audit 10/27/26 B1 F2-F7, B3, B4, B5, B6, B8). Three jobs in
+# parallel, each in at most about ten minutes: `gate` (the lints, the
+# contract slice on SQLite, every template script parses, every statement
+# PREPAREd), `gate-postgres` (the same contract slice on Postgres 16,
+# production's database) and `gate-boot` (the app booted on SQLite, with
+# production's markers, on a partitioned Postgres, under gunicorn, and on
+# the previous release's data). scripts/promote.py refuses a SHA without all
+# three green.
+#
+# ONCE RAILWAY DEPLOYS THE `production` BRANCH (scripts/promote.py moves it;
+# docs/ops/RECOVERY.md, "Deploys"), all three are the required status checks on
+# `main` and `production`, and a push to main deploys nothing. UNTIL THEN a
+# push to main still deploys at once, so while the repository variable
+# PROMOTION_LIVE is not "true" every push to main also runs the full SQLite
+# suite and the full Postgres suite here (`interim-*` below): the first
+# full-suite signal on a change that is already live comes minutes after
+# the push, not at the next nightly.
+#
+# The nightly (.github/workflows/nightly.yml) runs the full suites every
+# night on main and, dispatched by promote.py, on the SHA being promoted;
+# the iPhone app's XCTests are .github/workflows/ios.yml.
+#
+# Everything runs at UTC+14 (TZ=Pacific/Kiritimati): a test that builds
+# "today" from the process clock while the code uses the restaurant's date
+# fails here all day, not only on evening pushes (A01-03). Every test has a
+# 300-second ceiling (pytest-timeout): a deadlock names its test instead of
+# burning the job's timeout.
+
 on:
   push:
-    branches: [main]
+    branches: [main, production]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# bash with -o pipefail, so a piped command's failure fails its step.
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  # Tests must never touch real services; empty keys force every AI/email
+  # path onto its offline fallback (tests/conftest.py also blocks every
+  # connection off the machine).
+  ANTHROPIC_API_KEY: ""
+  RESEND_API_KEY: ""
+  TZ: Pacific/Kiritimati
+  # A skip whose reason tests/expected_skips.txt does not explain fails
+  # the run (A01-18) — collection-time skips too.
+  CAVNAR_ENFORCE_SKIPS: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
-  test:
+  gate:
+    name: gate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +86,7 @@ jobs:
             requirements-dev.txt
 
       - name: Install the locked dependencies
+        id: deps
         # --no-deps: exactly what the lock names and nothing else, so the
         # next step can prove the lock is complete.
         run: pip install --no-deps -r requirements-dev.txt
@@ -32,52 +97,108 @@ jobs:
         run: pip check
 
       - name: Compile every module
-        run: python -m py_compile *.py
+        run: git ls-files -z '*.py' | xargs -0 python -m py_compile
 
-      - name: Theme-safety color lint
-        run: python scripts/check_colors.py
+      - name: Lints (colours, timeouts, silent handlers, tenant scope, email tokens, labor math, Postgres text audit)
+        run: |
+          set -e
+          python scripts/check_colors.py
+          python scripts/check_timeouts.py
+          python scripts/check_silent_handlers.py
+          python scripts/check_tenant_scope.py
+          python scripts/check_email_tokens.py
+          python scripts/check_labor_math.py
+          python scripts/pg_sql_audit.py --strict
 
-      - name: Silent-failure lint
-        run: python scripts/check_silent_handlers.py
-
-      - name: Run tests
-        # One worker per core; --dist loadfile keeps each file's tests on one
-        # worker, so module-scoped fixtures (the app subprocesses) start once.
-        run: pytest tests/ -n auto --dist loadfile -q
+      - name: Contract slice on SQLite (pytest -m "contract and not quarantine")
+        # The tests in front of every top component (tests/test_contract_
+        # slice_registry.py names them, component by component). Every
+        # distinct statement the app runs is recorded for the Postgres
+        # PREPARE below.
+        run: >-
+          pytest tests/ -m "contract and not quarantine" -n auto --dist loadfile -q -rs -p no:cacheprovider
+          --timeout=300
         env:
-          # Tests must never touch real services; empty keys force every
-          # AI/email path onto its offline fallback.
-          ANTHROPIC_API_KEY: ""
-          RESEND_API_KEY: ""
-          # Every distinct statement the app runs, the run-time-built ones
-          # included, for the postgres-recorded-sql job to PREPARE
-          # (tests/conftest.py; blind re-audit 10/20/26 R9-02).
           CAVNAR_RECORD_SQL: ${{ runner.temp }}/recorded-sql
 
-      - name: Keep the statements the suite ran
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: recorded-sql
-          path: ${{ runner.temp }}/recorded-sql
-          if-no-files-found: warn
-          retention-days: 3
+      - name: Every inline script in the templates parses
+        run: pytest tests/test_inline_scripts_parse.py -q -rs -p no:cacheprovider --timeout=300
 
-  postgres:
-    # The Postgres path, run against a real Postgres (blind re-audit
-    # 10/11/26, SCALE-10: it had only ever run against a recording driver,
-    # and the cutover's first boot would have failed). A throwaway server
-    # with no data and no keys: the app's boot twice (in its own process),
-    # the copy then the boot, every static statement PREPAREd, and EVERY
-    # test file with each test's database on Postgres (tests/conftest.py,
-    # CAVNAR_TEST_PG_URL) — built as production's was: the boot on SQLite,
-    # pg_copy (month-partitioned fact tables), the boot again on Postgres.
-    # It was a hand-picked list of ~40 files, and the notification badge's
-    # Postgres-only failure (read 0 for every login after the cutover) sat
-    # in a file that was not on it (blind re-audit 10/20/26 R9-01/R9-02).
-    # What cannot run on Postgres is listed in ONE place, with its reason:
-    # tests/conftest.py PG_MODE_SKIP_FILES and the sqlite_only marker.
+      - name: Every static statement and every statement the slice ran PREPAREs on Postgres
+        # Runs even when an unrelated test above failed (A01-05: with
+        # `needs: test` this check never ran once while production was on
+        # Postgres).
+        if: always() && steps.deps.outcome == 'success'
+        run: |
+          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
+          mkdir -p "${{ runner.temp }}/recorded-sql"
+          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit --recorded "${{ runner.temp }}/recorded-sql"
+
+  gate-boot:
+    # The app booted the way a deploy boots it (blind re-audit 10/27/26 B1
+    # F7, B5 "the gate never boots in production mode"), beside the slices:
+    # scripts/boot_check.py's children run with an allowlisted environment
+    # (no key, no .env) and no connection off the machine.
+    name: gate-boot
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # upgrade_boot_check.py builds the previous release from history.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+
+      - name: The app boots twice on a fresh SQLite volume
+        run: python scripts/boot_check.py
+
+      - name: The app boots twice with production's markers (the scheduler starts and completes a tick)
+        run: python scripts/boot_check.py --production
+
+      - name: The app boots twice on Postgres built the way production's was (pg_copy, partitioned)
+        run: |
+          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_boot')"
+          python scripts/boot_check.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_boot --partitioned
+          python scripts/boot_check.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_boot --production
+
+      - name: The app under gunicorn as railway.json starts it (queue worker beside it), then SIGTERM
+        run: python scripts/boot_check.py --gunicorn
+
+      - name: The new code boots on the previous release's schema and data (SQLite and Postgres 16)
+        # scripts/upgrade_boot_check.py (RF6): the previous release booted
+        # and seeded, then this tree twice on its database, then the previous
+        # release again (a rollback). SQLite always; with --database-url it
+        # creates and drops its own database on the scratch server too. Needs
+        # the history (fetch-depth: 0 above); without it it exits 2 — a failure.
+        run: python scripts/upgrade_boot_check.py --database-url postgresql://postgres:postgres@localhost:5432/postgres
+
+
+  gate-postgres:
+    # The contract slice on Postgres 16, production's database (blind
+    # re-audit 10/27/26 B1 F6): PREPARE checks a statement's syntax and
+    # types, not its rows — a NULL ordering, a type coercion or a
+    # partitioned key that answers differently only shows by running it.
+    # Each test's database is cloned from a template built the way
+    # production's was (tests/conftest.py, CAVNAR_TEST_PG_URL). Eight
+    # workers on four cores: the clones wait on the server's disk, not CPU.
+    name: gate-postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -87,8 +208,6 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      ANTHROPIC_API_KEY: ""
-      RESEND_API_KEY: ""
       CAVNAR_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
@@ -99,34 +218,21 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-      - name: Install the locked dependencies
-        run: pip install --no-deps -r requirements-dev.txt
-      - name: Every static statement PREPAREs on Postgres
-        run: |
-          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
-          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit
-      - name: Every test file on Postgres
-        run: pytest tests/ -n auto --dist loadfile -q -p no:warnings
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: Contract slice on Postgres 16
+        run: >-
+          pytest tests/ -m "contract and not quarantine and not pg_nightly" -n 8 --dist loadfile -q -rs -p no:warnings -p no:cacheprovider
+          --timeout=300
 
-  postgres-recorded-sql:
-    # Every statement the SQLite suite actually ran (the `test` job's
-    # CAVNAR_RECORD_SQL), translated and PREPAREd on Postgres — the
-    # run-time-built SQL (f-string holes, joined IN lists, CASEs built from
-    # a registry) the source audit cannot read (blind re-audit 10/20/26
-    # R9-02). A failure here is a statement that would fail in production.
-    needs: test
+  interim-full-sqlite:
+    # UNTIL RAILWAY DEPLOYS `production` (repository variable PROMOTION_LIVE
+    # not "true"): a push to main deploys at once, so the full suite runs on
+    # it here as well as nightly. Never needed by the gate, so it never
+    # holds anything back; set PROMOTION_LIVE=true the day the switch is
+    # made and these two jobs stop.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PROMOTION_LIVE != 'true'
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
-    env:
-      ANTHROPIC_API_KEY: ""
-      RESEND_API_KEY: ""
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -136,21 +242,53 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-      - name: Install the locked dependencies
-        run: pip install --no-deps -r requirements-dev.txt
-      - uses: actions/download-artifact@v4
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: Every test on SQLite
+        run: >-
+          pytest tests/ -n auto --dist loadfile -q -rs -p no:cacheprovider --timeout=300
+          -m "not quarantine and not browser"
+
+  interim-full-postgres:
+    # The full suite on Postgres, four shards, while PROMOTION_LIVE is not
+    # "true" (see interim-full-sqlite).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PROMOTION_LIVE != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CAVNAR_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          name: recorded-sql
-          path: ${{ runner.temp }}/recorded-sql
-      - name: Every statement the suite ran PREPAREs on Postgres
-        run: |
-          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
-          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit --recorded ${{ runner.temp }}/recorded-sql
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: Shard ${{ matrix.shard }} of 4 on Postgres
+        run: >-
+          pytest $(python scripts/shard_tests.py --shard ${{ matrix.shard }} --of 4)
+          -n auto --dist loadfile -q -rs -p no:warnings -p no:cacheprovider --timeout=300
+          -m "not quarantine and not browser"
 
   audit:
-    # Known-vulnerability scan of the locked dependencies. Non-blocking for
-    # now (an advisory with no fix must not stop a deploy); read it.
+    # Known-vulnerability scan of the locked dependencies. Non-blocking (an
+    # advisory with no fix must not stop a deploy); read it.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -158,4 +296,4 @@ jobs:
         with:
           python-version-file: .python-version
       - name: pip-audit
-        run: pip install pip-audit && pip-audit -r requirements.txt
+        run: pip install pip-audit==2.9.0 && pip-audit -r requirements.txt

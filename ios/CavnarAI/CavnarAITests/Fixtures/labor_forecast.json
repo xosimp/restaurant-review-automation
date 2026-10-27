@@ -1,0 +1,794 @@
+{
+ "available": true,
+ "budget_basis": {
+  "assumed_share": 0.0,
+  "caveat": null,
+  "closed_dates": [],
+  "closed_share": 0.0,
+  "kind": "all_in_less_salaries",
+  "rate": 17.03,
+  "rate_basis": "measured",
+  "salaried_people": 2,
+  "salaried_week_cost": 3135.0,
+  "target_dollars": 24455.0,
+  "target_pct": 28.0,
+  "text": "Your 28% labor target counts salaries: the hourly budget is the target's dollars less the 2 salaried people's pay for the week's 7 trading days.",
+  "trading_days": 7,
+  "trim_ok": true
+ },
+ "crew_trends": [
+  {
+   "day": "Tuesday",
+   "direction": "down",
+   "now": 2,
+   "part": "night",
+   "role": "Server",
+   "since": "9/29/26",
+   "was": 3
+  },
+  {
+   "day": "Friday",
+   "direction": "down",
+   "now": 1,
+   "part": "night",
+   "role": "Dishwasher",
+   "since": "10/2/26",
+   "was": 2
+  },
+  {
+   "day": "Sunday",
+   "direction": "down",
+   "now": 1,
+   "part": "night",
+   "role": "Manager",
+   "since": "10/4/26",
+   "was": 2
+  },
+  {
+   "day": "Monday",
+   "direction": "down",
+   "now": 2,
+   "part": "night",
+   "role": "Server",
+   "since": "10/5/26",
+   "was": 3
+  },
+  {
+   "day": "Monday",
+   "direction": "down",
+   "now": 0,
+   "part": "night",
+   "role": "Host",
+   "since": "10/5/26",
+   "was": 1
+  }
+ ],
+ "daily_target_basis": "recent",
+ "daily_target_reasons": {
+  "2026-11-02": [
+   "the forecast: this restaurant's recent trend -19% (tested on 25 past nights: 26% less error than the weekday median)"
+  ],
+  "2026-11-03": [
+   "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+  ],
+  "2026-11-04": [
+   "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+  ],
+  "2026-11-05": [
+   "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+  ],
+  "2026-11-06": [
+   "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+  ],
+  "2026-11-07": [
+   "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+  ],
+  "2026-11-08": [
+   "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+  ]
+ },
+ "days": [
+  {
+   "closed": false,
+   "date": "2026-11-02",
+   "demand": {
+    "pct": -19,
+    "projected_sales": 6300.0,
+    "reasons": [
+     "the forecast: this restaurant's recent trend -19% (tested on 25 past nights: 26% less error than the weekday median)"
+    ],
+    "typical_sales": 7816.0
+   },
+   "effects": [],
+   "high": 10224.01,
+   "hours": 108.5,
+   "low": 6438.14,
+   "sales": 7816.4,
+   "samples": 8,
+   "weekday": "Monday"
+  },
+  {
+   "closed": false,
+   "date": "2026-11-03",
+   "demand": {
+    "pct": -25,
+    "projected_sales": 6225.0,
+    "reasons": [
+     "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+    ],
+    "typical_sales": 8267.0
+   },
+   "effects": [],
+   "high": null,
+   "hours": 116.7,
+   "low": null,
+   "sales": 7829.5,
+   "samples": 7,
+   "weekday": "Tuesday"
+  },
+  {
+   "closed": false,
+   "date": "2026-11-04",
+   "demand": {
+    "pct": -25,
+    "projected_sales": 7578.0,
+    "reasons": [
+     "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+    ],
+    "typical_sales": 10064.0
+   },
+   "effects": [],
+   "high": null,
+   "hours": 143.0,
+   "low": null,
+   "sales": 9740.25,
+   "samples": 7,
+   "weekday": "Wednesday"
+  },
+  {
+   "closed": false,
+   "date": "2026-11-05",
+   "demand": {
+    "pct": -25,
+    "projected_sales": 8568.0,
+    "reasons": [
+     "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+    ],
+    "typical_sales": 11379.0
+   },
+   "effects": [],
+   "high": null,
+   "hours": 178.2,
+   "low": null,
+   "sales": 11214.33,
+   "samples": 7,
+   "weekday": "Thursday"
+  },
+  {
+   "closed": false,
+   "date": "2026-11-06",
+   "demand": {
+    "pct": -25,
+    "projected_sales": 11277.0,
+    "reasons": [
+     "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+    ],
+    "typical_sales": 14976.0
+   },
+   "effects": [],
+   "high": null,
+   "hours": 213.3,
+   "low": null,
+   "sales": 15055.9,
+   "samples": 7,
+   "weekday": "Friday"
+  },
+  {
+   "closed": false,
+   "date": "2026-11-07",
+   "demand": {
+    "pct": -25,
+    "projected_sales": 13172.0,
+    "reasons": [
+     "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+    ],
+    "typical_sales": 17493.0
+   },
+   "effects": [],
+   "high": null,
+   "hours": 270.9,
+   "low": null,
+   "sales": 17577.6,
+   "samples": 7,
+   "weekday": "Saturday"
+  },
+  {
+   "closed": false,
+   "date": "2026-11-08",
+   "demand": {
+    "pct": -25,
+    "projected_sales": 13355.0,
+    "reasons": [
+     "the forecast: this restaurant's recent trend -25% (tested on 25 past nights: 26% less error than the weekday median)"
+    ],
+    "typical_sales": 17735.0
+   },
+   "effects": [],
+   "high": null,
+   "hours": 221.2,
+   "low": null,
+   "sales": 18104.13,
+   "samples": 7,
+   "weekday": "Sunday"
+  }
+ ],
+ "demand_data_through": {
+  "blind": false,
+  "blocked": false,
+  "date": "2026-10-26",
+  "days_ago": 1,
+  "line": "Sales on file through 10/26/26 (1 day ago).",
+  "message": null,
+  "stale": false,
+  "trading_days_ago": 0
+ },
+ "hourly_rate": 17.03,
+ "hours_budget": 1251.9,
+ "labor_budget_dollars": 21320.0,
+ "labor_target": 28.0,
+ "labor_target_label": "your target",
+ "learned_crew": [
+  {
+   "day": "Monday",
+   "part": "morning",
+   "roles": [
+    {
+     "n": 1,
+     "role": "Bartender"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Kitchen Manager"
+    },
+    {
+     "n": 1,
+     "role": "Line Cook"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Prep Cook"
+    },
+    {
+     "n": 1,
+     "role": "Server"
+    }
+   ]
+  },
+  {
+   "day": "Monday",
+   "part": "night",
+   "roles": [
+    {
+     "n": 2,
+     "role": "Bartender"
+    },
+    {
+     "n": 2,
+     "role": "Line Cook"
+    },
+    {
+     "n": 2,
+     "role": "Server",
+     "trend": {
+      "direction": "down",
+      "since": "10/5/26",
+      "was": 3
+     }
+    },
+    {
+     "n": 1,
+     "role": "Busser"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    }
+   ]
+  },
+  {
+   "day": "Tuesday",
+   "part": "morning",
+   "roles": [
+    {
+     "n": 1,
+     "role": "Bartender"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Kitchen Manager"
+    },
+    {
+     "n": 1,
+     "role": "Line Cook"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Prep Cook"
+    },
+    {
+     "n": 1,
+     "role": "Server"
+    }
+   ]
+  },
+  {
+   "day": "Tuesday",
+   "part": "night",
+   "roles": [
+    {
+     "n": 2,
+     "role": "Bartender"
+    },
+    {
+     "n": 2,
+     "role": "Server",
+     "trend": {
+      "direction": "down",
+      "since": "9/29/26",
+      "was": 3
+     }
+    },
+    {
+     "n": 1,
+     "role": "Busser"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Line Cook"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Sous Chef"
+    }
+   ]
+  },
+  {
+   "day": "Wednesday",
+   "part": "morning",
+   "roles": [
+    {
+     "n": 1,
+     "role": "Bartender"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Kitchen Manager"
+    },
+    {
+     "n": 1,
+     "role": "Line Cook"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Prep Cook"
+    },
+    {
+     "n": 1,
+     "role": "Server"
+    }
+   ]
+  },
+  {
+   "day": "Wednesday",
+   "part": "night",
+   "roles": [
+    {
+     "n": 4,
+     "role": "Server"
+    },
+    {
+     "n": 2,
+     "role": "Bartender"
+    },
+    {
+     "n": 2,
+     "role": "Line Cook"
+    },
+    {
+     "n": 1,
+     "role": "Busser"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Sous Chef"
+    }
+   ]
+  },
+  {
+   "day": "Thursday",
+   "part": "morning",
+   "roles": [
+    {
+     "n": 2,
+     "role": "Bartender"
+    },
+    {
+     "n": 2,
+     "role": "Line Cook"
+    },
+    {
+     "n": 2,
+     "role": "Server"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Kitchen Manager"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Prep Cook"
+    }
+   ]
+  },
+  {
+   "day": "Thursday",
+   "part": "night",
+   "roles": [
+    {
+     "n": 4,
+     "role": "Server"
+    },
+    {
+     "n": 2,
+     "role": "Bartender"
+    },
+    {
+     "n": 2,
+     "role": "Line Cook"
+    },
+    {
+     "n": 1,
+     "role": "Barback"
+    },
+    {
+     "n": 1,
+     "role": "Busser"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Sous Chef"
+    }
+   ]
+  },
+  {
+   "day": "Friday",
+   "part": "morning",
+   "roles": [
+    {
+     "n": 2,
+     "role": "Bartender"
+    },
+    {
+     "n": 2,
+     "role": "Line Cook"
+    },
+    {
+     "n": 2,
+     "role": "Prep Cook"
+    },
+    {
+     "n": 2,
+     "role": "Server"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Kitchen Manager"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    }
+   ]
+  },
+  {
+   "day": "Friday",
+   "part": "night",
+   "roles": [
+    {
+     "n": 5,
+     "role": "Server"
+    },
+    {
+     "n": 4,
+     "role": "Bartender"
+    },
+    {
+     "n": 4,
+     "role": "Line Cook"
+    },
+    {
+     "n": 2,
+     "role": "Busser"
+    },
+    {
+     "n": 2,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Barback"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher",
+     "trend": {
+      "direction": "down",
+      "since": "10/2/26",
+      "was": 2
+     }
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Sous Chef"
+    }
+   ]
+  },
+  {
+   "day": "Saturday",
+   "part": "morning",
+   "roles": [
+    {
+     "n": 3,
+     "role": "Line Cook"
+    },
+    {
+     "n": 3,
+     "role": "Server"
+    },
+    {
+     "n": 2,
+     "role": "Bartender"
+    },
+    {
+     "n": 2,
+     "role": "Prep Cook"
+    },
+    {
+     "n": 1,
+     "role": "Barback"
+    },
+    {
+     "n": 1,
+     "role": "Busser"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    }
+   ]
+  },
+  {
+   "day": "Saturday",
+   "part": "night",
+   "roles": [
+    {
+     "n": 6,
+     "role": "Server"
+    },
+    {
+     "n": 4,
+     "role": "Bartender"
+    },
+    {
+     "n": 4,
+     "role": "Line Cook"
+    },
+    {
+     "n": 2,
+     "role": "Busser"
+    },
+    {
+     "n": 2,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 2,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Barback"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    },
+    {
+     "n": 1,
+     "role": "Sous Chef"
+    }
+   ]
+  },
+  {
+   "day": "Sunday",
+   "part": "morning",
+   "roles": [
+    {
+     "n": 3,
+     "role": "Line Cook"
+    },
+    {
+     "n": 3,
+     "role": "Server"
+    },
+    {
+     "n": 2,
+     "role": "Bartender"
+    },
+    {
+     "n": 2,
+     "role": "Prep Cook"
+    },
+    {
+     "n": 1,
+     "role": "Barback"
+    },
+    {
+     "n": 1,
+     "role": "Busser"
+    },
+    {
+     "n": 1,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 1,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Manager"
+    }
+   ]
+  },
+  {
+   "day": "Sunday",
+   "part": "night",
+   "roles": [
+    {
+     "n": 6,
+     "role": "Server"
+    },
+    {
+     "n": 3,
+     "role": "Bartender"
+    },
+    {
+     "n": 3,
+     "role": "Line Cook"
+    },
+    {
+     "n": 2,
+     "role": "Busser"
+    },
+    {
+     "n": 2,
+     "role": "Dishwasher"
+    },
+    {
+     "n": 2,
+     "role": "Host"
+    },
+    {
+     "n": 1,
+     "role": "Barback"
+    },
+    {
+     "n": 1,
+     "role": "Manager",
+     "trend": {
+      "direction": "down",
+      "since": "10/4/26",
+      "was": 2
+     }
+    }
+   ]
+  }
+ ],
+ "ok": true,
+ "projected_revenue": 87338.0,
+ "projected_revenue_source": "the week's day-by-day projection (each weekday's typical night)",
+ "week_start": "2026-11-02"
+}

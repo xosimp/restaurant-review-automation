@@ -57,6 +57,8 @@ BLOCKING_DOWN_CAP = 49
 CACHE_TTL = 60
 _CACHE_MAX = 2000
 _CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("data_health._CACHE", _CACHE)
 _LOCK = threading.Lock()
 
 # What an owner calls each source in a status line.
@@ -856,13 +858,75 @@ def snapshot(restaurant_id, restaurant=None, ctx=None, db_path=None, now=None, u
                # punches still open, records that behave like a station
                # login, jobs the POS renamed (labor.data_health_notes,
                # audit #23 A3-01 / A3-03 / A3-19). Labor restaurants only.
-               "labor_notes": _labor_notes(restaurant, db_path=db_path)}
+               "labor_notes": _labor_notes(restaurant, db_path=db_path),
+               # What the restaurant's setup can't vouch for (blind re-audit
+               # 10/26/26 B2): a time zone nobody chose or that its own
+               # location contradicts.
+               "setup_notes": [n for n in (timezone_problem(restaurant),) if n]}
     except Exception as e:
         print(f"[data_health] snapshot failed for {restaurant_id}: {e}")
         return {"ok": False, "error": "Data health could not be read right now."}
     if use_cache and ctx is None and now is None:
         _cache_put(key, out)
     return out
+
+
+# How far the configured zone's standard offset may sit from the one the
+# restaurant's own longitude implies (longitude / 15 hours) before it reads
+# as another zone. US zones' own spread from their meridians stays under 0.8h
+# (Indianapolis in Eastern 0.75, Boise in Mountain 0.75); Chicago set for a
+# New York store is 1.07 off, for Los Angeles 1.9.
+TIMEZONE_MISMATCH_HOURS = 0.9
+
+
+def timezone_problem(restaurant) -> dict:
+    """{key, label, tone, text} when nothing vouches for the restaurant's
+    time zone (blind re-audit 10/26/26 B2) — every per-restaurant clock
+    reads it (the Daily Sales Report's night and deadline, quiet hours, the
+    schedule's dates and notice rules), and the column defaults to Chicago
+    whether or not anyone chose it. None when somebody set it
+    (timezone_confirmed_at) or the restaurant's own location agrees:
+
+      * a name the time zone database doesn't know (every clock fell back to
+        Chicago without a word);
+      * a location (geocoded from its Google place) whose longitude says
+        another zone — the West Coast store left on Chicago;
+      * no location and nobody ever set it. Never raises."""
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+    name = str(_get_attr(restaurant, "timezone") or "").strip()
+    fix = "Set it in Account → Settings (Cavnar AI support can set it too)."
+    try:
+        zone = ZoneInfo(name) if name else None
+    except Exception:
+        zone = None
+    if zone is None:
+        return {"key": "timezone", "label": "Time zone", "tone": "warn",
+                "text": (f"Your time zone ({name}) isn't one Cavnar AI knows" if name else "No time zone is set")
+                + " — every report deadline, quiet hour and schedule date runs on Chicago time until it is. " + fix}
+    if _get_attr(restaurant, "timezone_confirmed_at"):
+        return None
+    lon = _get_attr(restaurant, "longitude")
+    if lon is not None:
+        try:
+            from datetime import timedelta as _td
+            jan = _dt(2026, 1, 15, 12, tzinfo=zone)            # the zone's standard offset
+            std = (jan.utcoffset() - (jan.dst() or _td(0))).total_seconds() / 3600.0
+            if abs(std - float(lon) / 15.0) <= TIMEZONE_MISMATCH_HOURS:
+                return None
+            return {"key": "timezone", "label": "Time zone", "tone": "warn",
+                    "text": (f"Your time zone is set to {name}, but your location looks like another zone — "
+                             "your Daily Sales Report deadline, quiet hours and schedule dates may be hours off. "
+                             "Check it and save it. " + fix)}
+        except Exception as e:
+            print(f"[data_health] time zone check unreadable for {_get_attr(restaurant, 'id')}: {e!r}")
+    return {"key": "timezone", "label": "Time zone", "tone": "mid",
+            "text": (f"Nobody has confirmed your time zone — Cavnar AI is using {name}, the default. Every report "
+                     "deadline, quiet hour and schedule date runs on it. Open Settings and save it to confirm. " + fix)}
+
+
+def _get_attr(obj, key):
+    return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
 
 
 def _labor_notes(restaurant, db_path=None) -> list:

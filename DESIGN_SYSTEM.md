@@ -943,12 +943,55 @@ server's sentence in `.load-err` (`--red`) where "Loading…" was, never an
 empty box and never a placeholder left up. Errors are a `toast(…, 'error')`
 or an inline line, never `alert()` (a browser can suppress repeated
 dialogs); a failure that must outlive a toast sits inline under the control
-that started it (`#sched-notice`). When a side-effecting request loses its
+that started it (`#sched-notice`). An action on one row of a list (the Bar's
+Match) says what it did on that row: the sliding `--ember` bar along the row's
+foot while it saves, then a line under it (`.br-msg`, `--green` done, `--red`
+refused) — the toast only echoes it, and a missing pick outlines the control
+and focuses it (owner, 10/27/26: a corner toast read as nothing). When a side-effecting request loses its
 answer, say the outcome is unknown and leave the button off — never
 re-enable it for a blind second send. An ended session is the one sticky
 toast (`.toast.toast-sticky`, `#session-ended`, top of the page) with a Sign
 in again button; the page stops polling behind it. Pollers skip ticks while
 `document.hidden` and catch up on `visibilitychange`.
+
+**A newer build behind an open tab** (audit 10/26/26 A06-13) is the one
+other bar that stays: `#cav-updated`, drawn by the shared fetch wrapper
+(`templates/_csrf_fetch.html`, so every page that includes it — the
+dashboard, Settings, the staff portal, the console) the first time a JSON
+answer's `X-Cavnar-Build` names another build than the one the page was
+rendered with (`cavnar_build`). "Cavnar AI was updated." then **Reload**
+(`cbtn cbtn-primary cbtn-sm`) and **Not now** (`cbtn cbtn-text cbtn-sm`,
+gone for this page). The sticky toast's place and shape — top right, 24px in
+(16px from each side under 520px), radius 9, 14.5px/500 — on the plain
+toast's inversion (`--ink` ground, `--paper` words) with an `--ember` left
+edge and `--elev-float`; `role="status"`, polite. Above the modals
+(z-index 10040), so a stale page can always be reloaded. Never twice on one
+page, never without both builds (a local run has none; "unknown" is none),
+never over an ended session.
+
+**This build is too old (iOS, release-safety audit #25).** When any
+response is a 426 `update_required` (the server's `MOBILE_MIN_BUILD`),
+`AppUpdateGate` holds it and RootView lays `AppUpdateRequiredView` over
+everything but the launch splash (`AppUpdateOverlay`): the Paper page at 96%,
+one `.cavnarCard(.floating)` card — the seal, "Update Cavnar AI" in the
+`headline` role, the server's own sentence in `body`, and ONE primary
+button, "Open the App Store" (the server's App Store or TestFlight link, never
+any other URL), with one secondary "Check again" under it
+(`CavnarSecondaryButtonStyle`) and the 3pt ember pulse (`CavnarSkeletonBar`)
+while it asks. No close, no Back, no swipe-away: nothing under it can read
+the server any more. While it is up it asks the server again on every
+return to the foreground and every five minutes (`AppUpdateGate.recheck`),
+and goes the moment the answer is not a 426 — a minimum lowered after a
+mistake lets every phone back in without a relaunch (blind re-audit
+10/27/26). A fade under 0.25s, none under Reduce Motion. Writes waiting in
+the offline queues are kept, not dropped, and replay after the update.
+Reuse it for nothing else — it is the one blocking surface.
+
+**A module the plan does not have** is never an error with Try again: a 403
+`module_locked` read is the server's plan sentence, once, under the
+section's kicker ("Part of Labor"), and the entry point is hidden when the
+plan's modules (`AccountHealth.features`) already say the module is off —
+Account's "House rules, docs & certificates" row (Labor's, audit #25).
 
 **Unverified or partial data** carries `CavnarCaveat` (iOS) or the caveat
 line the module already uses — the reader must always be able to tell a
@@ -2326,7 +2369,7 @@ Food Cost's heading carries **Food | Bar** (`nav.br-fsw`): Food is where you are
 - **How every product is sorted** stays a folded `dn-fam`, built on first open with its own search (paged).
 - **Controls.** Every select is the branded `.br-sel` (44px, `appearance:none`, the ember chevron); inputs `.br-q` / `.br-in2` are 44px on `--sf-recess`. On a touch pointer the chips, segments and Show buttons are 44px. Focus is visible: rows take an inset ember2 ring (their `overflow:hidden` never clips it), segments and chips a 2px ring, the chart an outline. A save or a category change re-reads the payload and repaints **in place** — the folds, the scroll, the filters and the focused control kept (by its `data-br-*` key), the entrance not replayed (`#bar.br-still`).
 - **Refusals** (V38): the gate's 403 reads "Food Cost isn't part of your access — ask the owner."; an owner-only write shows the server's sentence; a lost answer says to reload, never a blind retry.
-- **Five views** (owner, 10/15/26 redesign — "eliminate endless scrolling"). One **segmented control** heads the page (`.br-tabs`, `role="tablist"`, in a sticky `.br-tabsw`, exactly as wide as the hero — owner, 10/15/26), and every view opens right under it (`#br-tabsa`, 18px down); a switch made further down scrolls the new view's top to just under the stuck tabs. The figures — hero, alerts, category cards, mixers (`.br-top`, 44px above Overview's board — never `.br-figs`, the hero's own figures row) — lead **Overview**; the other views start with their own content: **Overview · Cost · Purchasing · Matching · Inventory**, a raised thumb (`.br-tink`, measured under the selected tab, an ember underline) that slides on a switch and is *placed*, never slid, after a repaint or resize; Matching carries an ember count of the work waiting (drinks, name matches, recipe cards), Purchasing a neutral count (increases + billed-above lines), Inventory an ember dot while there is no count. ←/→/Home/End move between tabs; the choice holds for the session (`sessionStorage br-tab`). **Every view is in the page** — inactive ones `hidden` — so a switch is instant, `data-br-go` lands anywhere (it opens the view that holds the target first), and a save repaints in place with its folds, filters and focus. Each view has its own shape; never a stack of identical cards: The switcher lifts off the page once it scrolls under it (`.br-tabsw.stuck`); the page's foot note sits in Overview only. Matching: **Set aside, not matched** folds under Drinks to match — add-ons (`\`Liquor Add-On`), serving styles ("Up"), open-price keys, a bucket's price line (its beers ring as `<beer>\`Bucket` lines and are matched), NA beers, and anything the owner sets aside from the Pours-from menu ("not a drink" / "not bought on any invoice", with Undo) — each with its reason; RPOWER's backtick reads as " · " everywhere on the page. Recipe cards flow as balanced columns (`column-count`). Which POS sales count as bar sales lists the drink categories first; food and other "Not bar" ones fold.
+- **Five views** (owner, 10/15/26 redesign — "eliminate endless scrolling"). One **segmented control** heads the page (`.br-tabs`, `role="tablist"`, in a sticky `.br-tabsw`, exactly as wide as the hero — owner, 10/15/26), and every view opens right under it (`#br-tabsa`, 18px down); a switch made further down scrolls the new view's top to just under the stuck tabs. The figures — hero, alerts, category cards, mixers (`.br-top`, 44px above Overview's board — never `.br-figs`, the hero's own figures row) — lead **Overview**; the other views start with their own content: **Overview · Cost · Purchasing · Matching · Inventory**, a raised thumb (`.br-tink`, measured under the selected tab, an ember underline) that slides on a switch and is *placed*, never slid, after a repaint or resize; Matching carries an ember count of the work waiting (drinks, name matches, recipe cards), Purchasing a neutral count (increases + billed-above lines), Inventory an ember dot while there is no count. ←/→/Home/End move between tabs; the choice holds for the session (`sessionStorage br-tab`). **Every view is in the page** — inactive ones `hidden` — so a switch is instant, `data-br-go` lands anywhere (it opens the view that holds the target first), and a save repaints in place with its folds, filters and focus. Each view has its own shape; never a stack of identical cards: The switcher lifts off the page once it scrolls under it (`.br-tabsw.stuck`); the page's foot note sits in Overview only. Matching: **Set aside, not matched** folds under Drinks to match — add-ons (`\`Liquor Add-On`), serving styles ("Up"), open-price keys, a bucket's price line (its beers ring as `<beer>\`Bucket` lines and are matched), NA beers, and anything the owner sets aside from the Pours-from menu ("not a drink" / "not bought on any invoice", with Undo) — each with its reason; RPOWER's backtick reads as " · " everywhere on the page. Recipe cards sit in two balanced columns the script deals each card into (`.br-rcol`; never CSS `column-count`, which painted a card's shadow into the empty column in Safari, 10/27/26), and an open card shows its confirmed ingredients too. A drink to match says what it is — a pour of one spirit (neat, on the rocks or mixed; the mixer rings on its own), a made drink that needs its recipe card, a glass of wine — and, when nothing on an invoice carries its name, "No <drink> on an invoice since <date>" instead of "No suggestion"; its ounces box shows the house pour it counts when left empty. Which POS sales count as bar sales lists the drink categories first; food and other "Not bar" ones fold.
   - **Overview** — *Where the money is* (`.br-sigs`): a board of what Cavnar AI found, **ranked by dollars a month** — only money at stake, every tile on one period (billed above the deal and extra paid by the bottle over the price watch's lookback, less at a bigger order over 90 days, each shown as its monthly rate with the span's total in the subline; increases that held at their forward monthly rate) — then the work waiting (unmatched POS drinks as a count with their sales in the subline — sales, never money at stake — recipe cards, name matches, the first count, ordering rhythm, credits back). (FC/Bar audit 10/16/26 UI-13: unmatched drinks' sales led the board as dollars, and increases ranked ×3 while shown /mo.) The lead tile is 2×2 with its figure at 64px; the grid is filled — 9, 5, or under five in one row — and the rest are a line of text links (`.br-also`). Each tile is a `cbtn` that opens its view, lit from its corner in its tone (`--c`). Then *What deserves a look* (`.br-feat` wide — headline left, metric, confidence and action right — and the rest as columns on one surface, `.br-insl`), then the trend.
   - **Cost** — *Bought vs sold, by product* as **comparison bars** (`.br-vr`: bought in ink, sold in the category colour, the gap dollars in ink — a gap, never an accusation; no confidence word on a row), a three-cell figure strip (`.br-cfigs`: gap $, comps $, each category's matched %), three rows then "N more products", a row opening to its facts and, on a row of its own, **Sold as** — three drink chips (`.br-dchip`) then "+N more" (`details.br-soldmore`) — so a bottle in a dozen cocktails never stretches its row; the word on the page is *sold*, never *rung* (owner, 10/16/26). The page's foot note (`.dn-foot`) is 14.5px; **Keg yield** as gauges with the expected tick; **What a drink costs to pour** as one table (`.br-t2`, the drink cost as a bar, eight rows then a fold); comps & voids for the account holder.
   - **Purchasing** — *Where the money goes* as one stacked bar and a ranked ledger (`.br-dr2`, six then a fold); *Prices* with a five-cell **ledger strip** (`.br-ledger`) over the existing toolbar and rows; *Savings* (billed above the deal and bought by the bottle as tables, order-size cards four then Show all) with the total found; *Credits & free goods* as a **timeline** (`.br-tlist`, kind chips in their own colour); *Ordering rhythm* as days since against the usual cycle — never "time to reorder".

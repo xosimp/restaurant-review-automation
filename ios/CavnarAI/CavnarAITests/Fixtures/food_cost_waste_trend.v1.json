@@ -1,0 +1,290 @@
+{
+ "categories": [
+  "bakery",
+  "dairy",
+  "frozen",
+  "meat",
+  "poultry",
+  "produce",
+  "seafood"
+ ],
+ "empty": null,
+ "history_stamp": "2026-10-27 06:15:27",
+ "observations": [
+  {
+   "text": "Waste fell $76 (30%) in the week ending 10/25 on the week before.",
+   "tone": "good"
+  },
+  {
+   "text": "The week of 10/6–10/12 was the worst at $253, 71% above your average — driven by Ground Beef 80/20 Chuck Brisket Blend and Chicken Breast Boneless Skinless 6oz.",
+   "tone": "bad"
+  },
+  {
+   "text": "You're $12 a week under the 4.5% target.",
+   "tone": "good"
+  }
+ ],
+ "ok": true,
+ "range": "8w",
+ "ranges": [
+  "8w"
+ ],
+ "stats": {
+  "above_target": false,
+  "annualized_basis": null,
+  "annualized_current": null,
+  "annualized_if_target": null,
+  "anomalies": [],
+  "avg": 147.85,
+  "best": {
+   "index": 0,
+   "label": "10/5",
+   "waste": 14.21,
+   "week_end": "2026-10-05"
+  },
+  "change_pct": 0.0,
+  "confidence": null,
+  "direction": null,
+  "gap_baseline_weekly": -40.43,
+  "gap_weekly": -11.5,
+  "intervention": false,
+  "largest_decrease": {
+   "delta": -75.78,
+   "index": 2,
+   "label": "10/25",
+   "pct": -30.0,
+   "week_end": "2026-10-25"
+  },
+  "largest_increase": {
+   "delta": 238.35,
+   "index": 1,
+   "label": "10/12",
+   "pct": 1677.3,
+   "week_end": "2026-10-12"
+  },
+  "latest": 176.78,
+  "mom_delta": null,
+  "mom_pct": null,
+  "prev": 252.56,
+  "prior4": null,
+  "rolling4": 147.85,
+  "savings_if_at_target": null,
+  "slope": 0.0,
+  "target_weekly": 188.28,
+  "trend_p_value": null,
+  "trend_strength_pct": null,
+  "weeks": 3,
+  "weeks_over_target": 1,
+  "worst": {
+   "index": 1,
+   "label": "10/12",
+   "waste": 252.56,
+   "week_end": "2026-10-12"
+  },
+  "wow_delta": -75.78,
+  "wow_pct": -30.0
+ },
+ "target": {
+  "basis": "live",
+  "label": "Cavnar AI's starting target",
+  "pct": 4.5,
+  "weekly": 188.28
+ },
+ "weeks": [
+  {
+   "categories": {
+    "dairy": 5.16,
+    "produce": 9.05
+   },
+   "counted": false,
+   "counted_on": null,
+   "counted_share": 0.0,
+   "flags": {
+    "anomaly": null,
+    "best": true,
+    "over_target": false,
+    "partial": false,
+    "this_week": false,
+    "worst": false
+   },
+   "has_items": true,
+   "inv_value": 3171.24,
+   "label": "10/5",
+   "purchased": 4184.1,
+   "rate": 0.3,
+   "start": "2026-09-29",
+   "start_label": "9/29",
+   "top_items": [
+    {
+     "cost": 7.12,
+     "item": "Spring Mix"
+    },
+    {
+     "cost": 5.16,
+     "item": "Cream Heavy Whipping 40%"
+    },
+    {
+     "cost": 1.93,
+     "item": "Romaine Hearts"
+    }
+   ],
+   "waste": 14.21,
+   "week_end": "2026-10-05"
+  },
+  {
+   "categories": {
+    "bakery": 14.06,
+    "frozen": 45.09,
+    "meat": 105.88,
+    "poultry": 51.23,
+    "produce": 36.3
+   },
+   "counted": false,
+   "counted_on": null,
+   "counted_share": 0.0,
+   "flags": {
+    "anomaly": null,
+    "best": false,
+    "over_target": true,
+    "partial": false,
+    "this_week": false,
+    "worst": true
+   },
+   "has_items": true,
+   "inv_value": 3881.34,
+   "label": "10/12",
+   "purchased": 4184.1,
+   "rate": 6.0,
+   "start": "2026-10-06",
+   "start_label": "10/6",
+   "top_items": [
+    {
+     "cost": 56.42,
+     "item": "Ground Beef 80/20 Chuck Brisket Blend"
+    },
+    {
+     "cost": 51.23,
+     "item": "Chicken Breast Boneless Skinless 6oz"
+    },
+    {
+     "cost": 45.09,
+     "item": "Fries 3/8 Skin-On Frozen"
+    },
+    {
+     "cost": 29.72,
+     "item": "Beef Brisket Choice Packer"
+    },
+    {
+     "cost": 19.74,
+     "item": "Beef Short Rib Boneless Choice"
+    }
+   ],
+   "waste": 252.56,
+   "week_end": "2026-10-12"
+  },
+  {
+   "categories": {
+    "bakery": 9.4,
+    "frozen": 54.08,
+    "meat": 38.55,
+    "produce": 29.2,
+    "seafood": 45.56
+   },
+   "counted": false,
+   "counted_on": null,
+   "counted_share": 0.0,
+   "flags": {
+    "anomaly": null,
+    "best": false,
+    "over_target": false,
+    "partial": false,
+    "this_week": false,
+    "worst": false
+   },
+   "has_items": true,
+   "inv_value": 6313.04,
+   "label": "10/25",
+   "purchased": 4184.1,
+   "rate": 4.2,
+   "start": "2026-10-19",
+   "start_label": "10/19",
+   "top_items": [
+    {
+     "cost": 54.08,
+     "item": "Fries 3/8 Skin-On Frozen"
+    },
+    {
+     "cost": 45.56,
+     "item": "Salmon Fillet Atlantic Skin-On 6oz"
+    },
+    {
+     "cost": 38.55,
+     "item": "Beef Brisket Choice Packer"
+    },
+    {
+     "cost": 27.81,
+     "item": "Spring Mix"
+    },
+    {
+     "cost": 9.4,
+     "item": "Bun Brioche 4.5in Sliced"
+    }
+   ],
+   "waste": 176.78,
+   "week_end": "2026-10-25"
+  },
+  {
+   "categories": {
+    "bakery": 9.4,
+    "frozen": 22.42,
+    "meat": 38.55,
+    "produce": 20.89,
+    "seafood": 26.01
+   },
+   "counted": false,
+   "counted_on": null,
+   "counted_share": 0.0,
+   "flags": {
+    "anomaly": null,
+    "best": false,
+    "over_target": false,
+    "partial": true,
+    "this_week": true,
+    "worst": false
+   },
+   "has_items": true,
+   "inv_value": 4671.68,
+   "label": "10/27",
+   "partial": true,
+   "purchased": 4184.1,
+   "rate": 2.8,
+   "start": "2026-10-21",
+   "start_label": "10/21",
+   "top_items": [
+    {
+     "cost": 38.55,
+     "item": "Beef Brisket Choice Packer"
+    },
+    {
+     "cost": 26.01,
+     "item": "Salmon Fillet Atlantic Skin-On 6oz"
+    },
+    {
+     "cost": 22.42,
+     "item": "Fries 3/8 Skin-On Frozen"
+    },
+    {
+     "cost": 19.5,
+     "item": "Spring Mix"
+    },
+    {
+     "cost": 9.4,
+     "item": "Bun Brioche 4.5in Sliced"
+    }
+   ],
+   "waste": 117.27,
+   "week_end": "2026-10-27"
+  }
+ ],
+ "weeks_total": 4
+}

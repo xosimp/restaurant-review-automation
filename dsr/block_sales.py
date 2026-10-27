@@ -300,8 +300,15 @@ def collect(ctx):
         # suspect (empty, short or unreconciled), nor another store's night.
         settled, why = pos_archive.night_trusted(ctx.restaurant_id, ctx.business_date, provider=provider,
                                                  db_path=ctx.db_path or pos_archive.DB_PATH)
-    except Exception:
-        settled, why = True, None
+    except Exception as e:
+        # A check that could not be made is NOT a settled night (audit #25
+        # A02-06): a transient archive read failure at 4am read as "trusted"
+        # and the night went FINAL on checks still arriving. It waits like
+        # an unsettled night; the deadline (closed by the POS's checks, then
+        # provisional) still bounds how long.
+        ops.capture(e, job="dsr_sales", context=f"restaurant_id={ctx.restaurant_id} business_date={ctx.day} "
+                                                 "night_trusted")
+        settled, why = False, "archive check failed"
     if not settled:
         return dsr.block(dsr.AWAITING, source=provider, block_name="sales",
                          reason="The POS is still receiving tonight's checks",

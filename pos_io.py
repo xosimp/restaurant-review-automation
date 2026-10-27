@@ -518,6 +518,10 @@ _store_runs = {}          # (provider, store) -> failed requests in a row from t
 _schema_seen = {}         # provider -> {store: time of its last contract error}
 _schema_captured = {}     # (provider, endpoint) -> time an ops event last said so
 _breaker_memo = {}        # row key -> (monotonic read time, row dict or None)
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("pos_io._store_runs", _store_runs)   # blind re-audit 10/27/26 B1 F15
+_process_caches.register("pos_io._schema_seen", _schema_seen)
+_process_caches.register("pos_io._breaker_memo", _breaker_memo)
 
 
 def store_key(provider, restaurant_id) -> str:
@@ -873,7 +877,9 @@ AUTH_WAVE_WINDOW_SECONDS = 3600.0
 AUTH_WAVE_STORES = 3
 AUTH_WAVE_TOKENS = 2
 _auth_memo = {}           # (provider, bucket, store) -> (monotonic read time, gate answer)
+_process_caches.register("pos_io._auth_memo", _auth_memo)
 _wave_memo = {}           # provider -> (monotonic read time, wave dict)
+_process_caches.register("pos_io._wave_memo", _wave_memo)
 
 
 def _auth_rows(conn, provider, bucket, store):

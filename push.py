@@ -17,7 +17,16 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # Same meaning as webhooks.py's _AUTO_DISABLE_AFTER: a token that's failed
 # this many consecutive deliveries for reasons OTHER than the fast-path
@@ -963,6 +972,8 @@ def nav_for(alert_type, data=None) -> str:
 
 
 _jwt_cache = {"token": None, "minted_at": 0}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("push._jwt_cache", _jwt_cache)
 _JWT_MAX_AGE = 50 * 60  # Apple allows up to 60 min; regenerate a bit early
 _jwt_lock = threading.Lock()
 
@@ -1202,6 +1213,11 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
             # The showcase demo (Halsted & Rye) never pushes, even to a phone
             # signed in to it for a demo.
             return {"ok": False, "error": "demo store: push is never sent"}
+    # Never from staging or another non-production environment (release-
+    # safety audit 10/26/26 A05-06): its copy of the tokens is real phones.
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        return {"ok": False, "error": _config_gate.refused_send("push")}
     priority = priority_of(alert_type)
     aps = {"alert": {"title": title, "body": body}, "sound": "default"}
     level = _INTERRUPTION.get(priority)
@@ -1452,8 +1468,11 @@ def _push_executor():
         with _executor_lock:
             if _executor is None:
                 from concurrent.futures import ThreadPoolExecutor
+                import pool_sizing
+                # PUSH_MAX_WORKERS is the container's bound: each gunicorn
+                # web worker takes its share (one worker: all of it).
                 _executor = ThreadPoolExecutor(
-                    max_workers=_MAX_PUSH_WORKERS, thread_name_prefix="push"
+                    max_workers=pool_sizing.sized("push", _MAX_PUSH_WORKERS), thread_name_prefix="push"
                 )
     return _executor
 
@@ -1982,6 +2001,9 @@ def _apns_post(apns_token, environment, payload, push_type, priority, topic, col
     """One POST to APNs, with the one other-host retry a BadDeviceToken
     earns (see _deliver). Returns (ok, status, reason, environment it
     reached). Never raises."""
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        return False, 0, _config_gate.refused_send("apns"), environment
     # UTF-8 as is: "\u00e9" escapes cost six bytes of APNs' 4 KB for one
     # letter (re-audit 10/8/26 #13).
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")

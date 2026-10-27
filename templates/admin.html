@@ -3219,6 +3219,13 @@ function aiQuality(q){
       ${un.length ? `<div class="lbl">Refused, truncated or unparseable</div>${un.slice(0, 6).map(u => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(u.action)} <span class="chip">${esc(u.outcome)}</span></span><span class="n">${fmtN(u.n)}${u.pct_of_calls != null ? ' · ' + u.pct_of_calls + '% of calls' : ''}</span></div>`).join('')}` : ''}
       <div class="lbl">The model's own confidence · a year of scored claims</div>${modelConfHtml(q.model_confidence)}
       ${(q.models || []).length ? `<details class="more-d" style="margin:0 -18px"><summary>Models in force</summary><div style="padding:0 18px 12px">${q.models.map(m => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span class="ink2">${esc(m.purpose)}</span><span class="mono">${esc(m.model)}${m.overridden ? ' <span class="chip warn">' + esc(m.env) + '</span>' : ''}</span></div>`).join('')}</div></details>` : ''}
+      ${(q.templates || []).length ? `<details class="more-d" style="margin:0 -18px"><summary>Prompt templates · refused or fell back, per call</summary><div style="padding:0 18px 12px">${table([
+        {h:'Caller', key:'caller', cell:r => `<span class="mono">${esc(r.caller || '')}</span>${r.current ? '' : ' <span class="chip">older</span>'}`},
+        {h:'Template', key:'template_hash', cell:r => `<span class="mono dim">${esc(String(r.template_hash || '').slice(0, 8))}</span>`},
+        {h:'First seen', key:'first_seen', cell:r => `<span class="num">${fmtDT(r.first_seen)}</span>`},
+        {h:'Calls', key:'calls', r:true, cell:r => `<span class="num">${fmtN(r.calls)}</span>`},
+        {h:'Refused or fell back', key:'refusal_rate', r:true, cell:r => `<span class="num">${r.refusal_rate == null ? '—' : (r.refusal_rate * 100).toFixed(1) + '%'}</span>`},
+        {h:'Cost', key:'cost_usd', r:true, cell:r => `<span class="num">$${Number(r.cost_usd || 0).toFixed(2)}</span>`}], q.templates, {id:'aiq-tpl', limit:12, empty:'No traced call in this window.'})}</div></details>` : ''}
     </div></div>`;
 }
 function aiCalls(){
@@ -3536,9 +3543,24 @@ function engSystem(S, sE){
     ${sysRow('Backup', TONE[b.state] || 'neu', b.age_hours == null ? (b.state === 'unknown' ? unknownV(b.error || 'unknown') : 'none on record') : `${fmtN(b.age_hours)}h ago${b.size_mb != null ? ' · ' + b.size_mb + ' MB' : ''}`, b.error ? `<span style="color:var(--red-t)">${esc(b.error)}</span>` : 'the local snapshot, on the same volume')}
     ${sysRow('Off-site copy', TONE[b.offsite] || 'neu', b.offsite === 'unconfigured' ? 'not configured' : (b.offsite_age_hours == null ? esc(b.offsite || '—') : fmtN(b.offsite_age_hours) + 'h ago'), b.offsite === 'unconfigured' ? 'set BACKUP_S3_* and BACKUP_ENCRYPTION_KEY — losing the volume loses every client’s data' : 'object storage or the encrypted email')}
     ${sysRow('Restore drill', dr ? (dr.ok ? 'good' : (dr.finished_at ? 'bad' : 'warn')) : 'neu', dr ? fmtD(dr.started_at) : 'never run', dr ? (dr.ok ? 'restored and checked' : esc(dr.error || 'did not finish')) : 'quarterly')}
+    ${['pg_restore', 'rollback'].map(k => { const d = (S.release_drills || {})[k] || {}; return sysRow(d.label || k, d.state === 'ok' ? 'good' : 'warn', d.done_at ? fmtD(d.done_at) + (d.minutes != null ? ' · ' + fmtN(d.minutes) + ' min' : '') : 'never rehearsed', d.state === 'ok' ? 'rehearsed within 100 days' : 'over 100 days or never — docs/ops/RECOVERY.md, Release drills'); }).join('')}
     ${sysRow('Credentials', cr.error ? 'neu' : cr.key === 'ok' && !cr.plaintext ? 'good' : 'bad', cr.error ? unknownV(cr.error) : `key ${esc(cr.key || '—')}`, cr.error ? '' : `${fmtN(cr.encrypted)} encrypted · ${fmtN(cr.plaintext)} still plain text`)}
     ${sysRow('AI', ai.error ? 'neu' : ({operational:'good', degraded:'warn', outage:'bad'}[ai.status] || 'neu'), ai.error ? unknownV(ai.error) : esc(ai.status || '—'), brk.length ? 'breaker open: ' + esc(brk.join(', ')) : esc(ai.reason || 'breakers closed'))}
+    ${engMobile(S.mobile_clients || {})}
   </div></div>`;
+}
+// The iPhone app's compatibility (blind re-audit 10/27/26): live sessions
+// that name their build against the ones from before the header (those send
+// no build and no decode report), decode reports per build over a week, and
+// a MOBILE_MIN_BUILD the server is ignoring.
+function engMobile(mc){
+  if(mc.error) return sysRow('iPhone app', 'neu', unknownV(mc.error), '');
+  const ins = mc.installed || {}, by = mc.decode_by_build_7d || [], share = ins.headerless_share_pct;
+  const tone = ins.min_build_problem ? 'bad' : (share != null && share > 50 ? 'warn' : 'good');
+  const sub = (ins.min_build_problem ? `<span style="color:var(--red-t)">${esc(ins.min_build_problem)}</span> · ` : '')
+    + (by.length ? 'decode reports, 7 days: ' + by.slice(0, 4).map(b => `${esc(b.client_app)} <span class="n">${fmtN(b.reports)}</span> (${fmtN(b.users)} signed in)`).join(' · ')
+                 : 'no decode report in 7 days');
+  return sysRow('iPhone app', tone, `${fmtN(ins.header_sessions || 0)} name a build · ${fmtN(ins.headerless_sessions || 0)} headerless${share != null ? ' (' + share + '%)' : ''}`, sub);
 }
 function engProviders(S, sE){
   const p = S.providers || {}, keys = Object.keys(p).filter(k => k !== 'error');

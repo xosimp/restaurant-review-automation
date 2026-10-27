@@ -1,0 +1,26 @@
+{
+ "alert_types": [
+  "staff_announcement",
+  "staff_message",
+  "staff_notice",
+  "staff_reminder",
+  "staff_request",
+  "staff_schedule",
+  "staff_urgent"
+ ],
+ "ok": true,
+ "push_registered": false,
+ "quiet_hours": {
+  "end": "08:00",
+  "start": "22:00"
+ },
+ "reminders": true,
+ "reminders_server_side": true,
+ "tabs": [
+  "today",
+  "tasks",
+  "requests",
+  "me",
+  "inbox"
+ ]
+}

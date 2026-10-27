@@ -76,6 +76,43 @@ def test_the_solver_source_drafts_the_week_with_no_model_call(monkeypatch):
     assert len(servers) >= 14 and all(r["employee"] in names for r in servers)
 
 
+def test_a_solver_draft_the_clock_cut_before_it_found_a_week_is_still_counted_as_cut(monkeypatch):
+    """Stage 1 cut by the wall clock before it shaped anything: the v0 code
+    draft stands in, and the draft's solver record still says the solve was
+    cut — the review's line and ops.schedule_solve_capped count it
+    (release-safety audit 10/26/26 A02-01: it vanished with the empty try)."""
+    WEEK = MON_WEEK
+    names = ["Ana", "Ben", "Cy", "Dee", "Max"]
+    c = sr.Constraints(restaurant_id=None, week_dates=list(WEEK), week_days=[sq._day_name(d) for d in WEEK],
+                       roster_names=names, active={n.lower() for n in names})
+    c.known_roles = {n.lower(): {"server"} for n in names[:4]}
+    c.known_roles["max"] = {"manager"}
+    c.managers = {"max": "Manager"}
+    reqs = [{"date": d, "daypart": "night", "factor": 1.0, "roles": [{"role": "Server", "required": 2}]}
+            for d in WEEK]
+    by_date = {f"{d}|night": {"Server": 2} for d in WEEK}
+    monkeypatch.setattr(labor, "generate_optimized_schedule", lambda analysis, shifts, prepare_only=False, **kw: {
+        "week_dates": WEEK, "week_days": [sq._day_name(d) for d in WEEK], "rows": [], "schedule_csv": HEAD,
+        "narrative": [], "requirements": reqs, "requirements_by_date": by_date, "concurrent": {},
+        "hours_budget": 0})
+    monkeypatch.setattr(cs, "solver_draft", lambda *a, **k: {
+        "rows": [], "unassigned": [], "short": [], "assumed": [], "conflicts": [], "reasons": [], "terms": {},
+        "stats": {"engine": "shapes+cp-sat", "status": "nothing_to_solve", "wall_capped": True,
+                  "memory_capped": False, "shapes": {"status": "unknown", "wall_capped": True}}})
+    plan = [dict(row(d, "Max", "Manager", "4:00pm", "11:00pm"), _pinned=True) for d in WEEK]
+    fallback = {"source": "solver", "restaurant_id": None, "constraints": c, "roster_names": names,
+                "roster_roles": {**{n: "Server" for n in names[:4]}, "Max": "Manager"}, "week_dates": WEEK,
+                "plan_rows": plan, "plan_dates": list(WEEK),
+                "open_times": {sq._day_name(d): "4:00pm" for d in WEEK},
+                "close_times": {sq._day_name(d): "10:00pm" for d in WEEK}}
+    out = se._generate_in_parts({}, [], [(n, "Server") for n in names[:4]] + [("Max", "Manager")],
+                                {"week_start": WEEK[0], "restaurant_id": None}, fallback=fallback)
+    ds = out["draft_source"]
+    assert [r for r in out["rows"] if r.get("role") == "Server"]             # the v0 code draft stood in
+    assert ds["solver"]["wall_capped"] is True and ds["solver"]["stood_in"] == "v0 code draft"
+    assert se.solve_capped({"draft_source": ds}) == ["wall:draft"]
+
+
 # ── the repair loop runs the solver again only on a changed week ──────────
 
 def test_the_solver_stage_runs_again_when_a_later_cycle_changed_the_week(monkeypatch):

@@ -2,13 +2,13 @@ import XCTest
 @testable import CavnarAI
 
 /// The Daily Sales Report (dsr/) as the app reads it. The report fixtures are
-/// the server's own payloads (Fixtures/dsr_preview.json — access.render for
+/// the server's own payloads (Fixtures/dsr_preview_scenario.json — access.render for
 /// the owner and the manager, the provisional version 1, and a checklist),
 /// so a shape change on the server fails here, not on Erik's phone.
 final class DailyReportDecodingTests: XCTestCase {
 
     nonisolated(unsafe) private static let fixture: [String: Any] = {
-        let url = Bundle(for: DailyReportDecodingTests.self).url(forResource: "dsr_preview", withExtension: "json")!
+        let url = Bundle(for: DailyReportDecodingTests.self).url(forResource: "dsr_preview_scenario", withExtension: "json")!
         return try! JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
     }()
 
@@ -394,11 +394,11 @@ final class DailyReportWeekTests: XCTestCase {
         XCTAssertEqual(ptd.cells.last?.text, "8/26/26 \u{2013} 9/22/26")
     }
 
-    /// Fixtures/dsr_week.json is dsr.rollup.week's own output (owner, and
+    /// Fixtures/dsr_week_scenario.json is dsr.rollup.week's own output (owner, and
     /// access.redact_grid's manager copy) for tests/test_dsr_rollup.py's
     /// Simple EJ's week: two nights measured, a budget on a night not run.
     private func serverWeek(_ view: String) throws -> DSRGrid {
-        let url = Bundle(for: Self.self).url(forResource: "dsr_week", withExtension: "json")!
+        let url = Bundle(for: Self.self).url(forResource: "dsr_week_scenario", withExtension: "json")!
         let all = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
         let data = try JSONSerialization.data(withJSONObject: all[view]!)
         return try JSONDecoder.cavnar.decode(DSRWeekResponse.self, from: data).week

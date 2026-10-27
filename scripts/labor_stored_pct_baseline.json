@@ -1,0 +1,38 @@
+{
+ "canonical_facts.py": {
+  "n": 1,
+  "why": "final_days, the canonical FINAL-day row reader: returns the stored row whole; its one caller (dsr.budget_plan.weekday_mix) reads sales, never the labor %"
+ },
+ "event_memory.py": {
+  "n": 1,
+  "why": "event outcomes keep each night's HOURLY labor % (dsr_metrics labor.pct is hourly; the stored day is its fallback) so game nights are compared on one basis, beside the nightly report's hourly game labor"
+ },
+ "intelligence/dna.py": {
+  "n": 3,
+  "why": "DNA reads the stored HOURLY day and adds the salaried share itself for a viewer who sees salaries (_labor_all_in); a login that may not see salaries reads `hourly` (profile(salaries=False))"
+ },
+ "intelligence/features.py": {
+  "n": 1,
+  "why": "the cross-restaurant feature labor_pct_28d is HOURLY by design: cohort comparisons never carry one restaurant's salaries (INTELLIGENCE_ENGINE.md privacy rules)"
+ },
+ "intelligence/memory.py": {
+  "n": 1,
+  "why": "busiest_days' labor_pct_by_day is HOURLY and read by nothing owner-facing: lines() names only the busiest and quietest days by sales"
+ },
+ "models.py": {
+  "n": 4,
+  "why": "the figure's storage and its documented read: labor periods derived from the stored HOURLY days, get_labor_history (adds the salaried day share on read for a viewer who sees salaries) and the archive rebuild"
+ },
+ "schedule_economics.py": {
+  "n": 1,
+  "why": "splh_objective sets the HOURLY record against the HOURLY target (the all-in target less the salaried share, _hourly_target_pct) — like with like, and the schedule budget stays hourly"
+ },
+ "schedule_intel.py": {
+  "n": 2,
+  "why": "the schedule learners' week fingerprint (a TOTAL over the stored column) and the published week's daypart read — HOURLY punches over measured sales, never an owner-facing labor %"
+ },
+ "schedule_scorecard.py": {
+  "n": 1,
+  "why": "the scorecard judges HOURLY labor % against the HOURLY target (_hourly_target_pct), and says so"
+ }
+}

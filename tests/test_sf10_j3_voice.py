@@ -11,6 +11,7 @@ import pytest
 import ask_cavnar_tools as act
 import models
 from models import Restaurant, create_restaurant
+from tests.clock import today_for
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,7 +28,7 @@ def test_find_cover_names_who_can_legally_take_the_shift_of_the_person_out(monke
     rid = create_restaurant(Restaurant(name="Voice Co", owner_email="v@x.test", module_labor=1))
     for n in ("Maria", "Bob", "Cy"):
         models.add_manual_team_member(rid, n, role="Bartender")
-    day = dt.date.today()
+    day = today_for(rid)                       # the restaurant's today, as _find_cover reads it
     import intraday
     import labor_replacements
     monkeypatch.setattr(intraday, "published_rows", lambda *a, **k: [

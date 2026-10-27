@@ -1,66 +1,584 @@
 {
- "admin_events.py::bug_reports": 1,
- "admin_events.py::support_notes": 1,
- "admin_routes.py::alert_contacts": 1,
- "admin_routes.py::menu_items": 1,
- "admin_routes.py::users": 7,
- "ask_conversations.py::ask_cavnar_conversations": 1,
- "ask_conversations.py::users": 1,
- "auth.py::users": 10,
- "auth_routes.py::users": 1,
- "availability_changes.py::staff_availability_changes": 2,
- "billing_jobs.py::users": 1,
- "delayed.py::delayed_actions": 3,
- "demo_seed.py::ingredients": 1,
- "demo_store/build.py::ingredients": 2,
- "demo_store/build.py::users": 1,
- "drafter.py::reviews": 2,
- "dsr/store.py::dsr_reports": 7,
- "emails.py::users": 2,
- "fair_workweek.py::fww_access_offers": 1,
- "fair_workweek.py::fww_requests": 2,
- "fair_workweek.py::good_faith_estimates": 2,
- "guest_email.py::guest_newsletters": 2,
- "guest_marketing.py::guest_campaign_drafts": 1,
- "guest_marketing.py::guest_campaigns": 2,
- "home_snapshots.py::users": 1,
- "inventory_ledger.py::ingredients": 2,
- "inventory_ledger.py::menu_items": 1,
- "issues.py::ops_issues": 3,
- "job_queue.py::jobs": 3,
- "live_activities.py::delayed_actions": 2,
- "marketing_signals.py::marketing_content_log": 1,
- "models.py::ask_cavnar_conversations": 2,
- "models.py::staff_notes": 1,
- "models.py::team_messages": 1,
- "models.py::users": 4,
- "ops.py::inventory_history": 1,
- "outcomes.py::recommendation_outcomes": 6,
- "owner_rules.py::schedule_note_rules": 1,
- "people.py::people": 1,
- "people.py::person_merges": 1,
- "person_note_holds.py::staff_note_holds": 1,
- "pg_shadow.py::schedule_history": 1,
- "policy_notice.py::users": 1,
- "pos_schedule_push.py::pos_schedule_pushes": 2,
- "push.py::device_tokens": 1,
- "schedule_benchmark.py::schedule_history": 1,
- "schedule_job.py::schedule_history": 1,
- "schedule_note_rules.py::schedule_note_rules": 3,
- "schedule_publish.py::schedule_history": 3,
- "schedule_publish.py::schedule_notices": 1,
- "schedule_scorecard.py::schedule_history": 1,
- "schedule_versions.py::schedule_history": 2,
- "scheduler.py::reviews": 1,
- "security.py::users": 1,
- "shift_requests.py::shift_change_requests": 4,
- "shift_requests.py::shift_offers": 2,
- "staff_comms.py::staff_announcement_recipients": 1,
- "staff_comms.py::staff_running_late": 1,
- "staff_comms.py::staff_thread_messages": 2,
- "staff_consent.py::staff_consents": 3,
- "staff_knowledge.py::memberships": 1,
- "standby_insurance.py::standby_slots": 2,
- "time_off.py::staff_time_off": 3,
- "webhooks.py::webhooks": 1
+ "admin_events.py::bug_reports": {
+  "n": 1,
+  "stmts": [
+   "61a191ad8878"
+  ],
+  "why": "admin-only: reached from @admin_required routes (admin_routes) that act across restaurants by design"
+ },
+ "admin_events.py::support_notes": {
+  "n": 1,
+  "stmts": [
+   "ff0817e7ce42"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "admin_ops.py::recommendation_outcomes": {
+  "n": 1,
+  "stmts": [
+   "7c6fdcfce4d6"
+  ],
+  "why": "admin-only: reached from @admin_required routes (admin_routes) that act across restaurants by design (admin_ops console readers)"
+ },
+ "admin_routes.py::alert_contacts": {
+  "n": 1,
+  "stmts": [
+   "737423fb702c"
+  ],
+  "why": "admin-only: reached from @admin_required routes (admin_routes) that act across restaurants by design (reads restaurant_id to audit the delete)"
+ },
+ "admin_routes.py::menu_items": {
+  "n": 1,
+  "stmts": [
+   "83a4bc2abb70"
+  ],
+  "why": "admin-only: reached from @admin_required routes (admin_routes) that act across restaurants by design (_restaurant_of_menu_item reads the owner to authorise)"
+ },
+ "admin_routes.py::users": {
+  "n": 7,
+  "stmts": [
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "fbe98576e8d7"
+  ],
+  "why": "admin-only: reached from @admin_required routes (admin_routes) that act across restaurants by design"
+ },
+ "ai_utils.py::ai_health_events": {
+  "n": 1,
+  "stmts": [
+   "23769dea726b"
+  ],
+  "why": "platform AI health ledger (admin console), no tenant data"
+ },
+ "ai_utils.py::ai_usage": {
+  "n": 1,
+  "stmts": [
+   "f58349d8ec85"
+  ],
+  "why": "platform AI health ledger read for the admin console"
+ },
+ "ask_conversations.py::ask_cavnar_conversations": {
+  "n": 1,
+  "stmts": [
+   "862f8ff46c6e"
+  ],
+  "why": "memory_lines reads the summary only after models.get_ask_conversation(rid, cid, viewer_id=uid) confirmed the chat"
+ },
+ "ask_conversations.py::users": {
+  "n": 1,
+  "stmts": [
+   "00e60f8331c6"
+  ],
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id) (_reads_legacy: the viewer's own row)"
+ },
+ "auth.py::users": {
+  "n": 10,
+  "stmts": [
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "9f20746b8e47",
+   "9f20746b8e47"
+  ],
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id) (get_user_by_id/session/password checks on the session's login; set_morning_brief_pref also checks restaurant)"
+ },
+ "auth_routes.py::users": {
+  "n": 1,
+  "stmts": [
+   "00e60f8331c6"
+  ],
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id)"
+ },
+ "availability_changes.py::staff_availability_changes": {
+  "n": 2,
+  "stmts": [
+   "f6f252617128",
+   "f6f252617128"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE (decide updates WHERE id=? AND restaurant_id=? first)"
+ },
+ "bar/edits.py::users": {
+  "n": 1,
+  "stmts": [
+   "84b68c49bd13"
+  ],
+  "why": "owner_sorts: login ids from bar_product_categories WHERE restaurant_id=? (names of who sorted)"
+ },
+ "billing_jobs.py::users": {
+  "n": 1,
+  "stmts": [
+   "00e60f8331c6"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (the welcome owed-send's own user)"
+ },
+ "delayed.py::delayed_actions": {
+  "n": 3,
+  "stmts": [
+   "83bb84011ff0",
+   "83bb84011ff0",
+   "83bb84011ff0"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE; _run_one on the action the runner claimed"
+ },
+ "demo_seed.py::ingredients": {
+  "n": 1,
+  "stmts": [
+   "958083081d6e"
+  ],
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "demo_store/build.py::ingredients": {
+  "n": 2,
+  "stmts": [
+   "958083081d6e",
+   "958083081d6e"
+  ],
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "demo_store/build.py::users": {
+  "n": 1,
+  "stmts": [
+   "00e60f8331c6"
+  ],
+  "why": "demo seeding (demo_seed / demo_store): ids from rows this build just created for the demo restaurant; no request reaches it"
+ },
+ "dsr/store.py::dsr_reports": {
+  "n": 7,
+  "stmts": [
+   "8d4e2d9f80b4",
+   "8d4e2d9f80b4",
+   "8d4e2d9f80b4",
+   "8d4e2d9f80b4",
+   "8d4e2d9f80b4",
+   "8d4e2d9f80b4",
+   "8d4e2d9f80b4"
+  ],
+  "why": "DSR pipeline-internal: report_id is the pipeline's own row; get_report_by_id takes the scoped branch whenever a route passes restaurant_id"
+ },
+ "emails.py::users": {
+  "n": 2,
+  "stmts": [
+   "00e60f8331c6",
+   "00e60f8331c6"
+  ],
+  "why": "the user id a caller already resolved (admin welcome resend, own password change); no request id reaches it"
+ },
+ "fair_workweek.py::fww_access_offers": {
+  "n": 1,
+  "stmts": [
+   "678b71e6fa81"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "fair_workweek.py::fww_requests": {
+  "n": 2,
+  "stmts": [
+   "81f93ab0a4be",
+   "81f93ab0a4be"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE (answer_request updates WHERE id=? AND restaurant_id=? first)"
+ },
+ "fair_workweek.py::good_faith_estimates": {
+  "n": 2,
+  "stmts": [
+   "4b3dd2f1d6ec",
+   "4b3dd2f1d6ec"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "guest_email.py::guest_newsletters": {
+  "n": 2,
+  "stmts": [
+   "5f871407ccaa",
+   "d82d03449e6b"
+  ],
+  "why": "after _owned_newsletter(conn, restaurant_id, id) or for the send job's own row"
+ },
+ "guest_marketing.py::guest_campaign_drafts": {
+  "n": 1,
+  "stmts": [
+   "6cad38e892ef"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "guest_marketing.py::guest_campaigns": {
+  "n": 2,
+  "stmts": [
+   "3f4b3dbf7a3a",
+   "3f4b3dbf7a3a"
+  ],
+  "why": "_campaign_row for campaign ids from _enqueue(restaurant_id) / the send job / cancel_campaign's scoped check"
+ },
+ "home_snapshots.py::users": {
+  "n": 1,
+  "stmts": [
+   "00e60f8331c6"
+  ],
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id) (_still_active: the viewer's own row)"
+ },
+ "intelligence/predict.py::recommendation_outcomes": {
+  "n": 1,
+  "stmts": [
+   "7c6fdcfce4d6"
+  ],
+  "why": "tracker ids parsed from the engine's own intel_rec_events source keys (anonymised cohort work), not a request"
+ },
+ "inventory_ledger.py::ingredients": {
+  "n": 2,
+  "stmts": [
+   "958083081d6e",
+   "b380b57dd839"
+  ],
+  "why": "_compute_current_stock appends AND restaurant_id=? ({own}) whenever the caller passes one; ingredient_belongs_to IS the ownership check (reads restaurant_id to compare)"
+ },
+ "inventory_ledger.py::menu_items": {
+  "n": 1,
+  "stmts": [
+   "83a4bc2abb70"
+  ],
+  "why": "menu_item_belongs_to IS the ownership check (reads restaurant_id to compare)"
+ },
+ "issues.py::ops_issues": {
+  "n": 3,
+  "stmts": [
+   "033d77fdd59d",
+   "033d77fdd59d",
+   "033d77fdd59d"
+  ],
+  "why": "_issue_restaurant/_push_instead/_resolve on job or already-scoped issue ids (get_issue(restaurant_id, id) gates the routes)"
+ },
+ "job_queue.py::jobs": {
+  "n": 3,
+  "stmts": [
+   "1beaef1e9b96",
+   "e48521bc70cd",
+   "e48521bc70cd"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request"
+ },
+ "live_activities.py::delayed_actions": {
+  "n": 2,
+  "stmts": [
+   "83bb84011ff0",
+   "83bb84011ff0"
+  ],
+  "why": "_activity_scope returns the action's restaurant_id and the caller compares it with the session's (live_activities.py:757-763); pending_send_finished is called by delayed with its own action"
+ },
+ "marketing_signals.py::marketing_content_log": {
+  "n": 1,
+  "stmts": [
+   "d367fad57d97"
+  ],
+  "why": "_beyond_sales re-reads a row it selected WHERE restaurant_id=?"
+ },
+ "models.py::ask_cavnar_conversations": {
+  "n": 2,
+  "stmts": [
+   "862f8ff46c6e",
+   "862f8ff46c6e"
+  ],
+  "why": "save_ask_message after get_ask_conversation(restaurant_id, id) or its own new id; _topic_row inside the eviction job"
+ },
+ "models.py::staff_notes": {
+  "n": 1,
+  "stmts": [
+   "5dbd4c6c6fc2"
+  ],
+  "why": "delete_staff_note reads restaurant_id to compare when given; otherwise admin-only (admin_routes.delete_staff_note_route)"
+ },
+ "models.py::team_messages": {
+  "n": 1,
+  "stmts": [
+   "0a5ec8d703e0"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "models.py::users": {
+  "n": 4,
+  "stmts": [
+   "00e60f8331c6",
+   "00e60f8331c6",
+   "321d573710d0",
+   "9f20746b8e47"
+  ],
+  "why": "reset/set-password tokens and notification bounds for a login id the caller resolved (own session or admin)"
+ },
+ "notify.py::users": {
+  "n": 1,
+  "stmts": [
+   "84b68c49bd13"
+  ],
+  "why": "alert_audience: login ids from this restaurant's memberships"
+ },
+ "ops.py::inventory_history": {
+  "n": 1,
+  "stmts": [
+   "d2c9752859f2"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (retention prune)"
+ },
+ "ops.py::job_failures": {
+  "n": 1,
+  "stmts": [
+   "3a22bff1bf7b"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (job run failure counts)"
+ },
+ "outcomes.py::recommendation_outcomes": {
+  "n": 6,
+  "stmts": [
+   "411f4c6a117f",
+   "411f4c6a117f",
+   "411f4c6a117f",
+   "411f4c6a117f",
+   "411f4c6a117f",
+   "411f4c6a117f"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE; evaluate/recheck are jobs; get_outcome's route caller compares row['restaurant_id'] with the session's (strategy_routes._do_outcome_abandon)"
+ },
+ "owner_memory.py::users": {
+  "n": 2,
+  "stmts": [
+   "84b68c49bd13",
+   "8b233fdaf4c0"
+  ],
+  "why": "author/label ids from rows already read WHERE restaurant_id=?"
+ },
+ "owner_rules.py::schedule_note_rules": {
+  "n": 1,
+  "stmts": [
+   "708b6b6c7020"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "people.py::people": {
+  "n": 1,
+  "stmts": [
+   "64dbbc46061a"
+  ],
+  "why": "link_name: pid from person_id_for(restaurant_id, name)"
+ },
+ "people.py::person_merges": {
+  "n": 1,
+  "stmts": [
+   "b7a6f781634e"
+  ],
+  "why": "unmerge_people: the merge row read WHERE id=? AND restaurant_id=? first"
+ },
+ "people.py::users": {
+  "n": 1,
+  "stmts": [
+   "84b68c49bd13"
+  ],
+  "why": "reach(): login ids from this restaurant's memberships"
+ },
+ "person_note_holds.py::staff_note_holds": {
+  "n": 1,
+  "stmts": [
+   "2ad9eb76e3fe"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "pg_shadow.py::schedule_history": {
+  "n": 1,
+  "stmts": [
+   "d2f2e34fb035"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (Postgres shadow projection of a row the app just wrote)"
+ },
+ "policy_notice.py::users": {
+  "n": 1,
+  "stmts": [
+   "00e60f8331c6"
+  ],
+  "why": "the signed-in login's own users row (current_user['id'] / session user / a row just matched by token, email or provider id)"
+ },
+ "pos_schedule_push.py::pos_schedule_pushes": {
+  "n": 2,
+  "stmts": [
+   "dcc5e3a3e82a",
+   "dcc5e3a3e82a"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (push queue)"
+ },
+ "push.py::device_tokens": {
+  "n": 1,
+  "stmts": [
+   "b6a06ed16b7f"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (APNs delivery bookkeeping)"
+ },
+ "rec_ledger.py::users": {
+  "n": 1,
+  "stmts": [
+   "84b68c49bd13"
+  ],
+  "why": "delegate_answers: login ids from this restaurant's rec answers"
+ },
+ "schedule_benchmark.py::schedule_history": {
+  "n": 1,
+  "stmts": [
+   "d2f2e34fb035"
+  ],
+  "why": "offline benchmark tool, never a tenant request"
+ },
+ "schedule_job.py::schedule_history": {
+  "n": 1,
+  "stmts": [
+   "d2f2e34fb035"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE (_new_id: the history row this generation just saved)"
+ },
+ "schedule_note_rules.py::schedule_note_rules": {
+  "n": 3,
+  "stmts": [
+   "708b6b6c7020",
+   "708b6b6c7020",
+   "708b6b6c7020"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "schedule_publish.py::schedule_history": {
+  "n": 3,
+  "stmts": [
+   "253d37a463ac",
+   "d2f2e34fb035",
+   "d2f2e34fb035"
+  ],
+  "why": "publish/send_in_progress after the WHERE id=? AND restaurant_id=? read; _needs_ack reads restaurant_id of an already-scoped schedule"
+ },
+ "schedule_publish.py::schedule_notices": {
+  "n": 2,
+  "stmts": [
+   "7fadbc9ce6f3",
+   "8fb315636ba3"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (notice claim/outcome)"
+ },
+ "schedule_scorecard.py::schedule_history": {
+  "n": 1,
+  "stmts": [
+   "d2f2e34fb035"
+  ],
+  "why": "_planned_quality for history ids read WHERE restaurant_id=? (schedule_scorecard.py:1253)"
+ },
+ "schedule_shifts.py::schedule_history": {
+  "n": 1,
+  "stmts": [
+   "3de8eca601d7"
+  ],
+  "why": "rows_by_week appends AND restaurant_id=? whenever the caller passes one; ids from the restaurant's own weeks"
+ },
+ "schedule_versions.py::schedule_history": {
+  "n": 3,
+  "stmts": [
+   "2b805e056def",
+   "d2f2e34fb035",
+   "d2f2e34fb035"
+  ],
+  "why": "latest_rows/published_rows/backfill: history ids already owned (record_version after a scoped write; shift_edits checks own['published_at']; published_rows scopes when restaurant_id given)"
+ },
+ "scheduler.py::reviews": {
+  "n": 1,
+  "stmts": [
+   "cf516afc17fd"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (send_urgent_alert re-reads the review it is alerting on)"
+ },
+ "security.py::users": {
+  "n": 1,
+  "stmts": [
+   "00e60f8331c6"
+  ],
+  "why": "admin-only: reached from @admin_required routes (admin_routes) that act across restaurants by design (active_lockouts in the admin console)"
+ },
+ "shift_requests.py::shift_change_requests": {
+  "n": 4,
+  "stmts": [
+   "fbd996bc52bf",
+   "fbd996bc52bf",
+   "fbd996bc52bf",
+   "fbd996bc52bf"
+  ],
+  "why": "_get re-reads a request already loaded WHERE restaurant_id=? or just inserted for it"
+ },
+ "shift_requests.py::shift_offers": {
+  "n": 2,
+  "stmts": [
+   "59a8f7503711",
+   "59a8f7503711"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE (respond_offer reads WHERE id=? AND restaurant_id=? first)"
+ },
+ "staff_comms.py::staff_announcement_recipients": {
+  "n": 1,
+  "stmts": [
+   "4944fe473aa3"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "staff_comms.py::staff_running_late": {
+  "n": 1,
+  "stmts": [
+   "7915cdd3195a"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "staff_comms.py::staff_thread_messages": {
+  "n": 2,
+  "stmts": [
+   "5de55fd48f98",
+   "5de55fd48f98"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "staff_consent.py::staff_consents": {
+  "n": 3,
+  "stmts": [
+   "b958259200c7",
+   "b958259200c7",
+   "b958259200c7"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "staff_knowledge.py::memberships": {
+  "n": 1,
+  "stmts": [
+   "fb4c1eeabf82"
+  ],
+  "why": "_restaurant_of: the staff session's own membership id (translate_for)"
+ },
+ "standby_insurance.py::standby_slots": {
+  "n": 2,
+  "stmts": [
+   "82df0841e851",
+   "82df0841e851"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE"
+ },
+ "time_off.py::staff_time_off": {
+  "n": 3,
+  "stmts": [
+   "d45114895da9",
+   "d45114895da9",
+   "d45114895da9"
+  ],
+  "why": "re-reads the row this function just inserted (cur.lastrowid) or just updated under a restaurant-scoped WHERE (decide updates WHERE id=? AND restaurant_id=? first)"
+ },
+ "webhooks.py::webhooks": {
+  "n": 1,
+  "stmts": [
+   "afbaca760ab5"
+  ],
+  "why": "platform-internal: ids come from the job's own scan of its rows, never from a request (delivery failure count of the webhook being delivered)"
+ }
 }

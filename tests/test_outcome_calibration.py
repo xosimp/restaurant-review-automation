@@ -576,7 +576,8 @@ def test_f10_a_reading_a_hair_past_the_target_is_at_target_not_met():
     _days(rid, TODAY - timedelta(days=27), 28, labor=299.0)             # 29.9% against a 30% target
     _x("INSERT INTO owner_goals (restaurant_id, metric, target, baseline_value, status) VALUES (?,?,?,?,'active')",
        (rid, "labor_pct", 30.0, 31.0))
-    g = goals.progress(rid, today=TODAY)[0]
+    with models.salary_view(True):                  # the owner's view: the figures are shown
+        g = goals.progress(rid, today=TODAY)[0]
     assert g["state"] == "at_target" and g["band"] >= 0.5
     assert "within its normal week-to-week movement" in goals.summarise(g)
     assert goals.mark_achieved(rid, today=TODAY + timedelta(days=60)) == []

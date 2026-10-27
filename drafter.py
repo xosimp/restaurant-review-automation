@@ -434,11 +434,15 @@ def reply_context(restaurant=None, *, restaurant_id=None, review_id=None, review
         except Exception:
             restaurant = None
     author = (author or "").strip()
-    if review_id and (review_text is None or not (reviewer_name or author)):
+    if review_id and rid and (review_text is None or not (reviewer_name or author)):
         try:
             conn = get_conn()
             try:
-                row = conn.execute("SELECT author, text FROM reviews WHERE id=?", (review_id,)).fetchone()
+                # Only this restaurant's review (audit #25 A03-06): a caller
+                # whose own scoped read found nothing passed the id on, and
+                # the bare id read another tenant's guest text and name.
+                row = conn.execute("SELECT author, text FROM reviews WHERE id=? AND restaurant_id=?",
+                                   (review_id, rid)).fetchone()
             finally:
                 conn.close()
             if row:
@@ -657,9 +661,12 @@ def draft_response(review_id: int, rating: int, text: str,
     flags = {}
     try:
         conn = get_conn()
+        # Scoped to the restaurant the draft is for (audit #25 A03-06);
+        # every caller passes restaurant_id.
         row = conn.execute(
-            "SELECT author, platform, categories, severity, specific_complaint, entities FROM reviews WHERE id=?",
-            (review_id,)
+            "SELECT author, platform, categories, severity, specific_complaint, entities FROM reviews "
+            "WHERE id=? AND restaurant_id=?",
+            (review_id, restaurant_id)
         ).fetchone()
         conn.close()
         if row:

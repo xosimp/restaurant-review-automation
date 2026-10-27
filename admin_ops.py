@@ -4031,7 +4031,20 @@ def ai_quality(days=30, restaurant_id=None):
             # can be compared with the result, and now it is — how often a
             # claim the model called high / medium / low held, for advice
             # that was taken, over a year of scored claims.
-            "model_confidence": _model_confidence_check(restaurant_id)}
+            "model_confidence": _model_confidence_check(restaurant_id),
+            # Outcome and refusal rates per (caller, prompt template) with
+            # its first sighting (Audit #25 A07-05): a prompt edit's before
+            # and after, side by side.
+            "templates": _template_outcomes(days, restaurant_id)}
+
+
+def _template_outcomes(days, restaurant_id=None):
+    try:
+        import ai_quality_watch
+        return ai_quality_watch.template_outcomes(days=days, restaurant_id=restaurant_id)
+    except Exception as e:
+        log.warning("template outcomes unavailable: %s", e)
+        return []
 
 
 def _model_confidence_check(restaurant_id=None):
@@ -7127,8 +7140,18 @@ def _mask_text(s):
     return _IP_RE.sub(lambda m: f"{m.group(1)}.x.x", s)
 
 
+# Salaried people's pay and the figures it shows through (blind re-audit
+# 10/26/26 B3): the account holder's and a full admin's, never support's —
+# in the console as through view-as (permissions.sees_salaries).
+_SALARY_KEYS = {"salaried_staff_json", "salaried_staff", "salaried", "salaried_cost", "salaried_total_cost",
+                "salaried_total_pct", "salaried_day", "salaried_per_day", "salaried_vs_target_pts",
+                "salaried_week_cost", "annual", "all_in_pct", "all_in_projected"}
+
+
 def redact_for_support(obj, key=None):
     """A payload with the support role's masking applied; never mutates."""
+    if (key or "").lower() in _SALARY_KEYS:
+        return None if obj is None else "(hidden)"
     if isinstance(obj, dict):
         return {k: redact_for_support(v, k) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -7342,6 +7365,12 @@ def ops_state():
         failed = sum(v for k, v in by.items() if k in ("failed", "undelivered", "error"))
         if failed:
             return _sys("warn", f"{failed} of {day['attempted']} text{'s' if day['attempted'] != 1 else ''} failed in 24 hours.")
+        unknown = int(by.get(_n_sms.SMS_UNKNOWN_STATUS) or 0)
+        if unknown:
+            # Twilio took the request and never answered (A06-11): maybe
+            # delivered, deliberately not resent.
+            return _sys("warn", f"{unknown} text{'s' if unknown != 1 else ''} in 24 hours with no answer from Twilio "
+                                "— delivery unknown, not resent.")
         if (providers.get("twilio") or {}).get("state") == "unconfigured":
             return _sys("unknown", "Twilio is not configured on this server.")
         return _sys("ok", f"{day.get('attempted') or 0} text{'s' if (day.get('attempted') or 0) != 1 else ''} in 24 hours.")

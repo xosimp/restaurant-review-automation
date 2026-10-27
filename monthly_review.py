@@ -116,8 +116,8 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
         rows.append(row)
 
     # Prime cost for the CLOSED month under review, measured the way the
-    # frozen mid-month projection is scored (food cost % + labor % over the
-    # window, metrics.measure) — never profitability_projection, which reads
+    # frozen mid-month projection is scored (metrics.prime_cost_pct: COGS +
+    # labor over the window's net sales) — never profitability_projection, which reads
     # the CURRENT month to date: on the 1st it was withheld, mid-month it
     # reported this month under last month's heading, and the in-app screen
     # and the email disagreed depending on the day they were built (CA4 F12).
@@ -166,9 +166,11 @@ def _closed_prime(restaurant_id, start, end, prev_start, prev_end, db_path):
     the closed window, or None when either half of it cannot be measured —
     never a prime cost with one component assumed."""
     def _prime(s, e):
-        fc, _ = metrics.measure(restaurant_id, "food_cost_pct", s.isoformat(), e.isoformat(), db_path)
-        lb, _ = metrics.measure(restaurant_id, "labor_pct", s.isoformat(), e.isoformat(), db_path)
-        return round(float(fc) + float(lb), 1) if fc is not None and lb is not None else None
+        # One denominator (metrics.prime_cost_pct): COGS and labor as shares
+        # of net sales, labor on the reader's salary view — food cost % is
+        # over FOOD sales and never added to labor % (blind re-audit 10/26/26 B3).
+        v, _ = metrics.prime_cost_pct(restaurant_id, s.isoformat(), e.isoformat(), db_path=db_path)
+        return v
     now = _prime(start, end)
     if now is None:
         return None
@@ -176,7 +178,7 @@ def _closed_prime(restaurant_id, start, end, prev_start, prev_end, db_path):
     return {"pct": now, "previous": was,
             "delta": round(now - was, 1) if was is not None else None,
             "claim_kind": "measured", "window": [start.isoformat(), end.isoformat()],
-            "basis": "food cost % + labor % over the closed month, measured"}
+            "basis": "COGS + labor as a share of net sales over the closed month, measured"}
 
 
 def _plan_score(restaurant_id, start, end, db_path):

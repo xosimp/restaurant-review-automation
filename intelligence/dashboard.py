@@ -45,6 +45,8 @@ VALUE_SWEEP_CURSOR = "value_figures"
 BUILD_TTL_SECONDS = 3600
 
 _build_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("intelligence.dashboard._build_cache", _build_cache)
 _build_lock = threading.Lock()
 
 
@@ -162,7 +164,10 @@ def snapshot_value_figures(db_path=DB_PATH, max_seconds=None):
             counts["failed"] += 1
             ops.capture(e, job="value_figures", context=f"restaurant_id={rid}")
 
-    done, hit = scheduler.resumable_sweep(VALUE_SWEEP_CURSOR, [r.id for r in rs], one,
+    # The operator's totals, on the owner's all-in basis (an admin sees
+    # salaries; jobs_registry salary_view "owner").
+    import models as _models_vf
+    done, hit = scheduler.resumable_sweep(VALUE_SWEEP_CURSOR, [r.id for r in rs], _models_vf.in_salary_view(True, one),
                                           max_seconds or VALUE_SWEEP_MAX_SECONDS, workers=1, job="value_figures")
     return {"attempted": counts["ok"] + counts["failed"], "ok": counts["ok"], "failed": counts["failed"],
             "skipped": max(0, len(rs) - counts["ok"] - counts["failed"]), "hit_bound": bool(hit), "date": day}

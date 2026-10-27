@@ -307,6 +307,7 @@ def test_the_sync_write_lock_is_the_restaurants_own_on_postgres(monkeypatch):
     import pos
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert pos._write_lock_for(1) is pos._WRITE_LOCK is pos._write_lock_for(2)       # SQLite: one writer
+    monkeypatch.setenv("ALLOW_LOCAL_PG", "1")    # off Railway DATABASE_URL is ignored otherwise
     monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
     one, two = pos._write_lock_for(1), pos._write_lock_for(2)
     assert one is not two and one is pos._write_lock_for(1) and one is not pos._WRITE_LOCK

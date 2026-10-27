@@ -26,6 +26,9 @@ import rec_ledger
 import strategy_routes
 from models import Restaurant, create_restaurant
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _redirect(monkeypatch, db_path):

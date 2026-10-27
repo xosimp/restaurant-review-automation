@@ -182,7 +182,7 @@ def save_count(restaurant_id, count_date, values, note=None, user_id=None, sourc
     if method not in METHODS:
         raise ValueError("unknown count method")
     day = _parse_day(count_date)
-    today = today or date.today()
+    today = today or _restaurant_today(restaurant_id, db_path)      # the restaurant's date (audit #25 F4)
     if day > today:
         raise ValueError("A count can't be dated in the future.")
     if day < today - timedelta(days=3 * 366):
@@ -437,7 +437,7 @@ def counted(restaurant_id, today=None, db_path=None, lines=None, sales=None) -> 
     pct}}, total, missing}], last_count, last_count_mdy, next_due_mdy,
     missing}. One period per pair of consecutive count dates (newest last,
     at most MAX_PERIODS); `available` when any period measured a category."""
-    today = today or date.today()
+    today = today or _restaurant_today(restaurant_id, db_path)      # the restaurant's date (audit #25 F4)
     rows = _rows(restaurant_id, db_path)
     dates = sorted(_by_date(rows))
     last = dates[-1] if dates else None

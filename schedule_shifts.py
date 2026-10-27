@@ -425,8 +425,11 @@ def _cursor(conn, value=None):
 
 
 def _needs(m) -> bool:
-    """Whether a week (its text and marker, one row) needs projecting."""
-    return m["fmt"] is None or int(m["fmt"] or 0) < FORMAT or m["source_sig"] != source_sig(m)
+    """Whether a week (its text and marker, one row) needs projecting: no
+    marker, a marker of ANOTHER format (older, or — after a rollback — newer
+    than this code writes: release-safety audit 10/26/26 A05-05, format
+    markers compare with ==), or stale."""
+    return m["fmt"] is None or int(m["fmt"] or 0) != FORMAT or m["source_sig"] != source_sig(m)
 
 
 def backfill(db_path=None, max_seconds: float = BACKFILL_SECONDS, max_weeks: int = BACKFILL_MAX_WEEKS) -> dict:
@@ -514,9 +517,13 @@ def _as_row(r) -> dict:
 
 def _servable(m) -> bool:
     """Whether a week's projection may be served for it: written from the
-    week as it stands (source_sig), of the current format, and exact."""
+    week as it stands (source_sig), of exactly this code's format, and
+    exact. A projection a newer build wrote (fmt > FORMAT) is not served
+    after a rollback — this code cannot know what the newer format means;
+    the week's text is read instead (release-safety audit 10/26/26 A05-05:
+    format markers compare with ==, never >=)."""
     return (m["source_sig"] is not None and m["source_sig"] == source_sig(m)
-            and int(m["fmt"] or 0) >= FORMAT and bool(m["exact"]))
+            and int(m["fmt"] or 0) == FORMAT and bool(m["exact"]))
 
 
 def current(conn, history_id) -> bool:

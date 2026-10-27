@@ -254,8 +254,18 @@ def test_a_clean_schema_is_not_rechecked_on_every_hit_but_a_change_is_seen(db, s
     conn.commit()
     conn.close()
     payload, status = sm.health_snapshot(db)
-    assert status == 500 and payload["error"] == "schema_mismatch" and payload["missing_count"] >= 1
+    # forecast_log is not a sign-in table: degraded with a counted gap, not a
+    # 500 that fails the deploy (blind re-audit 10/27/26 B8 P3 — status_manager.
+    # STRICT_SCHEMA_TABLES); a sign-in table's column is still a 500.
+    assert status == 200 and "schema_gaps" in payload["problems"] and payload["schema_gaps_count"] == 1
     assert "forecast_log" not in json.dumps(payload), "names go to the log, not the public body"
+    conn = sqlite3.connect(db)
+    conn.execute("ALTER TABLE users DROP COLUMN email_change_pending")
+    conn.commit()
+    conn.close()
+    payload, status = sm.health_snapshot(db)
+    assert status == 500 and payload["error"] == "schema_mismatch" and payload["missing_count"] >= 1
+    assert "users" not in json.dumps(payload)
 
 
 def test_the_reference_schema_can_be_built_at_boot():
@@ -355,7 +365,8 @@ def test_the_web_boot_runs_the_guards_before_it_builds_anything():
                             "hosted_dashboard.py"), encoding="utf-8").read()
     guard = src.index("_models_boot.require_volume()")
     emptied = src.index("_sm_boot.assert_platform_not_emptied()")
-    first_init = src.index("    _init_db()")
+    # init_db runs first inside models.boot_schema (release-safety A05-07).
+    first_init = src.index("    _models_boot.boot_schema(")
     admin_seed = src.index("# ── Admin account seed")
     assert guard < emptied < first_init < admin_seed
     assert src.index("_logging_setup.configure()") < src.index("app = Flask(__name__)")

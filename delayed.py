@@ -19,7 +19,16 @@ names Cavnar AI, not the owner, as who did it.
 import json
 from datetime import datetime, timedelta, timezone
 
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 AUTOMATION_ACTOR = {"id": None, "username": "Cavnar AI", "is_admin": False, "role": "automation"}
 

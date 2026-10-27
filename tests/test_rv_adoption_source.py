@@ -56,6 +56,11 @@ ALLOWLIST = {
         "repairs and sweeps them; its prose note is validated in _drop_note_bullets",
 }
 
+ALLOWLIST[("ai_eval.py", "_send_live")] = (
+    "the offline evaluation harness (Audit #25 R13): each answer is scored by ai_eval.score_item — "
+    "response_validation.validate / validate_lines on its own prompt, ai_guard.unsupported_figures, the schemas "
+    "— and never stored or shown to anyone")
+
 # (module, function that calls the model) → the function in the same module
 # that runs the engine on its output.
 VALIDATED_IN = {

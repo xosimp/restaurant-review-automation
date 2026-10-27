@@ -314,6 +314,9 @@ _REPLY_CAUSE = re.compile(
     r"|in\s+training|a\s+one[- ]time|one[- ]off|isolated\s+incident|not\s+the\s+norm|on\s+a\s+normal\s+night"
     r"|never\s+happens|always\s+(?:is|are|do|does|get|gets))\b", re.I)
 
+_WHY_FEELING = re.compile(r"\s+(?:we|i)\s+(?:\w+\s+)?(?:think|thinks|love|believe|feel|do\s+what\s+we\s+do|"
+                          r"keep\s+(?:coming|doing)|opened|started|got\s+into)\b", re.I)
+
 # How the restaurant sources or makes its food — true only if the owner
 # said it (voice or menu notes); a model inventing "fresh daily from local,
 # organic ingredients" is an advertising claim on a public listing (NS1 H6).
@@ -375,7 +378,10 @@ def public_reply_claims(draft: str, allowed_source: str = "") -> list:
             out.append(f"a claim about how the food is made or sourced ({m.group(0).strip()!r})")
             break
     for s in sentences(text):
-        m = _REPLY_CAUSE.search(s)
+        # "this is why we think ..." / "that's why we love it" gives a reason
+        # for a feeling, not a cause for what went wrong (owner, 10/27/26).
+        m = next((c for c in _REPLY_CAUSE.finditer(s)
+                  if not (c.group(0).lower().endswith("why") and _WHY_FEELING.match(s, c.end()))), None)
         if not m:
             continue
         # Theirs when the sentence's own content words are mostly in what
@@ -595,6 +601,10 @@ _MONEY_RE = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)" + _SUFFIX, re.I)
 _DOLLARS_RE = re.compile(r"(?<![\w.$])([\d,]+(?:\.\d+)?)" + _SUFFIX + r"\s+(?:dollars|bucks|usd)\b", re.I)
 _PCT_RE = re.compile(r"([\d,]+(?:\.\d+)?)\s?%")
 _BARE_RE = re.compile(r"(?<![\w.:/])(\d[\d,]*(?:\.\d+)?)(?![\w:/])")
+# The unit after a bare numeral that makes it a duration ("36 days", "a
+# 14-day window", "6 hrs"), which _figures never counts as a figure.
+_DURATION_AFTER_RE = re.compile(r"\s*-?\s*(?:days?|weeks?|wks?|months?|mos?|years?|yrs?|hours?|hrs?|minutes?|mins?)\b",
+                                re.I)
 # A star rating written as a rating: "4.2★", "3.8 stars", "rating of 4.1".
 #
 # unsupported_figures ignores everything at or below 10 on purpose — "top 5",
@@ -806,6 +816,8 @@ def _figures(text: str) -> dict:
     31.4% labor figure (AI-5). Bare numerals — "labor 31.4", "covers 212" —
     can back either. Calendar years and the parts of dates and times are not
     figures: "2026" in "Today's date" verified any invented $1,990-$2,066.
+    "bare_values" is "bare" less the durations ("36 days", "6 hours"): what a
+    money, percentage or rating claim may lean on.
     Memoised for the last few inputs; each call gets its own sets.
     """
     return {k: set(v) for k, v in _figures_cached(str(text or "")).items()}
@@ -814,7 +826,7 @@ def _figures(text: str) -> dict:
 @functools.lru_cache(maxsize=16)
 def _figures_cached(text: str) -> dict:
     text = _prepared(text)
-    out = {"money": set(), "pct": set(), "bare": set()}
+    out = {"money": set(), "pct": set(), "bare": set(), "bare_values": set()}
     spans = []
     for kind, pats in (("money", (_MONEY_RE, _DOLLARS_RE)), ("pct", (_PCT_RE,))):
         for pat in pats:
@@ -841,9 +853,18 @@ def _figures_cached(text: str) -> dict:
         if _is_calendar_year(raw):
             continue
         try:
-            out["bare"].add(round(float(raw.replace(",", "")), 2))
+            value = round(float(raw.replace(",", "")), 2)
         except ValueError:
             continue
+        out["bare"].add(value)
+        # A duration backs no money, percentage or rating claim: "the last
+        # shift is 36 days before today" verified an invented "36%" (audit
+        # #25 A01-04 — the data's age in the labor prompt matched the
+        # asserted percentage on the days it was 33 or 36). "bare" keeps
+        # every numeral (a "2 hours" house rule still backs "2 hours");
+        # "bare_values" is the ones a money/percentage/rating may lean on.
+        if not _DURATION_AFTER_RE.match(bare_text, m.end()):
+            out["bare_values"].add(value)
     return {k: frozenset(v) for k, v in out.items()}
 
 
@@ -1070,7 +1091,7 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02,
             value = _value(m)
         except ValueError:
             continue
-        pool = known[kind] | known["bare"]
+        pool = known[kind] | known["bare_values"]
         if abs(value) <= 10:
             tol = _small_tolerance(m.group(1)) * (_SUFFIX_MULT.get((m.group(2) or "").lower(), 1)
                                                   if m.re.groups >= 2 else 1)
@@ -1106,7 +1127,7 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02,
 
     # Percentage points (R7): "up 7 points" is a move between two
     # percentages, so it must be a percentage or a difference of two.
-    pcts = sorted(known["pct"] | known["bare"])
+    pcts = sorted(known["pct"] | known["bare_values"])
     for m in _POINTS_RE.finditer(generated or ""):
         if any(a <= m.start(1) < b for a, b in taken):
             continue
@@ -1142,7 +1163,7 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02,
     # "4.2★" when the input said 4.3 is a different claim, not a rounding of
     # the same one. Only ratings in range are considered; "5 stars" as a
     # figure of speech and a 0-10 score are not this check's business.
-    all_known = known["money"] | known["pct"] | known["bare"]
+    all_known = known["money"] | known["pct"] | known["bare_values"]
     for m in _STAR_RE.finditer(generated or ""):
         raw = m.group(1) or m.group(2)
         try:

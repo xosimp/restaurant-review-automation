@@ -1,0 +1,22 @@
+{
+ "has_data": true,
+ "measured_posts": 12,
+ "metrics_sync": null,
+ "ok": true,
+ "published": 12,
+ "reach_posts": 12,
+ "top_post": {
+  "comments": 25,
+  "engagement_rate": 0.0778,
+  "engagements": 206,
+  "likes": 174,
+  "platform": "facebook",
+  "reach": 2648,
+  "shares": 7,
+  "topic": "Bears Sunday: $26 Old Style towers and 50-wing platters all game"
+ },
+ "top_post_floor": 6,
+ "total_engagement": 1661,
+ "total_impressions": 48625,
+ "total_reach": 29386
+}

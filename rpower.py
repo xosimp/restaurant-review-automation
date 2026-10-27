@@ -726,6 +726,9 @@ _LIVE_READ_EVERY = 2.0            # ...and reads it at most this often
 _priority_waiting = {}            # bucket -> live/close requests of this process waiting on it
 _live_marked = {}                 # bucket -> monotonic time this process last wrote its live mark
 _live_seen = {}                   # bucket -> (monotonic time read, live mark active)
+import process_caches as _process_caches  # noqa: E402
+_process_caches.register("rpower._live_marked", _live_marked)   # blind re-audit 10/27/26 B1 F15
+_process_caches.register("rpower._live_seen", _live_seen)
 
 
 def _bucket_lock(key):
@@ -1906,6 +1909,8 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
 #     purged (purge_catalogs, nightly in ops.prune_ledgers).
 CATALOG_MAX_AGE_SECONDS = float(os.getenv("RPOWER_CATALOG_MAX_AGE_SECONDS", "86400"))
 _list_cache = _LRU(CACHE_MAX_KEYED)
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("rpower._list_cache", _list_cache)
 
 # What is kept of an employee record (A7-03). Every reader of the kept list
 # reads only these (employee_display_name, distinct_employee_names,
@@ -2244,6 +2249,7 @@ def sales_types(restaurant_id: int) -> dict:
 # the nightly jobs read several days in a row (9/29/26).
 SALES_TYPE_CACHE_SECONDS = 600
 _sales_type_cache = _LRU(CACHE_MAX_RESTAURANTS, per_store=1)
+_process_caches.register("rpower._sales_type_cache", _sales_type_cache)
 
 
 def clear_caches():
@@ -2507,6 +2513,7 @@ def _kept_types(restaurant_id, ids) -> dict:
 
 
 _kept_cache = _LRU(CACHE_MAX_KEYED)
+_process_caches.register("rpower._kept_cache", _kept_cache)
 
 
 def _quality_event(restaurant_id, key, sig, message, job="pos_sales_rules"):
@@ -2641,6 +2648,7 @@ def _loss_kind(row: dict, types: dict, rules=None):
 
 VOID_REASON_CACHE_SECONDS = 600
 _void_reason_cache = _LRU(CACHE_MAX_RESTAURANTS, per_store=1)
+_process_caches.register("rpower._void_reason_cache", _void_reason_cache)
 
 
 def void_reasons(restaurant_id: int) -> dict:
@@ -2867,6 +2875,7 @@ def fetch_sales_catalog(restaurant_id: int) -> dict:
 # a menu item. Checked against EJ's live menu: all 373 sold ids resolved.
 MENU_CACHE_SECONDS = 600
 _menu_cache = _LRU(CACHE_MAX_RESTAURANTS)
+_process_caches.register("rpower._menu_cache", _menu_cache)
 _NOT_ITEM_CATEGORY_RE = re.compile(r"discount|gratuit|gift\s*card|\bopen\b|\bretail\b", re.I)
 
 
@@ -3863,6 +3872,7 @@ def fetch_customers(restaurant_id: int) -> dict:
 # anywhere), shared by every store of one group on one credential.
 CUSTOMER_CACHE_SECONDS = 6 * 3600
 _customer_cache = _LRU(CACHE_MAX_KEYED * 4)
+_process_caches.register("rpower._customer_cache", _customer_cache)
 
 
 def fetch_customers_by_mid(restaurant_id: int, mids) -> dict:
@@ -3909,6 +3919,7 @@ def fetch_customers_by_mid(restaurant_id: int, mids) -> dict:
 
 PEOPLE_CACHE_SECONDS = 600
 _people_cache = _LRU(CACHE_MAX_RESTAURANTS)
+_process_caches.register("rpower._people_cache", _people_cache)
 
 
 def employee_names(restaurant_id: int) -> dict:
@@ -3918,6 +3929,7 @@ def employee_names(restaurant_id: int) -> dict:
 
 
 _job_cat_cache = _LRU(CACHE_MAX_RESTAURANTS)
+_process_caches.register("rpower._job_cat_cache", _job_cat_cache)
 
 
 def job_categories(restaurant_id: int) -> dict:
@@ -4043,54 +4055,150 @@ def _require_resolved(entries: list, people: dict) -> None:
             "nothing was saved from this read")
 
 
+# ot_pay is the WHOLE pay for a punch's overtime hours, never the premium
+# alone - RPOWER confirmed it 10/27/26 ("just the ot portion ... add reg, ot
+# and dt for sum") and Simple EJ's punches agree (pay = reg_hours x reg_rate
+# + ot_pay on every one; ot_pay ~ ot_hours x 1.5 x reg_rate). An OT pay
+# below the hours' straight time contradicts that, so it is unreadable
+# (its OT is then priced at half the hour's rate), never read as a premium.
+OT_PAY_WHOLE_AT = 1.0
+
+
 def _ot_premium(e) -> Optional[float]:
     """What RPOWER's payroll paid over straight time for this punch's
     overtime and doubletime (audit #23 A3-04): ot_hours x (ot_rate -
     reg_rate) (and the same for DT) where the rates are on the punch, else
-    read from ot_pay / dt_pay - which may be the whole OT pay or only the
-    premium (unconfirmed with RPOWER), so the ratio to the straight-time pay
-    decides: 1.2x or more is the whole pay (premium = pay - straight), 0.8x
-    or less is the premium itself, anything between is unreadable. 0.0 for
+    ot_pay / dt_pay less the hours' straight time - ot_pay is the whole pay
+    for the OT hours (RPOWER, 10/27/26); one below straight time is
+    unreadable. 0.0 for
     a punch with no OT or DT hours; None when the punch's pay cannot say (a
     $0 punch, no rates or pays) - labor.analyse_shifts then prices the POS's
     OT hours at the hour's own rate. An archived punch carries OT and DT
     pay summed (`_ot_pay_combined`)."""
+    return _ot_reading(e)[0]
+
+
+def _ot_reading(e) -> tuple:
+    """(premium, band, ratio) for one punch — _ot_premium's answer and how
+    it was read (audit #25 F9: the heuristic is unconfirmed, so how often
+    each band is used is recorded per store, ot_pay_bands): band is
+    "no_ot", "no_rate" (no reg_rate), "rate" (the punch's own OT/DT rate),
+    "whole_pay" (the pay read, less straight time), "unreadable" (a pay
+    below the hours' straight time), "no_pay", or "mixed" (OT and DT read
+    differently);
+    ratio the pay over straight time when the pay was read, else None."""
     ot, dt = _num(e.get("ot_hours")), _num(e.get("dt_hours"))
     if ot <= 0 and dt <= 0:
-        return 0.0
+        return 0.0, "no_ot", None
     reg = _num(e.get("reg_rate"))
     if reg <= 0:
-        return None
+        return None, "no_rate", None
 
     def _from_pay(hours, pay):
         if pay <= 0 or hours <= 0:
-            return None
+            return None, "no_pay", None
         straight = hours * reg
         ratio = pay / straight
-        if ratio >= 1.2:
-            return pay - straight
-        if ratio <= 0.8:
-            return pay
-        return None
+        if ratio >= OT_PAY_WHOLE_AT:
+            return pay - straight, "whole_pay", ratio
+        return None, "unreadable", ratio
     if e.get("_ot_pay_combined"):
         rate = _num(e.get("ot_rate"))
         if dt <= 0 and rate > reg:
-            return round(ot * (rate - reg), 2)
-        got = _from_pay(ot + dt, _num(e.get("ot_pay")))
-        return None if got is None else round(max(0.0, got), 2)
-    prem = 0.0
+            return round(ot * (rate - reg), 2), "rate", None
+        got, band, ratio = _from_pay(ot + dt, _num(e.get("ot_pay")))
+        return (None if got is None else round(max(0.0, got), 2)), band, ratio
+    prem, bands, ratios = 0.0, [], []
     for hours, rate_key, pay_key in ((ot, "ot_rate", "ot_pay"), (dt, "dt_rate", "dt_pay")):
         if hours <= 0:
             continue
         rate = _num(e.get(rate_key))
         if rate > reg:
             prem += hours * (rate - reg)
+            bands.append("rate")
             continue
-        got = _from_pay(hours, _num(e.get(pay_key)))
+        got, band, ratio = _from_pay(hours, _num(e.get(pay_key)))
         if got is None:
-            return None
+            return None, band, ratio
         prem += got
-    return round(max(0.0, prem), 2)
+        bands.append(band)
+        ratios.append(ratio)
+    band = bands[0] if len(set(bands)) == 1 else "mixed"
+    return round(max(0.0, prem), 2), band, (ratios[0] if ratios else None)
+
+
+# A store's OT pay read as "unreadable" on more than this share of the
+# punches whose pay decided (whole pay, premium only or unreadable), over
+# at least OT_BANDS_MIN_READ such punches, is raised for the operator: the
+# heuristic is not working there and its OT is priced at half the hour's
+# rate instead (audit #25 F9).
+OT_UNREADABLE_MAX_SHARE = 0.10
+OT_BANDS_MIN_READ = 5
+OT_BANDS_CURSOR = "rpower_ot_bands:"
+_OT_RATIO_SAMPLE = 60
+
+
+def ot_pay_bands(entries) -> dict:
+    """How each closed punch's overtime pay was read (_ot_reading) over a
+    read's punches: {"punches": with OT or DT, "bands": {band: n},
+    "pay_read": the punches whose pay ratio decided, "unreadable_share":
+    unreadable over pay_read (None with none), "ratios": up to
+    _OT_RATIO_SAMPLE of the pay ratios, rounded, sorted}. No names, no pay."""
+    bands, ratios = {}, []
+    for e in entries or []:
+        if not _is_closed_punch(e):
+            continue
+        _prem, band, ratio = _ot_reading(e)
+        if band == "no_ot":
+            continue
+        bands[band] = bands.get(band, 0) + 1
+        if ratio is not None:
+            ratios.append(round(float(ratio), 2))
+    punches = sum(bands.values())
+    pay_read = sum(bands.get(b, 0) for b in ("whole_pay", "unreadable"))
+    return {"punches": punches, "bands": dict(sorted(bands.items())), "pay_read": pay_read,
+            "unreadable_share": round(bands.get("unreadable", 0) / pay_read, 3) if pay_read else None,
+            "ratios": sorted(ratios)[:_OT_RATIO_SAMPLE]}
+
+
+def record_ot_pay_bands(restaurant_id, bands, day, db_path=None) -> bool:
+    """Keep the store's latest OT-pay reading (ot_pay_bands) in job_cursors
+    (one row per store, `OT_BANDS_CURSOR` + id — what the console and the
+    vendor question read), and raise it once a day as a data_quality
+    finding (ops.capture) when the unreadable band passes
+    OT_UNREADABLE_MAX_SHARE over OT_BANDS_MIN_READ or more punches. Returns
+    whether a finding was raised. Never raises."""
+    import json as _json
+    if not bands or not bands.get("punches"):
+        return False
+    try:
+        import models as _models_ot
+        conn = _models_ot.get_conn(db_path) if db_path else _models_ot.get_conn()
+        try:
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (OT_BANDS_CURSOR + str(int(restaurant_id)), _json.dumps(dict(bands, day=str(day)[:10]))))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("[rpower] OT pay reading not kept rid=%s: %s", restaurant_id, e)
+    share = bands.get("unreadable_share")
+    if share is None or bands.get("pay_read", 0) < OT_BANDS_MIN_READ or share <= OT_UNREADABLE_MAX_SHARE:
+        return False
+    try:
+        import ops
+        if not ops.claim_period(f"rpower_ot_unreadable:{int(restaurant_id)}", str(day)[:10]):
+            return False
+        ops.capture(RuntimeError(
+            f"RPOWER overtime pay unreadable on {bands['bands'].get('unreadable', 0)} of {bands['pay_read']} punches "
+            f"({round(share * 100)}%): their OT is priced at half the hour's rate, not what payroll paid"),
+            job="rpower_ot_pay", context=f"restaurant_id={int(restaurant_id)} day={str(day)[:10]}",
+            db_path=db_path, restaurant_id=int(restaurant_id), kind="data_quality")
+        return True
+    except Exception as e:
+        log.warning("[rpower] OT pay finding not raised rid=%s: %s", restaurant_id, e)
+        return False
 
 
 def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = None,
@@ -4422,6 +4530,9 @@ def _labor_read(restaurant_id: int, days: int = 60) -> dict:
     # that day (shift_facts replaces the window the rows' dates span).
     before = (start - timedelta(days=1)).isoformat()
     rows = [r for r in normalise_entries(entries, sales, people, boundary) if r["date"] != before]
+    # How the read's overtime pay was read, kept per store and raised when
+    # the unconfirmed heuristic cannot read it (audit #25 F9).
+    record_ot_pay_bands(restaurant_id, ot_pay_bands(entries), end)
     left_out = station_logins(entries, people)
     if left_out:
         log.info("[rpower] rid=%s station logins left out of labor: %s",
@@ -4987,6 +5098,12 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
     import demo_store
     if demo_store.is_simulated(restaurant_id):
         return {"ok": False, "error": "This is a demo store: a schedule is never pushed to a POS from it."}
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # A live store's schedule, never from staging or a restore drill,
+        # whatever queued pos_schedule_push rows the copy carried (blind
+        # re-audit 10/27/26; A05-06). Nothing was sent.
+        return {"ok": False, "skipped": [], "error": _config_gate.refused_send("rpower_schedule")}
     token, base = _ctx(restaurant_id)
     payload, by_employee, skipped = _schedule_payload(restaurant_id, base, shifts, job_codes)
     if not by_employee:
@@ -5075,9 +5192,11 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
 
 CATALOG_CACHE_SECONDS = 600
 _catalog_cache = _LRU(CACHE_MAX_KEYED)
+_process_caches.register("rpower._catalog_cache", _catalog_cache)
 
 
 _scope_cache = _LRU(CACHE_MAX_KEYED, per_store=2)
+_process_caches.register("rpower._scope_cache", _scope_cache)
 
 
 def _list_scope(restaurant_id: int, by_store: bool = False) -> str:
@@ -6031,6 +6150,7 @@ def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
 
 CLOSED_CACHE_SECONDS = 600
 _closed_cache = _LRU(CACHE_MAX_KEYED, per_store=8)
+_process_caches.register("rpower._closed_cache", _closed_cache)
 
 
 def day_closed_cached(restaurant_id: int, business_date) -> bool:

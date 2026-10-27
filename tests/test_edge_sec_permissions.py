@@ -36,6 +36,9 @@ from auth import (create_session, create_user, get_session_user, init_auth,
 from models import (Restaurant, create_restaurant, get_restaurant,
                     update_restaurant)
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATES = os.path.join(ROOT, "templates")
 CSRF = {"X-CSRF": "edge-csrf"}
@@ -341,34 +344,12 @@ def test_a_manager_cannot_switch_on_auto_approve(db_path, surface):
 
 
 # ── support writing through view-as ──────────────────────────────────────────
-
-def _support_via_view_as(db_path):
-    rid, owner, mgr = _setup(db_path)
-    hq = create_restaurant(Restaurant(name="Cavnar HQ", owner_email="hq@cavnar.test"), db_path=db_path)
-    sup = create_user(hq, "support1", "sup@cavnar.test", "suppass12", db_path=db_path)
-    auth.set_user_role(sup, "support", db_path=db_path)
-    c = _app().test_client()
-    c.set_cookie("session_token", create_session(sup, db_path=db_path))
-    c.set_cookie("csrf_js", CSRF["X-CSRF"])
-    r = c.post(f"/admin/view-as/{rid}", headers=CSRF, data={"reason": "checking a ticket for them"})      # a POST since SEC-34
-    assert r.status_code == 302
-    viewing = get_session_user(c.get_cookie("session_token").value, db_path=db_path)
-    assert viewing["id"] == owner and viewing["device_type"] == "admin-view-as"
-    return rid, c
-
-
-def test_support_can_open_view_as_and_read_as_the_client(db_path):
-    rid, c = _support_via_view_as(db_path)
-    assert c.get("/api/account/team").status_code == 200
-
-
-def test_a_view_as_session_opened_by_support_is_refused_every_write(db_path):
-    rid, c = _support_via_view_as(db_path)
-    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
-    r1 = c.post("/api/toggle-2fa", json={"enabled": False}, headers=CSRF)
-    r2 = c.post("/api/account-settings/data-retention", json={"months": 6}, headers=CSRF)
-    assert (r1.status_code, r2.status_code) == (403, 403)
-    assert get_restaurant(rid, db_path=db_path).two_fa_enabled == 1
+#
+# Moved to tests/test_real_app_permissions.py (audit #25 A01-15): view-as,
+# its refused writes and support masking are app-level wiring, so they run
+# there through the real composed app and a real support sign-in
+# (test_support_reads_as_the_client_through_view_as_and_is_refused_every_write,
+# test_support_sees_the_console_with_personal_details_masked).
 
 
 # ── routes no module gate covers ─────────────────────────────────────────────
@@ -378,16 +359,25 @@ def test_the_inventory_trend_route_belongs_to_the_food_cost_module():
 
 
 def _all_rules():
-    import clover_routes
-    import rpower_routes
-    import social_routes
-    import strategy_routes
-    app = _app()
-    for bp in (strategy_routes.strategy_bp, strategy_routes.strategy_mobile_bp, social_routes.social_bp,
-               clover_routes.clover_bp, rpower_routes.rpower_bp):
-        app.register_blueprint(bp)
+    """Every /api and /mobile/api rule of every blueprint the app registers —
+    from blueprints.all_blueprints(), the list hosted_dashboard registers
+    from (audit #25 A04-06: this sweep used to build its own app from 11 of
+    the 22 and 21 rules sat outside it)."""
+    import blueprints
+    app = blueprints.url_map_app(template_folder=TEMPLATES)
     return sorted({r.rule for r in app.url_map.iter_rules()
                    if r.rule.startswith("/api/") or r.rule.startswith("/mobile/api/")})
+
+
+def test_the_sweep_reads_every_blueprint_the_app_registers():
+    import blueprints
+    names = [bp.name for bp in blueprints.all_blueprints()]
+    assert len(names) == len(set(names)) >= 22
+    for name in ("knowledge", "knowledge_mobile", "staff_knowledge", "staff_comms", "staff_comms_mobile",
+                 "status", "onboarding_admin", "sales_audit", "webhook", "staff", "issue_link"):
+        assert name in names, name
+    rules = _all_rules()
+    assert "/api/staff-brief/draft" in rules and "/mobile/api/staff-certs" in rules and "/api/status" in rules
 
 
 def test_every_api_rule_is_module_mapped_or_listed_as_deliberately_ungated():
@@ -416,6 +406,7 @@ def _blocked(*a, **k):
     raise OSError("network blocked in test subprocess")
 socket.create_connection = _blocked
 socket.socket.connect = lambda self, *a, **k: _blocked()
+import dotenv; dotenv.load_dotenv = lambda *a, **k: False  # never production's .env (audit #25)
 import hosted_dashboard as h
 import auth, models
 from models import Restaurant

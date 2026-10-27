@@ -10,6 +10,10 @@ The second half pins the new employee role closed: it is defined by what it
 CANNOT do, and every one of those denials is load-bearing.
 """
 import permissions as P
+import pytest
+
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
 
 
 # ── the legacy roles are unchanged ─────────────────────────────────────────

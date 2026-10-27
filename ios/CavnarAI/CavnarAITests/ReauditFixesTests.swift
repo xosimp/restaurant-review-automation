@@ -537,7 +537,7 @@ final class ReauditFixesTests: XCTestCase {
         XCTAssertEqual(items.taxCaption, "not in gross or net")
         XCTAssertEqual(items.definitionNote, "Gross is items at the price rung. Net is gross less discounts and comps.")
 
-        // The server's own older report (Fixtures/dsr_preview.json): no `net`
+        // The server's own older report (Fixtures/dsr_preview_scenario.json): no `net`
         // sentence, so the deductions list stands in.
         let r = try JSONDecoder.cavnar.decode(DSRReport.self, from: DailyReportDecodingTests.payload("owner"))
         let sales = try XCTUnwrap(r.facts.blocks["sales"])

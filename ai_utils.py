@@ -150,6 +150,8 @@ AI_RUNAWAY_BASELINE_DAYS = int(os.getenv("AI_RUNAWAY_BASELINE_DAYS", "7"))
 # database too: tests and the restore drill read other files.
 _MEMO_SECS = _BUDGET_CACHE_SECS = 60
 _budget_memo = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("ai_utils._budget_memo", _budget_memo)
 _budget_lock = threading.Lock()
 
 
@@ -517,6 +519,7 @@ _TIER_LABELS = {
 # read-add-write raced a concurrent call's, and two calls finishing together
 # on two request threads lost one call's cost from the running total.
 _budget_cache = {}
+_process_caches.register("ai_utils._budget_cache", _budget_cache)
 
 
 class AIBudgetExceeded(RuntimeError):
@@ -981,6 +984,7 @@ def _record_budget_stop(scope, restaurant_id, vendor="anthropic"):
 
 
 _warned_memo = set()
+_process_caches.register("ai_utils._warned_memo", _warned_memo)
 _WARNED_MEMO_MAX = 5000
 
 
@@ -1067,6 +1071,7 @@ def _note_forecast(entry):
 _RATE_CACHE_SECS = 60
 _BASELINE_CACHE_SECS = 3600
 _rate_cache = {}            # (kind, restaurant_id, action) -> (at, value)
+_process_caches.register("ai_utils._rate_cache", _rate_cache)
 _rate_lock = threading.Lock()
 
 
@@ -1210,6 +1215,7 @@ _UNATTENDED_TRIGGERS = ("scheduler", "system")
 _FAR_FUTURE_SECONDS = 10 * 365 * 86400
 
 _control_cache = {}
+_process_caches.register("ai_utils._control_cache", _control_cache)
 _control_lock = threading.Lock()
 
 
@@ -1603,6 +1609,7 @@ _breaker_lock = threading.Lock()
 BREAKER_SYNC_SECONDS = float(os.getenv("AI_BREAKER_SYNC_SECONDS", "5"))
 _breaker_synced = {}            # provider -> (time read, the row's updated_at seen)
 _timeouts_seen = {}             # family key -> {restaurant id (or None): last timeout time}
+_process_caches.register("ai_utils._timeouts_seen", _timeouts_seen)
 
 _TENANT_DOWN_MESSAGE = ("Cavnar AI couldn't get answers for this restaurant in time just now — nothing is lost; "
                         "try again in a minute.")
@@ -4131,6 +4138,7 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
 # hitting a stop shows up as a count, not as a thousand rows.
 _BLOCKED_COALESCE_SECONDS = 60
 _blocked_memo = {}
+_process_caches.register("ai_utils._blocked_memo", _blocked_memo)
 _blocked_lock = threading.Lock()
 
 
@@ -4377,6 +4385,7 @@ def usage_summary(restaurant_id=None, since_days=30, db_path=None):
 # when the table cannot be reached — bounded, with empty keys dropped
 # (#151: the per-IP buckets used to grow for the life of the process).
 _ai_call_log = {}
+_process_caches.register("ai_utils._ai_call_log", _ai_call_log)
 _ai_call_log_lock = threading.Lock()
 _AI_CALL_LOG_MAX_KEYS = 5000
 _rate_prune_state = {"at": 0.0}
@@ -4795,6 +4804,38 @@ _AI_OPS_DDL = (
         PRIMARY KEY (place_id, day, fields, variant)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_places_details_cache_created ON places_details_cache(created_at)",
+    # The frozen evaluation sets of the top model surfaces (ai_eval, Audit
+    # #25 R13): stored production inputs, scrubbed again with
+    # ai_orchestrator._redacted_request — an invoice item holds its
+    # owner-confirmed costs, never its scan. Versioned; no retention rule
+    # touches it (a baseline is only comparable on the same set).
+    """CREATE TABLE IF NOT EXISTS ai_eval_items (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        surface        TEXT NOT NULL,
+        version        TEXT NOT NULL,
+        item_key       TEXT NOT NULL,
+        restaurant_id  INTEGER,
+        source_model   TEXT,
+        request_z      BLOB,
+        reference_json TEXT,
+        created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (surface, version, item_key)
+    )""",
+    # Each scored run of a set (ai_eval.record_run): aggregate scores only.
+    """CREATE TABLE IF NOT EXISTS ai_eval_runs (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_key        TEXT NOT NULL,
+        surface        TEXT NOT NULL,
+        version        TEXT,
+        model          TEXT,
+        n              INTEGER,
+        scores_json    TEXT,
+        cost_usd       REAL,
+        trigger_kind   TEXT,
+        build          TEXT,
+        created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_ai_eval_runs_created ON ai_eval_runs(created_at)",
 )
 
 
@@ -4839,8 +4880,13 @@ def init_ai_ops(db_path=None):
         # the key is per model, an action runs one effort on a model almost
         # always, and a new key column would mean rebuilding a never-pruned
         # table at boot — and distinct texts checked (W4).
+        # ai_quality_events gained the build and the prompt template it was
+        # about (Audit #25 A07-04/A07-05): the quality watch's warning names
+        # the change, and the console compares templates.
         for table, col, typ in (("ai_usage_daily", "efforts_json", "TEXT"),
-                                ("ai_validation_daily", "n_texts", "INTEGER")):
+                                ("ai_validation_daily", "n_texts", "INTEGER"),
+                                ("ai_quality_events", "build", "TEXT"),
+                                ("ai_quality_events", "template_hash", "TEXT")):
             have = {r[1] for r in conn.execute("PRAGMA table_info(" + table + ")").fetchall()}
             if have and col not in have:
                 try:
@@ -4851,11 +4897,15 @@ def init_ai_ops(db_path=None):
         conn.commit()
     finally:
         conn.close()
-    for step in (_backfill_vendor, _reprice_legacy_rows):
-        try:
-            step(db_path=path)
-        except Exception as e:
-            log.error("init_ai_ops: %s failed: %s", step.__name__, e)
+    # Legacy ledger rows, ONCE per database (data_migrations — blind re-audit
+    # 10/27/26 B5 P3): every writer (log_ai_usage) stamps vendor, outcome and
+    # price_version, so a row written since never needs either. Every boot
+    # used to run both over ai_usage, the busiest ledger there is, and the
+    # 'legacy' stamp would have marked a new unversioned row as old. A
+    # failure is logged and retried by the next boot (models.run_once).
+    import models as _models_once
+    _models_once.run_once("ai_usage_vendor_outcome_v1", lambda: _backfill_vendor(db_path=path), db_path=path)
+    _models_once.run_once("ai_usage_price_version_v1", lambda: _reprice_legacy_rows(db_path=path), db_path=path)
 
 
 def _backfill_vendor(db_path=None):
@@ -5077,6 +5127,7 @@ def _static_system(kwargs):
 
 
 _template_cache = {}
+_process_caches.register("ai_utils._template_cache", _template_cache)
 
 
 def _caller_template(depth=3):
@@ -5223,13 +5274,27 @@ def record_quality_event(surface, kind, restaurant_id=None, detail=None, codes=N
             call_id = last_call_id(restaurant_id, action=action or surface, surface=surface)
         conn = _conn(db_path)
         try:
-            conn.execute("INSERT INTO ai_quality_events (restaurant_id, surface, kind, action, detail, codes, n, "
-                         "call_id) VALUES (?,?,?,?,?,?,?,?)",
-                         (restaurant_id, str(surface or "?")[:60], str(kind or "?")[:40],
-                          (str(action)[:40] if action else None),
-                          redact_pii(str(detail or ""))[:300] or None,
-                          json.dumps(sorted(set(str(c) for c in codes))) if codes else None,
-                          int(n or 1), call_id))
+            # The build and the prompt template the event is about (Audit #25
+            # A07-04): the template from the call's own trace row.
+            template = None
+            if call_id:
+                try:
+                    row = conn.execute("SELECT template_hash FROM ai_calls WHERE call_id=?", (call_id,)).fetchone()
+                    template = row[0] if row else None
+                except sqlite3.Error as e:
+                    log.debug("quality event's template not read (%s): %s", call_id, e)
+            build = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or "")[:12] or None
+            row = (restaurant_id, str(surface or "?")[:60], str(kind or "?")[:40],
+                   (str(action)[:40] if action else None), redact_pii(str(detail or ""))[:300] or None,
+                   json.dumps(sorted(set(str(c) for c in codes))) if codes else None, int(n or 1), call_id)
+            try:
+                conn.execute("INSERT INTO ai_quality_events (restaurant_id, surface, kind, action, detail, codes, n, "
+                             "call_id, build, template_hash) VALUES (?,?,?,?,?,?,?,?,?,?)", row + (build, template))
+            except sqlite3.OperationalError as e:
+                # A database booted before the two columns (init_ai_ops adds them).
+                log.debug("quality event without build/template (%s)", e)
+                conn.execute("INSERT INTO ai_quality_events (restaurant_id, surface, kind, action, detail, codes, n, "
+                             "call_id) VALUES (?,?,?,?,?,?,?,?)", row)
             conn.commit()
         finally:
             conn.close()

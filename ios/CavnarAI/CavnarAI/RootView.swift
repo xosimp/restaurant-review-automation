@@ -15,6 +15,9 @@ struct RootView: View {
     // was never the one on screen — so the banner and the error wording
     // could disagree about the same moment (CLIENT-52).
     private let network = NetworkMonitor.shared
+    // The server's "this build is too old" (426, audit #25 A06-02): once any
+    // response says so, the blocking update sheet covers every screen.
+    private let updateGate = AppUpdateGate.shared
     // Labels of writes waiting in the offline queue. The queue persisted
     // them and replayed them, but nothing on screen ever said they existed,
     // so "did my approve go?" had no answer (CLIENT-5).
@@ -569,6 +572,9 @@ struct RootView: View {
             }
         }
         #endif
+        // Over everything but the launch splash: this build can no longer
+        // read the server's answers, so nothing under it is reachable.
+        .modifier(AppUpdateOverlay(gate: updateGate))
         .overlay {
             if showLaunchSplash {
                 LaunchSplashView(quick: !firstLaunchToday) {

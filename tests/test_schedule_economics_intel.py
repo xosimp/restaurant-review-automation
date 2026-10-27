@@ -21,6 +21,7 @@ import shift_requests as srq
 import schedule_versions as sv
 import staff_settings as ss
 from models import create_restaurant, Restaurant, get_conn
+from tests.clock import restaurant_today
 
 WEEK = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"]
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -138,7 +139,7 @@ def test_weekly_revenue_is_the_median_of_complete_weeks(db_path, monkeypatch):
     rid = create_restaurant(Restaurant(name="R", owner_email="r@x.com"), db_path=db_path)
     assert econ.projected_weekly_revenue(rid, db_path=db_path)["value"] is None
     conn = get_conn(db_path)
-    today = dt.date.today()
+    today = restaurant_today()
     monday = today - dt.timedelta(days=today.weekday())
     for w in range(1, 6):                       # five complete weeks, $7k a day, one week at $14k
         for i in range(7):
@@ -402,7 +403,7 @@ def test_a_swap_moves_both_shifts_only_when_both_are_legal(db_path, rid):
     # Its own week, always ahead of the real clock: request_swap takes
     # `today`, decide() reads the clock, so the fixed WEEK stopped working
     # the afternoon it began (10/5/26).
-    start = dt.date.today() + dt.timedelta(days=(7 - dt.date.today().weekday()) % 7 + 7)
+    start = restaurant_today() + dt.timedelta(days=(7 - restaurant_today().weekday()) % 7 + 7)
     WEEK = [(start + dt.timedelta(days=i)).isoformat() for i in range(7)]
     csv_text = HEADER + (f"{WEEK[0]},Monday,Ana,Server,4:00pm,10:00pm,6.0,\n"
                          f"{WEEK[2]},Wednesday,Bob,Server,4:00pm,10:00pm,6.0,\n")
@@ -473,7 +474,7 @@ def test_demand_blind_notice_reads_the_last_sales_date(db_path, rid):
     assert {k: none[k] for k in ("date", "days_ago", "blind")} == {"date": None, "days_ago": None, "blind": True}
     assert none["blocked"] is False and none["line"]
     conn = get_conn(db_path)
-    old = (dt.date.today() - dt.timedelta(days=40)).isoformat()
+    old = (restaurant_today() - dt.timedelta(days=40)).isoformat()
     conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales) VALUES (?,?,?,?)", (rid, old, "Monday", 5000))
     conn.commit(); conn.close()
     out = schedule_engine._demand_data_through(rid)

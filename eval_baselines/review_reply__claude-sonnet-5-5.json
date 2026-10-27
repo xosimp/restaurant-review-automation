@@ -1,0 +1,6 @@
+{
+  "model": "claude-sonnet-5-5",
+  "note": "Bootstrapped 10/26/26 (Audit #25 R13) with the models in force; no frozen set has been scored yet. Measure it on Railway: scripts/run_ai_eval.py freeze --surface review_reply --n 25, then run --baseline. A model change needs a measured baseline (tests/test_ai_model_change_needs_eval.py).",
+  "status": "pending first run",
+  "surface": "review_reply"
+}

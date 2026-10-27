@@ -56,6 +56,10 @@ NOT_APPLICABLE_SITES = {
     ("owner_rules.py", "_model_call"): "the owner's own sentences read into typed rules, against the roster's names",
     ("schedule_narrative.py", "write"): "a note on the finished week, from that week's rows, checked against them",
     ("schedule_critic.py", "review"): "a critic of a week code already built inside a gated generation, from that week's rows; code validates every edit",
+    # Audit #25 R13: the offline evaluation replays a frozen, scrubbed
+    # production request — its data is the request itself, nobody reads the
+    # answer (it is scored and thrown away).
+    ("ai_eval.py", "_send_live"): "an evaluation replay of a frozen request, scored and never shown",
 }
 
 

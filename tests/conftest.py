@@ -9,6 +9,31 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
+# ── Never production (audit #25 A01-06, A01-17, R16) ─────────────────────────
+# Before anything else is imported. Inside a Railway environment (`railway
+# run`, `railway shell`, a `railway ssh` session — what sets DATABASE_URL to
+# production's Postgres) the suite refuses to start: the default database's
+# boot DDL and the autouse ledger reset would run against production. Any
+# platform database URL is dropped, so a shell that exported one for a psql
+# session never reaches models.get_conn (which also ignores DATABASE_URL off
+# Railway — config.platform_database_url_allowed); a test that wants the
+# Postgres backend sets DATABASE_URL and ALLOW_LOCAL_PG=1 with monkeypatch.
+import config as _cfg_guard
+
+
+def _refuse(message):
+    """Stop the run before anything else is imported (exit status 3)."""
+    sys.stderr.write("\n" + message + "\n")
+    raise SystemExit(3)
+
+
+if _cfg_guard.railway_marked():
+    _refuse("Refusing to run the test suite inside a Railway environment (one of %s is set): it would run boot "
+            "migrations and per-test deletes against production. Run it from a plain local shell."
+            % ", ".join(_cfg_guard.RAILWAY_MARKERS))
+for _var in ("DATABASE_URL", "SHADOW_DATABASE_URL", "ALLOW_LOCAL_PG"):
+    os.environ.pop(_var, None)
+
 # The checkout's .env holds production keys (Anthropic, Resend, Twilio,
 # Stripe…). hosted_dashboard.py and scheduler.py call load_dotenv() at
 # import, so on a developer machine every test that imported either one
@@ -65,6 +90,11 @@ os.environ.setdefault("HOME_SNAPSHOT_COLD", "request")
 # (emails.postal_address, #159). Set here as production must set it; the
 # tests of the unset case delete it.
 os.environ.setdefault("CAVNAR_POSTAL_ADDRESS", "100 Test St, Testville, IL 60000")
+# Every test has a ceiling (pytest-timeout, requirements-dev.txt; blind
+# re-audit 10/27/26 B1 F16): a deadlocked thread or barrier names its test
+# instead of burning the CI job's whole timeout. Generous by default (600 s);
+# CI passes --timeout=300. Inert where the plugin is not installed.
+os.environ.setdefault("PYTEST_TIMEOUT", "600")
 
 # The default database (models.DB_PATH, used by every call that passes no
 # db_path — init_db's ensure_columns(), status_manager, lazily imported
@@ -104,6 +134,94 @@ from models import init_db, ensure_columns, create_restaurant, save_reviews, Res
 _PG_BASE = (os.getenv("CAVNAR_TEST_PG_URL") or "").strip()
 
 
+def _is_local_host(host):
+    """localhost, a *.localhost name, or a loopback address (v4, v6, mapped)."""
+    import ipaddress
+    host = (host.decode() if isinstance(host, bytes) else str(host or "")).strip("[]").lower()
+    if host in ("localhost", "") or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback or ip.is_unspecified
+
+
+if _PG_BASE:
+    # The suite creates and DROPs databases on this server: a scratch one on
+    # this machine (or CI's service container), never anything remote.
+    from urllib.parse import urlsplit as _urlsplit
+    _pg_host = _urlsplit(_PG_BASE).hostname or ""
+    if not _is_local_host(_pg_host) and os.getenv("CAVNAR_TEST_PG_ALLOW_REMOTE") != "1":
+        _refuse(f"CAVNAR_TEST_PG_URL names a non-local server ({_pg_host}); the suite creates and drops databases "
+                "there. Use a scratch Postgres on localhost (CAVNAR_TEST_PG_ALLOW_REMOTE=1 to override "
+                "deliberately).")
+
+
+# ── The network guard (audit #25 A01-17) ─────────────────────────────────────
+# An allowlist at the socket, not a denylist of provider hosts (APNs, Google
+# OAuth, Meta, RPOWER, Untappd, Tock and R2 were all reachable before): a
+# connection to anything but this machine (loopback, a unix socket) or the
+# scratch Postgres raises NetworkBlocked — an OSError, so the code under
+# test meets an unreachable network exactly as it would offline — and the
+# attempt is listed at the end of the run so it gets stubbed. (Postgres
+# itself connects through libpq in C, below this guard; CAVNAR_TEST_PG_URL is
+# held to localhost above.)
+import socket as _socket
+
+
+class NetworkBlocked(ConnectionRefusedError):
+    """A test tried to open a connection off this machine."""
+
+
+_NET_BLOCKED = []
+_PG_GUARD_HOST = ""
+if _PG_BASE:
+    from urllib.parse import urlsplit as _urlsplit_net
+    _PG_GUARD_HOST = (_urlsplit_net(_PG_BASE).hostname or "").lower()
+
+
+def _connection_allowed(sock, address):
+    if getattr(_socket, "AF_UNIX", None) is not None and sock.family == _socket.AF_UNIX:
+        return True
+    if not isinstance(address, tuple) or not address:
+        return True
+    host = address[0]
+    host_s = (host.decode() if isinstance(host, bytes) else str(host or "")).lower()
+    return _is_local_host(host_s) or (bool(_PG_GUARD_HOST) and host_s == _PG_GUARD_HOST)
+
+
+def _note_blocked(address):
+    where = os.environ.get("PYTEST_CURRENT_TEST", "(collection)").rsplit(" (", 1)[0]
+    _NET_BLOCKED.append((where, "%s:%s" % (address[0], address[1] if len(address) > 1 else "")))
+
+
+_real_socket_connect = _socket.socket.connect
+_real_socket_connect_ex = _socket.socket.connect_ex
+
+
+def _guarded_connect(self, address):
+    if not _connection_allowed(self, address):
+        _note_blocked(address)
+        raise NetworkBlocked(f"test tried to open a network connection to {address!r} — only this machine "
+                                 "may be reached in the suite; stub the call (tests/conftest.py network guard)")
+    return _real_socket_connect(self, address)
+
+
+def _guarded_connect_ex(self, address):
+    if not _connection_allowed(self, address):
+        _note_blocked(address)
+        import errno
+        return errno.ECONNREFUSED
+    return _real_socket_connect_ex(self, address)
+
+
+_socket.socket.connect = _guarded_connect
+_socket.socket.connect_ex = _guarded_connect_ex
+
+
 def _pg_url(name):
     from urllib.parse import urlsplit, urlunsplit
     parts = urlsplit(_PG_BASE)
@@ -114,6 +232,40 @@ def _pg_admin(sql):
     import psycopg
     with psycopg.connect(_PG_BASE, autocommit=True, connect_timeout=10) as c:
         c.execute(sql)
+
+
+# A frozen clock and a Postgres connect (10/26/26 integration run): time-
+# machine freezes time.monotonic too, and psycopg's binary connect then trips
+# its own connect_timeout at once — and a connect that failed that way left
+# the process unable to connect at all, so every later test on that worker
+# errored (7,066 setup errors). While a travel is active the test process
+# connects with no wall-clock deadline once time-machine is loaded (the scratch
+# server is local).
+if _PG_BASE:
+    import psycopg as _psycopg_for_clock
+    _real_psycopg_connect = _psycopg_for_clock.connect
+
+    def _clock_safe_psycopg_connect(*args, **kwargs):
+        # Once time-machine has patched the clock (its first travel), its
+        # monotonic is no longer the one psycopg's binary connect measures
+        # against, even between travels: no deadline from then on.
+        if "time_machine" in sys.modules:
+            kwargs.pop("connect_timeout", None)
+        return _real_psycopg_connect(*args, **kwargs)
+
+    _psycopg_for_clock.connect = _clock_safe_psycopg_connect
+
+
+_PG_VERSION = []
+
+
+def _pg_server_version():
+    """The scratch server's server_version_num (e.g. 160015), read once."""
+    if not _PG_VERSION:
+        import psycopg
+        with psycopg.connect(_PG_BASE, autocommit=True, connect_timeout=10) as c:
+            _PG_VERSION.append(int(c.execute("SHOW server_version_num").fetchone()[0]))
+    return _PG_VERSION[0]
 
 
 _PG_SEQ = [0]
@@ -128,7 +280,12 @@ def _pg_new_database(template=None):
     _pg_admin(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
     if template:
         db_dialect.close_idle(_pg_url(template))
-        _pg_admin(f"CREATE DATABASE {name} TEMPLATE {template}")
+        # FILE_COPY on Postgres 15+: its default (WAL_LOG) copies the ~40 MB
+        # template through the WAL — 0.86 s against 0.27 s a clone here, and
+        # under 12 workers the WAL traffic timed every connection out (the
+        # 10/26/26 integration run: 7,066 setup errors). CI's PG16 too.
+        strategy = " STRATEGY FILE_COPY" if _pg_server_version() >= 150000 else ""
+        _pg_admin(f"CREATE DATABASE {name} TEMPLATE {template}{strategy}")
     else:
         _pg_admin(f"CREATE DATABASE {name}")
     return name
@@ -146,6 +303,43 @@ def _pg_drop(name):
 def pytest_configure(config):
     config.addinivalue_line("markers", "sqlite_only: reads the SQLite file itself (a snapshot, a query "
                             "plan, a PRAGMA); skipped in the Postgres mode")
+    # The release gate's tiers (audit #25, TESTING.md "Tiers"): `contract` is
+    # the deploy-gate slice (`pytest -m contract`, < 60 s, run before a push
+    # that touches a top-10 component); `quarantine` is a known-flaky test,
+    # left out of the gate and run and reported nightly (never a silent
+    # skip); `browser` is a Playwright test, nightly.
+    config.addinivalue_line("markers", "contract: the deploy-gate contract slice (pytest -m contract)")
+    config.addinivalue_line("markers", "quarantine: known flaky; excluded from the gate, run and reported nightly")
+    config.addinivalue_line("markers", "browser: a Playwright browser test (tests/browser/), nightly")
+    # `pg_nightly`: a contract test the SQLite gate runs but too slow for the
+    # 10-minute Postgres gate (the crawl: 140 s alone on a laptop, past 300 s
+    # on GitHub's 4 cores under -n 8, 10/27/26); the nightly full Postgres
+    # run carries it.
+    config.addinivalue_line("markers", "pg_nightly: contract test left out of gate-postgres; nightly on Postgres")
+
+
+# `contract`, or `contract and not <marker>...` (the gate's own expression,
+# "contract and not quarantine"): an expression that can only select
+# contract-marked tests.
+import re as _re_markexpr
+_CONTRACT_ONLY = _re_markexpr.compile(r"^contract(\s+and\s+not\s+\w+)*$")
+
+
+def pytest_ignore_collect(collection_path, config):
+    """`pytest -m contract` (the gate's slice) imports only the files that
+    carry the marker: collecting all ~1,000 files to deselect them took most
+    of the slice's minute. Any other marker expression collects as usual."""
+    if not _CONTRACT_ONLY.match((config.getoption("markexpr", "") or "").strip()):
+        return None
+    name = collection_path.name
+    if collection_path.suffix == ".py" and name.startswith("test_"):
+        try:
+            text = collection_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        if "mark.contract" not in text:
+            return True
+    return None
 
 
 # Whole files that cannot run in the Postgres mode, and why. Every entry is
@@ -158,7 +352,33 @@ PG_MODE_SKIP_FILES = {
 }
 
 
+def _quarantine_problems(items):
+    """[nodeid: what is wrong] for every quarantined test whose mark does
+    not say why and since when: `@pytest.mark.quarantine(reason="…",
+    since="10/27/26")` (blind re-audit 10/27/26 B1 F16). scripts/promote.py
+    accepts a quarantined failure only while the mark is younger than
+    promote.QUARANTINE_MAX_DAYS — a quarantine is a deadline, not a home."""
+    from datetime import datetime as _datetime
+    bad = []
+    for item in items:
+        for mark in item.iter_markers(name="quarantine"):
+            reason = str(mark.kwargs.get("reason") or "").strip()
+            since = str(mark.kwargs.get("since") or "").strip()
+            try:
+                _datetime.strptime(since, "%m/%d/%y")
+                dated = True
+            except ValueError:
+                dated = False
+            if not reason or not dated:
+                bad.append(f"{item.nodeid}: quarantine needs reason=\"…\" and since=\"M/D/YY\" "
+                           f"(got reason={reason!r}, since={since!r})")
+    return bad
+
+
 def pytest_collection_modifyitems(config, items):
+    bad = _quarantine_problems(items)
+    if bad:
+        raise pytest.UsageError("A quarantine mark must say why and since when:\n  " + "\n  ".join(bad[:20]))
     if not _PG_BASE:
         return
     skip = pytest.mark.skip(reason="reads the SQLite file itself; the Postgres mode routes the database elsewhere")
@@ -330,7 +550,33 @@ if _RECORD_DIR and not _PG_BASE:
     _models_rec._note_write = _note_write_recording
 
 
+def _unreported_blocks():
+    """The blocked connections no test's report carried: made during
+    collection, or in a module or session fixture."""
+    return [hit for i, hit in enumerate(_NET_BLOCKED) if i not in _NET_REPORTED]
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """(xdist controller) A worker's blocked connections that no test
+    reported (blind re-audit 10/27/26 B1 F12): they stayed in that worker's
+    process, and the run passed."""
+    _BLOCKED_ON_WORKERS.extend(tuple(x) for x in (getattr(node, "workeroutput", {}) or {}).get("cavnar_net_blocked", ()))
+
+
 def pytest_sessionfinish(session, exitstatus):
+    if hasattr(session.config, "workerinput"):
+        session.config.workeroutput["cavnar_net_blocked"] = _unreported_blocks()
+    _enforce_expected_skips(session)
+    # With CAVNAR_ENFORCE_SKIPS=1 (CI), a test that tried to reach the
+    # network fails the run too: the guard refused it, so the test passed
+    # on whatever the refusal made of it — two did, reaching RPOWER's and
+    # Google's real APIs on every run until the guard listed them (audit #25).
+    # So does an attempt outside any test (collection, a module or session
+    # fixture), on the controller or handed over by a worker.
+    if (os.getenv("CAVNAR_ENFORCE_SKIPS") or "").strip() == "1" and \
+            (_BLOCKED_BY_TEST or _BLOCKED_ON_WORKERS or (_NET_BLOCKED and not hasattr(session.config, "workerinput"))):
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if not (_RECORD_DIR and _RECORDED):
         return
     import json
@@ -340,37 +586,129 @@ def pytest_sessionfinish(session, exitstatus):
             out.write(json.dumps({"sql": text, "at": at}) + "\n")
 
 
+# ── Skips that say why, and only the expected ones (audit #25 A01-18) ───────
+# Every skip's reason is collected (on the xdist controller too: reports
+# arrive there). With CAVNAR_ENFORCE_SKIPS=1 (CI) a skip whose reason
+# matches no line of tests/expected_skips.txt fails the run: a data- or
+# permission-conditional skip there is a regression reporting itself as
+# SKIPPED. CI also passes -rs, so every reason is printed.
+_SKIPS = []
+_BLOCKED_BY_TEST = []
+_BLOCKED_ON_WORKERS = []
+_NET_REPORTED = set()       # indexes into _NET_BLOCKED a test's report carried
+
+
+def _skip_reason(report):
+    lr = report.longrepr
+    if isinstance(lr, tuple) and len(lr) == 3:
+        return str(lr[2]).replace("Skipped: ", "", 1)
+    return str(lr or "")
+
+
+def pytest_collectreport(report):
+    """A module-level skip (`pytest.importorskip` at the top of a file,
+    `pytest.skip(..., allow_module_level=True)`) is a collection report, not
+    a test report: it turned a whole file into "1 skipped" and passed the
+    enforcement (blind re-audit 10/27/26 B1 F11). Under xdist the workers
+    forward skipped collection reports to the controller, which runs this."""
+    if report.skipped:
+        _SKIPS.append((report.nodeid or "(collection)", _skip_reason(report)))
+
+
+def pytest_runtest_logreport(report):
+    if report.skipped and not hasattr(report, "wasxfail"):
+        _SKIPS.append((report.nodeid, _skip_reason(report)))
+    for name, value in getattr(report, "user_properties", ()) or ():
+        if name == "network_blocked" and report.when == "teardown":
+            _BLOCKED_BY_TEST.extend((report.nodeid, host) for host in value)
+
+
+def expected_skip_patterns():
+    import re
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "expected_skips.txt")
+    with open(path, encoding="utf-8") as fh:
+        return [re.compile(line.strip()) for line in fh
+                if line.strip() and not line.lstrip().startswith("#")]
+
+
+def unexpected_skips(skips):
+    """The (nodeid, reason) pairs no expected_skips.txt pattern explains."""
+    pats = expected_skip_patterns()
+    return [(nid, why) for nid, why in skips if not any(p.search(why) for p in pats)]
+
+
+def _enforce_expected_skips(session):
+    if hasattr(session.config, "workerinput") or os.getenv("CAVNAR_ENFORCE_SKIPS") != "1":
+        return
+    bad = unexpected_skips(_SKIPS)
+    if bad:
+        tr = session.config.pluginmanager.get_plugin("terminalreporter")
+        lines = ["UNEXPECTED SKIPS (no line of tests/expected_skips.txt explains them):"]
+        lines += [f"  {nid}: {why}" for nid, why in bad[:50]]
+        if tr is not None:
+            tr.write_line("\n".join(lines), red=True, bold=True)
+        else:
+            print("\n".join(lines))
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(autouse=True)
+def _network_attempts_reported(request):
+    """Hands the network guard's blocked connections for this test to its
+    report, so the xdist controller can list them at the end of the run."""
+    start = len(_NET_BLOCKED)
+    yield
+    end = len(_NET_BLOCKED)
+    hits = [host for _where, host in _NET_BLOCKED[start:end]]
+    if hits:
+        _NET_REPORTED.update(range(start, end))
+        request.node.user_properties.append(("network_blocked", hits))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    blocked = (_BLOCKED_BY_TEST + _BLOCKED_ON_WORKERS) or [(where, host) for where, host in _NET_BLOCKED]
+    if blocked:
+        terminalreporter.section("network connections blocked (stub these calls)", yellow=True)
+        for nid, host in blocked[:40]:
+            terminalreporter.write_line(f"{nid} -> {host}")
+    # A change to the database layer, checked on SQLite only (audit #25
+    # A04-02): production runs on Postgres, and models.get_conn / db_dialect
+    # are where the two differ.
+    if not _PG_BASE and not os.getenv("CI"):
+        touched = _changed_files()
+        hit = sorted(f for f in touched if os.path.basename(f) in ("models.py", "db_dialect.py"))
+        if hit:
+            terminalreporter.section("Postgres not exercised", yellow=True)
+            terminalreporter.write_line(
+                f"This change touches {', '.join(hit)} and CAVNAR_TEST_PG_URL is unset, so none of these tests "
+                "ran on Postgres (production's database). Run the files that cover it again with "
+                "CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55433/postgres (Postgres 16, as production; TESTING.md, On Postgres).")
+
+
+def _changed_files():
+    """Files changed in the working tree or committed ahead of the upstream
+    branch — empty when git is unavailable."""
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = set()
+    for args in (["git", "diff", "--name-only", "HEAD"], ["git", "diff", "--name-only", "@{upstream}...HEAD"]):
+        try:
+            r = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=5)
+        except Exception:
+            continue
+        if r.returncode == 0:
+            out.update(line.strip() for line in r.stdout.splitlines() if line.strip())
+    return out
+
+
 def _build_default_schema():
     """Give the throwaway default database the same schema hosted_dashboard
     builds at boot, so a call that passes no db_path meets real tables —
     as it did when the default was the developer's reviews.db, but now
-    empty of anyone's data. Mirrors hosted_dashboard.py's module-level init."""
+    empty of anyone's data. hosted_dashboard.py's own boot schema
+    (models.boot_schema — release-safety audit 10/26/26 A05-07)."""
     import models
-    from auth import init_auth
-    from webhooks import init_webhooks
-    from guest_marketing import init_guest_marketing
-    from push import init_push
-    from sales_audits import init_sales_audits
-    import platform_monitor
-    import provider_health
-    init_db()
-    init_auth()
-    # F's telemetry tables and provider probe ledger, created at boot right
-    # after init_auth (hosted_dashboard); the code tolerates their absence,
-    # but a test on the default database should meet what production has.
-    platform_monitor.init_platform_tables()
-    provider_health.init_provider_health()
-    models.init_staff_notes()
-    models.init_staff_availability()
-    ensure_columns()
-    for fn in ("init_email_log", "init_onboarding_emails", "init_two_fa_backup_codes",
-               "init_competitor_snapshots", "init_ai_visibility_queries", "init_staff_capabilities",
-               "init_shift_profiles", "init_capability_changes", "init_ask_memory"):
-        getattr(models, fn)()
-    init_webhooks()
-    init_guest_marketing()
-    init_push()
-    init_sales_audits()
+    models.boot_schema()
 
 
 _build_default_schema()
@@ -769,24 +1107,10 @@ _PG_TEMPLATE = None
 
 
 def _boot_schema(path):
-    """hosted_dashboard's init_* chain after init_db, on `path` (schema only)."""
-    import auth
-    import guest_marketing
+    """hosted_dashboard's whole boot schema on `path` (models.boot_schema:
+    init_db, ensure_columns and the init_* chain — schema only)."""
     import models
-    import platform_monitor
-    import provider_health
-    import push
-    import sales_audits
-    import webhooks
-    auth.init_auth(db_path=path)
-    models.init_two_fa_backup_codes(db_path=path)
-    models.init_email_log(db_path=path)
-    push.init_push(db_path=path)
-    webhooks.init_webhooks(db_path=path)
-    guest_marketing.init_guest_marketing(path)
-    sales_audits.init_sales_audits(db_path=path)
-    platform_monitor.init_platform_tables(db_path=path)
-    provider_health.init_provider_health(db_path=path)
+    models.boot_schema(path)
 
 
 def _db_template():
@@ -800,8 +1124,6 @@ def _db_template():
     if _DB_TEMPLATE is None:
         import sqlite3
         path = os.path.join(_tempfile.mkdtemp(prefix="cavnar-test-template-"), "template.db")
-        init_db(db_path=path)
-        ensure_columns(db_path=path)
         # And the rest of hosted_dashboard's boot schema (tables only, no
         # seeds): most files ran init_auth and friends in a per-test fixture,
         # and on a bare copy that was the users/sessions/memberships tables
@@ -819,8 +1141,6 @@ def _db_template():
             atexit.register(_pg_drop, _PG_TEMPLATE)
             _pg_copy_into(path, _PG_TEMPLATE)
             models._PG_ROUTES[path] = _pg_url(_PG_TEMPLATE)
-            init_db(db_path=path)
-            ensure_columns(db_path=path)
             _boot_schema(path)
         conn = sqlite3.connect(path)
         try:
@@ -914,3 +1234,40 @@ def _fresh_generation_slots():
     job_queue._draining.clear()
     yield
     job_queue._draining.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_caches():
+    """Every module-level cache that registered with process_caches (release-
+    safety audit 10/26/26, A04-13), reset before and after each test: ids
+    restart at 1 in every test database, so a cache keyed by restaurant id
+    hands one test's answer to the next. tests/test_process_caches.py keeps
+    every `_*cache*` / `_*memo*` container registered. The per-cache resets
+    above stay (they also reset state that is not a registered cache)."""
+    import process_caches
+    process_caches.clear_all()
+    yield
+    process_caches.clear_all()
+
+
+@pytest.fixture(scope="module")
+def module_db_path(tmp_path_factory):
+    """db_path for a whole module: one copy of the boot-schema template that
+    every test in the file shares (blind re-audit 10/27/26). The twin smoke's
+    ~150 routes each copied a database, and on Postgres each copy is a
+    template clone — 3.5 minutes of the gate's Postgres job. Only for a
+    module whose tests keep to rows of their own (a restaurant per test)."""
+    import shutil
+    path = str(tmp_path_factory.mktemp("module-db") / "test_reviews.db")
+    shutil.copyfile(_db_template(), path)
+    if not _PG_BASE:
+        yield path
+        return
+    import models
+    name = _pg_new_database(template=_PG_TEMPLATE)
+    models._PG_ROUTES[path] = _pg_url(name)
+    try:
+        yield path
+    finally:
+        models._PG_ROUTES.pop(path, None)
+        _pg_drop(name)

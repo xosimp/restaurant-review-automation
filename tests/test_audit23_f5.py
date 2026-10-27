@@ -31,6 +31,7 @@ import pos_capacity
 import pos_closed
 import pos_io
 import rpower
+from tests.clock import frozen, restaurant_now
 
 
 @pytest.fixture(autouse=True)
@@ -174,11 +175,16 @@ def _rpower_stores(n, monkeypatch):
 
 
 def test_the_budget_check_sheds_bulk_then_stretches_live_and_never_close_or_nightly(monkeypatch):
-    # Tomorrow's 2am in Chicago, never a fixed date: the verdict is read
-    # against the real clock (state()), so a check "at 2am on 10/22" expired
-    # at 7am that day and the test failed from then on (10/24/26).
-    two_am = (datetime.now(CHI) + timedelta(days=1)).replace(hour=2, minute=0, second=0, microsecond=0,
-                                                            tzinfo=None)
+    # The verdict is read against the clock (state() compares `until` with
+    # time.time()), so a check "at 2am on 10/22" expired at 7am that day and
+    # the test failed from then on (10/24/26). The whole test now runs on a
+    # frozen clock at that 2am (ticking, so nothing waits forever), whatever
+    # the day or the process's timezone (audit #25 A01-03).
+    with frozen("2026-10-22 02:00", tz="America/Chicago", tick=True):
+        _budget_check_at_2am(monkeypatch, datetime(2026, 10, 22, 2, 0))
+
+
+def _budget_check_at_2am(monkeypatch, two_am):
     _rpower_stores(3, monkeypatch)
     caught = []
     monkeypatch.setattr(ops, "capture", lambda e, **k: caught.append(str(e)))
@@ -382,7 +388,7 @@ def test_a_real_tick_queues_the_stores_and_the_followers_wait_for_their_rows(mon
     monkeypatch.setattr(pos, "note_sync_failure", lambda rid: None)
     ran = []
     monkeypatch.setattr(strategy_jobs, "run_loss_sync", lambda: ran.append("loss_sync") or {"attempted": 0})
-    at = datetime.now(CHI).replace(tzinfo=None, hour=3, minute=5, second=0, microsecond=0)
+    at = restaurant_now("America/Chicago", naive=True).replace(hour=3, minute=5, second=0, microsecond=0)
     import time_utils
     monkeypatch.setattr(time_utils, "restaurant_now",
                         lambda r=None, naive=False: at if naive else at.replace(tzinfo=CHI))

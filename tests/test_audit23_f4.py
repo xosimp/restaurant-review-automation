@@ -267,8 +267,11 @@ def test_the_ot_premium_is_read_from_the_punch():
     assert rpower._ot_premium({"ot_hours": 0, "dt_hours": 0}) == 0.0
     assert rpower._ot_premium({"ot_hours": 2, "reg_rate": 20, "ot_rate": 30}) == 20.0
     assert rpower._ot_premium({"ot_hours": 2, "reg_rate": 20, "ot_pay": 60}) == 20.0     # whole OT pay
-    assert rpower._ot_premium({"ot_hours": 2, "reg_rate": 20, "ot_pay": 20}) == 20.0     # premium only
-    assert rpower._ot_premium({"ot_hours": 2, "reg_rate": 20, "ot_pay": 40}) is None     # can't tell
+    # ot_pay is the whole pay for the OT hours (RPOWER, 10/27/26): below
+    # straight time it contradicts that and is unreadable, never a premium.
+    assert rpower._ot_premium({"ot_hours": 2, "reg_rate": 20, "ot_pay": 20}) is None
+    assert rpower._ot_premium({"ot_hours": 2, "reg_rate": 20, "ot_pay": 40}) == 0.0      # straight time, no premium
+    assert rpower._ot_premium({"ot_hours": 2, "reg_rate": 20, "ot_pay": 45}) == 5.0      # a 1.125x OT rate
     assert rpower._ot_premium({"ot_hours": 2, "reg_rate": 0}) is None                    # a $0 punch
     assert rpower._ot_premium({"ot_hours": 1, "dt_hours": 1, "reg_rate": 10, "ot_pay": 35,
                                "_ot_pay_combined": True}) == 15.0

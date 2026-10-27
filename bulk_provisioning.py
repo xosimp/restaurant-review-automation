@@ -518,6 +518,10 @@ def _create_one(row, partner_id, stores, cred_id, send_welcome, actor, db_path=N
         updates = {f"module_{k}": (1 if k in keys else 0) for k in MODULE_KEYS}
         updates["billing_status"] = billing_status()
         updates["reviews_live"] = 1 if ((row.get("google_place_id") or "").strip() and "reviews" in keys) else 0
+        if (row.get("timezone") or "").strip():
+            # A zone the sheet gave is somebody's choice (data_health flags
+            # the Chicago default nobody chose — blind re-audit 10/26/26 B2).
+            updates["timezone"] = row["timezone"].strip()
         if u and is_owner:
             group = (u.get("location_group") or "").strip() or (u.get("name") or "").strip() or email
             if not (u.get("location_group") or "").strip():

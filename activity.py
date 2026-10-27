@@ -29,12 +29,23 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # Longer than the web's two-minute poll (scale audit 10/19/26 FE-05): at 45
 # seconds against a 60-second poll a single viewer missed on every tick.
 ACTIVITY_TTL = int(os.getenv("ACTIVITY_TTL_SECONDS", "300"))
 _CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("activity._CACHE", _CACHE)
 # A ceiling on live entries: nothing ever removed an expired one, so the dict
 # held one feed per (restaurant, viewer denial set) that had ever loaded it
 # for the life of the process (DH4-23). home_brief._cache_put's sweep.

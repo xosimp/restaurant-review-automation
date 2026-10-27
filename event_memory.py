@@ -257,7 +257,13 @@ def init_event_memory(db_path=DB_PATH):
     finally:
         conn.close()
     backfill_public_history(db_path)
-    retract_churn_events(db_path)
+    # Once per database (data_migrations — blind re-audit 10/27/26 B5 P3):
+    # a dated purge of what the old membership rule invented before
+    # EVIDENCE_RULE_FROM; record_market_snapshot writes by the evidence rule
+    # since, so nothing written later can match it.
+    import models as _models_once
+    _models_once.run_once("market_events_churn_retracted_v1",
+                          lambda: retract_churn_events(db_path, strict=True), db_path=db_path)
     rekey_record(db_path)
 
 
@@ -392,11 +398,11 @@ def rekey_record(db_path=DB_PATH) -> dict:
 EVIDENCE_RULE_FROM = "2026-09-30"
 
 
-def retract_churn_events(db_path=DB_PATH) -> int:
+def retract_churn_events(db_path=DB_PATH, strict=False) -> int:
     """Remove the market events the old membership rule invented, all
     observed before EVIDENCE_RULE_FROM: every "gone", and every "arrived"
-    with more than NEW_PLACE_MAX_REVIEWS reviews (or none reported). Idempotent, at boot. Returns rows
-    removed; never raises."""
+    with more than NEW_PLACE_MAX_REVIEWS reviews (or none reported). Idempotent; once per database at
+    boot (data_migrations). Returns rows removed; never raises unless `strict`."""
     try:
         conn = get_conn(db_path)
         try:
@@ -410,6 +416,8 @@ def retract_churn_events(db_path=DB_PATH) -> int:
             log.info("event_memory: %s market events from search churn retracted", n)
         return n or 0
     except Exception as e:
+        if strict:               # the boot's run-once: not recorded as done
+            raise
         log.warning("event_memory: churn retraction skipped: %s", e)
         return 0
 
@@ -792,6 +800,8 @@ def _tie_notes(flags, booked=()) -> list:
 FREQUENT_SERIES_GAMES = 30
 _MATTERS_SECONDS = 60
 _matters_memo = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("event_memory._matters_memo", _matters_memo)
 
 
 def effect_matters(eff) -> bool:
@@ -1417,7 +1427,10 @@ def _staffing_on(rows):
     lab = _median(labor) if labor else None
     top = ", ".join(f"{v:g} {k}" for k, v in sorted(by_role.items(), key=lambda kv: -kv[1])[:3])
     text = (f"on those nights a median {heads:g} people worked" + (f" ({top})" if top else "")
-            + (f" and labor ran {lab:.1f}% of sales" if lab is not None else "")
+            # Hourly staff only, said so (audit #25 F2): the nights' stored
+            # labor % (the report's labor.pct, the daily archive's) carries
+            # no salaries, and an owner's every other labor % is all-in.
+            + (f" and hourly labor ran {lab:.1f}% of sales" if lab is not None else "")
             + f", over {len(vals)} night{'s' if len(vals) != 1 else ''} with punches")
     return {"n": len(vals), "median_headcount": heads, "median_labor_pct": lab,
             "median_hours": _median(hours) if hours else None, "by_role": by_role, "text": text}

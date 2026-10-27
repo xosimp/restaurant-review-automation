@@ -167,7 +167,8 @@ def test_the_labor_note_is_kept_as_history_not_only_in_process_memory(monkeypatc
     written = rv.Validated("1. Trim Tuesday dinner by one server.\n2. Move the Friday prep shift earlier.",
                            validation={"verdict": "pass"}, verdict=object())
     monkeypatch.setattr(labor, "get_claude_insights", lambda analysis, **kw: written)
-    assert labor.labor_note(rid, {"period": "week"}) == written
+    with models.salary_view(True):          # the owner's read (off a request: manager-safe, labor_read_hourly)
+        assert labor.labor_note(rid, {"period": "week"}) == written
     row = _rows("SELECT * FROM ai_reads WHERE restaurant_id=? AND surface='labor_read'", (rid,))[0]
     assert "Trim Tuesday dinner" in row["shown_text"] and row["kind"] == "labor"
     assert len(json.loads(row["rec_keys"])) == 2, "each numbered line's insight_labor key"

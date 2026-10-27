@@ -13,21 +13,37 @@ Traffic model (shares of virtual users, each one a person at a restaurant):
   HeavyReader     5%  Bar, Intel, Reports history, Ask (Ask is read-only here)
 Think times come from a log-normal (median 20 s, long tail), not a fixed wait.
 
-Scenarios (README.md): burst (8am), sustained, stress (ramp to failure),
+Scenarios (README.md): morning burst, sustained, stress (ramp to failure),
 soak (8 h), failure recovery (kill the queue worker mid-run).
+
+LOADTEST_SCENARIO=morning_burst drives the user count itself (MorningBurst, a
+LoadTestShape — no --users): 40% of every seeded login in 5 minutes, held 30
+(LOADTEST_BURST_MODE=synchronized, the default — every zone's morning at
+once), or each time zone's 40% in its own wave, east to west, 10 minutes
+apart (rolling — new users log in as the zones whose wave is running). One
+Health user probes /health every 5 s throughout. When the run stops the
+results file is written (results.py: scripts/loadtest/results/
+<scenario>-<stamp>Z.json, with the verdict against the README's pass line).
 
 Run:
   LOADTEST_HOST=https://staging.example.up.railway.app \
-  LOADTEST_USERS=scripts/loadtest/users.csv \
-  locust -f scripts/loadtest/locustfile.py --host "$LOADTEST_HOST"
+  LOADTEST_USERS=scripts/loadtest/users.csv LOADTEST_SCENARIO=morning_burst \
+  locust -f scripts/loadtest/locustfile.py --host "$LOADTEST_HOST" --headless
 """
 import csv
 import os
 import random
+import re
+import sys
 import threading
+import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from locust import HttpUser, between, events, task
+from locust import HttpUser, LoadTestShape, between, constant, events, task
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import results as _results  # noqa: E402  (scripts/loadtest/results.py — no Locust in it)
 
 _ALLOWED = ("localhost", "127.0.0.1", "staging", ".test", ".localhost")
 
@@ -40,24 +56,124 @@ def _guard(host: str):
         raise SystemExit("refusing production")
 
 
+SCENARIO = (os.environ.get("LOADTEST_SCENARIO") or "sustained").strip().lower()
+BURST_MODE = (os.environ.get("LOADTEST_BURST_MODE") or "synchronized").strip().lower()
+_RUN = {"started": None, "started_at": None, "build": None, "peak_users": 0}
+
+
 @events.test_start.add_listener
 def _on_start(environment, **_):
     _guard(environment.host or "")
+    if SCENARIO not in _results.SCENARIOS:
+        raise SystemExit(f"LOADTEST_SCENARIO={SCENARIO!r}: one of {', '.join(_results.SCENARIOS)}")
+    _RUN["started"] = time.monotonic()
+    _RUN["started_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 _USERS = []
 _LOCK = threading.Lock()
 
 
-def _accounts():
-    """users.csv from seed_staging.py: username,password,restaurant_id,role."""
+def _all_accounts():
+    """users.csv from seed_staging.py: username,password,restaurant_id,role,timezone,kind."""
     global _USERS
     with _LOCK:
         if not _USERS:
             path = os.environ.get("LOADTEST_USERS", "scripts/loadtest/users.csv")
             with open(path) as f:
                 _USERS = list(csv.DictReader(f))
-        return random.choice(_USERS)
+        return _USERS
+
+
+def _zone_logins():
+    out = {}
+    for a in _all_accounts():
+        z = a.get("timezone") or "?"
+        out[z] = out.get(z, 0) + 1
+    return out
+
+
+def _accounts():
+    """One login to act as: any, or in a rolling burst one from a zone whose morning wave is running."""
+    pool = _all_accounts()
+    if SCENARIO == "morning_burst" and BURST_MODE == "rolling" and _RUN["started"] is not None:
+        zones = set(_results.active_zones(time.monotonic() - _RUN["started"], _zone_logins()))
+        live = [a for a in pool if (a.get("timezone") or "?") in zones]
+        pool = live or pool
+    return random.choice(pool)
+
+
+if SCENARIO == "morning_burst":
+    class MorningBurst(LoadTestShape):
+        """The morning burst (README): the user count over time, from users.csv's logins."""
+
+        def tick(self):
+            t = self.get_run_time()
+            want = _results.burst_users(t, len(_all_accounts()), BURST_MODE, _zone_logins())
+            if want <= 0:
+                return None
+            _RUN["peak_users"] = max(_RUN["peak_users"], want)
+            return want, max(1.0, want / 60.0)
+
+
+def _server_errors(environment):
+    """{(name, method): 5xx count} from Locust's error table (aggregated across workers)."""
+    out = {}
+    for err in environment.stats.errors.values():
+        if re.search(r"\b5\d\d\b", str(err.error)):
+            key = (err.name, err.method)
+            out[key] = out.get(key, 0) + int(err.occurrences)
+    return out
+
+
+def _rows(environment):
+    errs = _server_errors(environment)
+    rows = []
+    for (name, method), e in environment.stats.entries.items():
+        if not e.num_requests:
+            continue
+        rows.append({"name": name, "method": method, "requests": e.num_requests, "failures": e.num_failures,
+                     "server_errors": errs.get((name, method), 0),
+                     "p50_ms": e.get_response_time_percentile(0.5), "p95_ms": e.get_response_time_percentile(0.95),
+                     "p99_ms": e.get_response_time_percentile(0.99), "max_ms": e.max_response_time,
+                     "avg_ms": e.avg_response_time, "rps": e.total_rps})
+    return rows
+
+
+@events.test_stop.add_listener
+def _on_stop(environment, **_):
+    """The results file (results.py) — on the master in a distributed run, where the stats are whole."""
+    from locust.runners import WorkerRunner
+    if isinstance(environment.runner, WorkerRunner) or _RUN["started"] is None:
+        return
+    seconds = round(time.monotonic() - _RUN["started"])
+    result = _results.evaluate(_rows(environment), SCENARIO, {
+        "mode": BURST_MODE if SCENARIO == "morning_burst" else None, "host": environment.host or "",
+        "build": _RUN["build"], "started_at": _RUN["started_at"],
+        "ended_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "seconds": seconds,
+        "world": _results.world_of(_all_accounts()),
+        "users": {"peak": _RUN["peak_users"] or getattr(environment.runner, "user_count", 0)},
+        "notes": os.environ.get("LOADTEST_NOTES", "")})
+    path = _results.write(result, os.environ.get("LOADTEST_RESULTS_DIR") or None)
+    verdict = "PASS" if result["verdict"]["ok"] else "FAIL: " + "; ".join(result["verdict"]["failed"][:5])
+    print(f"[loadtest] {SCENARIO}: {verdict} -> {path}", flush=True)
+
+
+class Health(HttpUser):
+    """One probe of /health every 5 s for the whole run (the README's /health p95 line), and the build it
+    names for the results file."""
+    fixed_count = 1
+    weight = 1
+    wait_time = constant(5)
+
+    @task
+    def health(self):
+        r = self.client.get("/health", name="/health")
+        if _RUN["build"] is None and r.ok:
+            try:
+                _RUN["build"] = (r.json() or {}).get("build")
+            except ValueError:
+                pass
 
 
 def _think():

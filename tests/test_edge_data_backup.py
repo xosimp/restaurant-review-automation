@@ -45,9 +45,10 @@ def _scratch(tmp_path, monkeypatch):
 
 
 def _live_db(path, monkeypatch, restaurants=1):
-    """A fully migrated database at `path`, made the app's DB_PATH."""
-    models.init_db(path)
-    models.ensure_columns(path)
+    """A fully migrated database at `path`, made the app's DB_PATH — the
+    whole boot schema (models.boot_schema), which /health checks since the
+    release-safety round (10/26/26 A05-07)."""
+    models.boot_schema(path)
     for i in range(restaurants):
         rid = create_restaurant(Restaurant(name=f"Backup Co {i}", owner_email=f"b{i}@x.test"), db_path=path)
         models.update_restaurant(rid, {"gmb_refresh_token": f"tok-{i}"}, db_path=path)
@@ -211,9 +212,20 @@ def test_health_fails_on_a_database_with_no_restaurants_table(tmp_path, monkeypa
 
 
 def test_health_fails_on_a_database_missing_a_column_the_code_expects(tmp_path, monkeypatch):
+    """A column missing from a sign-in table (status_manager.
+    STRICT_SCHEMA_TABLES) fails /health; one missing elsewhere is a degraded
+    200 that names the gap's count, never its name (blind re-audit 10/27/26
+    B8 P3: a non-critical gap took the whole platform down on a deploy)."""
     path = _live_db(str(tmp_path / "live.db"), monkeypatch)
     conn = sqlite3.connect(path)
     conn.execute("ALTER TABLE forecast_log DROP COLUMN signed_error_pct")
+    conn.commit()
+    conn.close()
+    payload, status = status_manager.health_snapshot(path)
+    assert status == 200 and payload["status"] == "degraded" and "schema_gaps" in payload["problems"]
+    assert payload["schema_gaps_count"] == 1 and "signed_error_pct" not in str(payload)
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE login_history DROP COLUMN user_agent")
     conn.commit()
     conn.close()
     _payload, status = status_manager.health_snapshot(path)

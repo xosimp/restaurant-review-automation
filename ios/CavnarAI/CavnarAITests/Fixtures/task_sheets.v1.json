@@ -1,0 +1,42 @@
+{
+ "can_edit": true,
+ "job_codes": [
+  "Barback",
+  "Bartender",
+  "Busser",
+  "Dishwasher",
+  "Host",
+  "Kitchen Manager",
+  "Line Cook",
+  "Manager",
+  "Prep Cook",
+  "Server",
+  "Sous Chef"
+ ],
+ "ok": true,
+ "proof_kinds": [
+  "none",
+  "photo",
+  "number",
+  "note"
+ ],
+ "sheets": [],
+ "shift_kinds": [
+  {
+   "key": "opening",
+   "label": "Opening"
+  },
+  {
+   "key": "closing",
+   "label": "Closing"
+  },
+  {
+   "key": "mid",
+   "label": "Mid"
+  },
+  {
+   "key": "any",
+   "label": "All day"
+  }
+ ]
+}

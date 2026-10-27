@@ -455,8 +455,11 @@ def test_the_checkup_is_one_score_on_both_routes(client, db_path, monkeypatch):
 
 def test_account_health_payload(client, db_path, monkeypatch):
     import value_delivered
+    # A time zone somebody chose (an unchosen one is the profile's own
+    # warning — data_health.timezone_problem, blind re-audit B2).
     rid = _restaurant(db_path, module_reviews=1, module_labor=0, owner_phone="+13125550100", voice_notes="warm",
-                      gmb_refresh_token="g", alert_1star=1, billing_status="past_due")
+                      gmb_refresh_token="g", alert_1star=1, billing_status="past_due",
+                      timezone_confirmed_at="2026-10-01 12:00:00")
     uid, h = _login(client, db_path, rid)
     monkeypatch.setattr(value_delivered, "delivered", lambda rid, **k: {
         "monthly": 1200.0, "net_monthly": 950.0, "wins": 2, "worsened": {"count": 1}, "evaluated": 5,

@@ -69,15 +69,21 @@ def child(key, arm, runs, scale):
     print("BENCHMARK-RESULT " + json.dumps(res, default=str))
 
 
+# What a plan entry's fifth element may set (schedule_benchmark.run_archetype).
+_PLAN_OPTIONS = ("timezone", "week")
+
+
 def child_batch(plan):
     """Several archetypes in this one process and database (the test's fast
     subset — one boot instead of one per arm): `plan` is [[key, [arms],
-    runs, scale]]; prints one JSON line per archetype. Peak memory is the
-    whole batch's, so it is not reported."""
+    runs, scale(, {"timezone", "week"})]]; prints one JSON line per
+    archetype. Peak memory is the whole batch's, so it is not reported."""
     _boot()
     import schedule_benchmark as sb
-    for key, arms, runs, scale in plan:
-        res = sb.run_archetype(key, arms=tuple(arms), runs=int(runs), scale=float(scale))
+    for item in plan:
+        key, arms, runs, scale = item[:4]
+        opts = {k: v for k, v in (item[4] if len(item) > 4 else {}).items() if k in _PLAN_OPTIONS}
+        res = sb.run_archetype(key, arms=tuple(arms), runs=int(runs), scale=float(scale), **opts)
         print("BENCHMARK-RESULT " + json.dumps(res, default=str), flush=True)
 
 

@@ -571,10 +571,26 @@ class _GraphAnswer:
     def error(self):
         return (self.body or {}).get("error") or {}
 
+    @classmethod
+    def refused(cls, reason):
+        """A write this environment may not make, as Meta saying no: not
+        ambiguous (nothing left), so a publish claim is given back."""
+        answer = cls()
+        answer.status, answer.text = 403, reason
+        answer.body = {"error": {"message": reason, "type": "CavnarEnvironmentRefused"}}
+        return answer
+
 
 def _graph(method, url, **kw):
     import requests as _req
     kw.setdefault("timeout", GRAPH_TIMEOUT)
+    if str(method).lower() in ("post", "put", "patch", "delete") and "/oauth/" not in str(url):
+        # A post, photo or container on a real Page or Instagram account is
+        # never made from staging, whatever tokens the copy carried (blind
+        # re-audit 10/27/26; A05-06). The OAuth token exchange is a read.
+        import config as _config_gate
+        if not _config_gate.outbound_sends_allowed():
+            return _GraphAnswer.refused(_config_gate.refused_send("meta_post"))
     try:
         return _GraphAnswer(getattr(_req, method)(url, **kw))
     except Exception as e:

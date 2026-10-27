@@ -37,6 +37,9 @@ NOT_LEARNING = {
                             "AND date >= ? AND date <= ? AND sales > 0 ORDER BY date'"):
         "the fallback for a database without the final column (the try above reads final days); every "
         "init_db adds the column (models.init_db's ALTER list)",
+    ("metrics.py", "'SELECT date, day_of_week, labor_pct, labor_cost, sales, total_hours FROM labor_daily_history "):
+        "daily_labor is the DISPLAY read the iPhone chart and Ask's per-day line show (models.get_labor_daily's "
+        "rows on the viewer's salary basis, audit #25 F2) — tonight's provisional row is shown as it is, never learned from",
 }
 
 

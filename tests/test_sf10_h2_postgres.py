@@ -236,6 +236,7 @@ def test_get_conn_is_postgres_only_when_database_url_says_so(monkeypatch, tmp_pa
     c = models.get_conn(str(tmp_path / "x.db"))
     c.close()
     assert models._db_backend() == "sqlite" and made == []
+    monkeypatch.setenv("ALLOW_LOCAL_PG", "1")    # off Railway DATABASE_URL is ignored otherwise
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h/db")
     assert models._db_backend() == "postgres"
     assert models.get_conn() == "PG"                       # the platform's database
@@ -539,6 +540,7 @@ def test_the_nightly_snapshot_on_postgres_is_an_export(monkeypatch, tmp_path):
         made.append(path)
         return {"tables": {}}
     monkeypatch.setattr(pg_copy, "export_to_sqlite", export)
+    monkeypatch.setenv("ALLOW_LOCAL_PG", "1")    # off Railway DATABASE_URL is ignored otherwise
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h/db")
     dest = str(tmp_path / "snap.db")
     scheduler._write_consistent_snapshot(dest)

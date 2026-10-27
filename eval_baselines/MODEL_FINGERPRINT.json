@@ -1,0 +1,94 @@
+{
+  "baselines": {
+    "ask": {
+      "model": "claude-sonnet-5-5",
+      "set_version": null,
+      "status": "pending first run",
+      "template": "44c3b3ae219451f1"
+    },
+    "dsr_narrative": {
+      "model": "claude-sonnet-5-5",
+      "set_version": null,
+      "status": "pending first run",
+      "template": "078b234610df15ea"
+    },
+    "invoice_extract": {
+      "model": "claude-opus-5-5",
+      "set_version": null,
+      "status": "pending first run",
+      "template": "6a4d8921338a934a"
+    },
+    "review_analysis": {
+      "model": "claude-haiku-5-5",
+      "set_version": null,
+      "status": "pending first run",
+      "template": "4391d153172ff25f"
+    },
+    "review_reply": {
+      "model": "claude-sonnet-5-5",
+      "set_version": null,
+      "status": "pending first run",
+      "template": "058e1de09a0952b1"
+    }
+  },
+  "bootstrap": true,
+  "hash": "4517dbd6d93b9d24",
+  "models": {
+    "ask_cavnar": "claude-sonnet-5-5",
+    "ask_summary": "claude-haiku-5-5",
+    "competitor_extract": "claude-haiku-5-5",
+    "competitor_insight": "claude-sonnet-5-5",
+    "drafter": "claude-sonnet-5-5",
+    "dsr_narrative": "claude-sonnet-5-5",
+    "email_personalise": "claude-haiku-5-5",
+    "food_cost_diagnosis": "claude-sonnet-5-5",
+    "guest_marketing": "claude-sonnet-5-5",
+    "inventory_insight": "claude-sonnet-5-5",
+    "invoices": "claude-opus-5-5",
+    "labor_insight": "claude-sonnet-5-5",
+    "marketing": "claude-sonnet-5-5",
+    "marketing_insight": "claude-haiku-5-5",
+    "recipes": "claude-sonnet-5-5",
+    "reporter": "claude-sonnet-5-5",
+    "review_analysis": "claude-haiku-5-5",
+    "review_diagnosis": "claude-sonnet-5-5",
+    "review_insight": "claude-sonnet-5-5",
+    "sales_audit_notes": "claude-sonnet-5-5",
+    "schedule": "claude-opus-5-5",
+    "schedule_critic": "claude-sonnet-5-5",
+    "schedule_note": "claude-haiku-5-5",
+    "schedule_rules": "claude-haiku-5-5",
+    "staff_answer": "claude-sonnet-5-5",
+    "staff_brief": "claude-haiku-5-5",
+    "staff_translation": "claude-haiku-5-5",
+    "task_sheets": "claude-sonnet-5-5"
+  },
+  "previous": {
+    "T1": "claude-haiku-4-5-20251001"
+  },
+  "templates": {
+    "ask": "44c3b3ae219451f1",
+    "dsr_narrative": "078b234610df15ea",
+    "invoice_extract": "6a4d8921338a934a",
+    "review_analysis": "4391d153172ff25f",
+    "review_reply": "058e1de09a0952b1"
+  },
+  "tiers": {
+    "T1": {
+      "effort": null,
+      "model": "claude-haiku-5-5"
+    },
+    "T2": {
+      "effort": null,
+      "model": "claude-sonnet-5-5"
+    },
+    "T3": {
+      "effort": "medium",
+      "model": "claude-sonnet-5-5"
+    },
+    "T4": {
+      "effort": "medium",
+      "model": "claude-opus-5-5"
+    }
+  }
+}

@@ -21,7 +21,7 @@ import models
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DASHBOARD = os.path.join(ROOT, "templates", "dashboard.html")
-FIXTURE = os.path.join(ROOT, "tests", "fixtures", "bar_ejs_invoice_lines.json")
+FIXTURE = os.path.join(ROOT, "tests", "fixtures", "bar_invoice_lines.json")
 HEAD = ("Retailer Name,Vendor Name,Location ID,Invoice Number,Invoice Date,Invoice Total,Product Number,"
         "Product Description,U.P.C,Unit Of Measure,Item Quantity,Item Cost,Item Adjustment\n")
 TODAY = date(2026, 10, 1)
@@ -491,10 +491,12 @@ def test_a_long_name_wraps_to_two_lines_and_the_detail_says_it_in_full(full):
 
 
 def test_deal_endings_and_order_sizes_are_named_never_increases(db_path):
-    """EJ's own invoices (5/4–10/13/26): Son Cutrer's $174 is its usual price,
-    a $156 deal ended; it shows as a deal, not a red increase."""
+    """Six synthetic months of invoices (tests/fixtures/bar_invoice_lines.json,
+    scripts/make_bar_invoice_fixture.py): Sonoma-Cutrer's $168 is its usual
+    price, a $152 deal ended; it shows as a deal, not a red increase."""
     fx = json.load(open(FIXTURE))
-    rid = models.create_restaurant(models.Restaurant(name="EJ's", owner_email="o@x.test"), db_path=db_path)
+    refs = fx.get("ref_invoice_numbers") or {}
+    rid = models.create_restaurant(models.Restaurant(name="Lakeview Tap", owner_email="o@x.test"), db_path=db_path)
     conn = models.get_conn(db_path)
     inv = {}
     for n, r in enumerate(dict(zip(fx["columns"], row)) for row in fx["rows"]):
@@ -502,8 +504,9 @@ def test_deal_endings_and_order_sizes_are_named_never_increases(db_path):
         if k not in inv:
             inv[k] = conn.execute(
                 "INSERT INTO fintech_invoices (restaurant_id, distributor, invoice_number, invoice_date, total, "
-                "source_format, balanced, updated_at) VALUES (?,?,?,?,?,?,?,?) RETURNING id",
-                (rid, r["distributor"], r["invoice_number"], r["invoice_date"], 0, "export", 1, "2026-10-14 00:00:00")).fetchone()[0]
+                "source_format, balanced, updated_at, ref_invoice_number) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
+                (rid, r["distributor"], r["invoice_number"], r["invoice_date"], 0, "export", 1, "2026-10-14 00:00:00",
+                 refs.get(r["invoice_number"]))).fetchone()[0]
         conn.execute("INSERT INTO fintech_invoice_lines (invoice_id, line_no, item_code, description, upc, uom, qty, "
                      "unit_price, cost, deposit, adjustment, kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                      (inv[k], n + 1, r["item_code"], r["description"], r["upc"], r["uom"], r["qty"], r["unit_price"],
@@ -1053,3 +1056,34 @@ def test_the_page_says_sold_never_rung_and_rows_carry_no_confidence_word(full):
         assert first.count('class="br-dchip"') == 3 and "+4 more" in _text(sold)
     src = open(DASHBOARD, encoding="utf-8").read()
     assert ".dn-foot{margin-top:56px;font-size:14.5px" in src
+
+
+def test_a_match_says_on_its_row_what_happened():
+    """Owner, 10/27/26: Match looked dead - a missing pick was only a corner
+    toast, and a saved match changed nothing on screen until the payload's
+    re-read (seconds) repainted the list."""
+    js = _bar_script()
+    branch = js[js.index("a('data-br-vmap') != null"):js.index("a('data-br-unaside') != null")]
+    assert "rowSay(vrow, 'Pick what it pours from first.', 'err')" in branch and "br-need" in branch
+    assert "rowWrite('/api/food-cost/bar/drink-map'" in branch and "ownerWrite(" not in branch
+    assert "row.classList.add('br-busy')" in js and "rowSay(row, doneMsg, 'ok')" in js
+    css = _bar_css()
+    assert ".br-mrow .br-msg.err{" in css and ".br-mrow.br-busy::after{" in css
+
+
+def test_a_drink_to_match_says_what_it_is_and_cards_sit_in_dealt_columns():
+    """Owner, 10/27/26: a spirit's button read as a shot, "No suggestion" never
+    said nothing was bought, and CSS columns painted a card's shadow into the
+    empty column in Safari."""
+    js = _bar_script()
+    row = js[js.index("  function serveLine(u) {"):js.index("  function specRow(s) {")]
+    assert "'A pour of ' + esc2(posName(u.item)) + ' — neat, on the rocks or with a mixer'" in row
+    assert "A made drink — it pours from more than one bottle" in row and "Needs its recipe card" in row
+    assert "' on an invoice since '" in row and "u.on_invoices === false" in row
+    assert "pourDefault(u.category)" in row and "if left empty" in row
+    rec = js[js.index("  function recipes(v) {"):js.index("  function matchPanel(d) {")]
+    assert "open.concat(v.card_confirmed || [])" in rec and "(v.suggestions_total || 0) > open.length" in rec
+    assert '<div class="br-rcol">' in rec
+    css = _bar_css()
+    assert "column-count" not in css.split(".br-rcps", 1)[1].split("}", 1)[0]
+    assert ".br-rcol{display:flex" in css

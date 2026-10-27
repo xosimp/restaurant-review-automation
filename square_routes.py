@@ -112,8 +112,10 @@ def client_save_square(current_user):
     if denied:
         return denied
     data         = request.get_json(force=True) or {}
-    access_token = (data.get("access_token") or "").strip()
-    location_id  = (data.get("location_id") or "").strip()
+    # str(): a number sent as either field was a 500 (the cross-tenant
+    # crawl, audit #25), not the 400-shaped answer below.
+    access_token = str(data.get("access_token") or "").strip()
+    location_id  = str(data.get("location_id") or "").strip()
     if not access_token or not location_id:
         return jsonify(ok=False, error="Access token and location ID are required.")
     from models import owner_pos_binding_refusal

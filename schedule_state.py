@@ -114,6 +114,8 @@ FIELDS = {k: t for keys in STAGES.values() for k, t in keys.items()}
 STAGE_OF = {k: s for s, keys in STAGES.items() for k in keys}
 
 _SEEN = set()
+import process_caches as _process_caches  # noqa: E402
+_process_caches.register("schedule_state._SEEN", _SEEN)   # blind re-audit 10/27/26 B1 F15
 _SEEN_LOCK = threading.Lock()
 
 

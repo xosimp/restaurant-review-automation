@@ -274,7 +274,11 @@ def test_a_review_diagnosis_claim_reaches_the_nightly_report():
 def test_each_claims_outcome_sits_under_its_own_claim_and_names_its_read():
     rid = _rid()
     now = datetime.utcnow()
-    _claim(rid, "labor_read", "labor", "Labor runs heavy on Tuesdays.", "labor:day:tuesday", now - timedelta(days=2))
+    # The hourly Labor read's claim: the weekly plan's items become issues
+    # every console login reads, so the owner's all-in read never reaches
+    # it (blind re-audit 10/26/26 B3).
+    _claim(rid, "labor_read_hourly", "labor", "Labor runs heavy on Tuesdays.", "labor:day:tuesday",
+           now - timedelta(days=2))
     _claim(rid, "review_diagnosis", "category:service", "Service is slow at the bar.", "diag_review:service",
            now - timedelta(days=3))
     lines = ai_reads.claim_lines(mc.MemoryRequest(rid, "weekly_plan"))

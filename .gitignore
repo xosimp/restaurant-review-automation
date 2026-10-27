@@ -34,3 +34,6 @@ ios/CavnarAI/.dev-url
 brand/ember-core/render/frames/
 brand/ember-core/render/ember-core.js
 scripts/loadtest/users.csv
+
+# /health reference schema built by the image (scripts/build_reference_schema.py)
+reference_schema.json

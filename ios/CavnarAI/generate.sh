@@ -69,6 +69,32 @@ if grep -q '${CAVNAR_DEV_API_BASE_URL}' CavnarAI.xcodeproj/xcshareddata/xcscheme
 fi
 echo "Scheme points at $url"
 
+# The build number every request names (X-Cavnar-App: "1.0 (<build>)" —
+# release-safety audit #25 A06-02; the server's MOBILE_MIN_BUILD compares it):
+# the commit count, so it only ever rises. project.yml stays the source and
+# keeps "1" as the default; this stamps the generated project. A shallow clone
+# (CI) must fetch the full history or pass CAVNAR_BUILD_NUMBER, or every build
+# would claim a tiny number and be refused as too old.
+build="${CAVNAR_BUILD_NUMBER:-}"
+[ -z "$build" ] && build="$(git rev-list --count HEAD 2>/dev/null || true)"
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null || echo false)" = "true" ] && [ -z "${CAVNAR_BUILD_NUMBER:-}" ]; then
+  echo "ERROR: this is a shallow clone, so the commit count is not the build number." >&2
+  echo "       Fetch the full history (fetch-depth: 0) or set CAVNAR_BUILD_NUMBER." >&2
+  exit 1
+fi
+case "$build" in
+  ''|*[!0-9]*)
+    echo "ERROR: no build number (git rev-list --count HEAD gave '$build'); set CAVNAR_BUILD_NUMBER." >&2
+    exit 1 ;;
+esac
+pbx=CavnarAI.xcodeproj/project.pbxproj
+sed -i '' -E "s/CURRENT_PROJECT_VERSION = [^;]+;/CURRENT_PROJECT_VERSION = $build;/g" "$pbx"
+if grep -E "CURRENT_PROJECT_VERSION = " "$pbx" | grep -vq "CURRENT_PROJECT_VERSION = $build;"; then
+  echo "ERROR: a target kept another CURRENT_PROJECT_VERSION than $build." >&2
+  exit 1
+fi
+echo "Build number $build (CURRENT_PROJECT_VERSION, every target)"
+
 # A LAN address is only reachable if the server is actually listening on it.
 # Bound to 127.0.0.1 the device gets a connection refused, which looks
 # identical to "the app is broken".

@@ -112,12 +112,13 @@ def main():
     import models
     models.require_volume()
 
-    # Same boot the web process does: the schema must exist before any job
+    # Same boot schema the web process builds (models.boot_schema — release-
+    # safety audit 10/26/26 A05-07): the schema must exist before any job
     # touches it, and this process may well start first.
-    from models import init_db, ensure_columns
-    init_db()
-    ensure_columns()
+    models.boot_schema()
     log.info("schema ready")
+    import config as _config_boot
+    _config_boot.report_environment_at_boot(log)
 
     # The job queue's consumer, when this process is the worker
     # (QUEUE_WORKER=1): generations and learners run here, not in the web
@@ -339,6 +340,10 @@ if __name__ == "__main__":
         _ld(_pl.Path(__file__).parent / ".env")
     except Exception:
         pass
+    # One process of its kind, not one of gunicorn's web workers: its pools
+    # keep their whole bound (pool_sizing.web_workers), whatever
+    # CAVNAR_WEB_WORKERS it inherited from the master that started it.
+    os.environ["CAVNAR_PROCESS_ROLE"] = "queue" if "--queue" in sys.argv[1:] else "scheduler"
     if "--queue" in sys.argv[1:]:
         sys.exit(main_queue())
     if "--scheduler" in sys.argv[1:]:

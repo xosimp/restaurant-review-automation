@@ -497,6 +497,7 @@ def sync_all(stats=None):
                                  f"restaurants before the {POS_SYNC_MAX_SECONDS}s bound; the rest lead the "
                                  "next pass"), job="pos_sync", context="time_bound")
     counts["hit_bound"] = bool(hit_bound)
+    counts["eligible"] = len(live)      # what the pass was for (Audit #25 A07-03, ops.jobs_failing)
     _remember_deferred(deferred)
     if counts["attempted"]:
         counts["store_ms_avg"] = int(timing["total"] / counts["attempted"])

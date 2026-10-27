@@ -597,6 +597,8 @@ def usage_now(db_path=None) -> dict:
 # ── per-tenant dollar budgets ───────────────────────────────────────────────
 
 _budget_memo = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("model_gateway._budget_memo", _budget_memo)
 _budget_lock = threading.Lock()
 BUDGET_MEMO_SECONDS = 60
 

@@ -5,6 +5,8 @@ docs/ops/POSTGRES_CUTOVER.md step 1). The remaining port is this list.
 
     python scripts/pg_sql_audit.py            # summary + every finding
     python scripts/pg_sql_audit.py --json     # machine-readable
+    python scripts/pg_sql_audit.py --strict   # exit 1 unless untranslatable
+                                              #   and sqlite_only are 0 (CI)
     python scripts/pg_sql_audit.py --database-url postgresql://…/scratch
                                               # + every statement PREPAREd
                                               #   on a real Postgres
@@ -124,7 +126,11 @@ def static_statements(root=ROOT):
 # copy, the shadow's typed writes, the partition upkeep — every statement
 # of pg_partitions runs through execute_native): never translated, so not audited as
 # SQLite.
-_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py", "pg_partitions.py"}
+_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py", "pg_partitions.py",
+           # scripts/build_index.py: its catalog reads go to psycopg directly
+           # (release-safety audit 10/26/26, A05-04); so do
+           # scripts/upgrade_boot_check.py's (blind re-audit 10/27/26 RF6).
+           "build_index.py", "upgrade_boot_check.py"}
 
 
 def _nodes(root=ROOT):
@@ -313,7 +319,12 @@ def _boot_on(url):
     import io
     import models
     old = os.environ.get("DATABASE_URL")
+    old_allow = os.environ.get("ALLOW_LOCAL_PG")
     os.environ["DATABASE_URL"] = url
+    # A deliberate Postgres (the scratch server named on the command line):
+    # off Railway DATABASE_URL is otherwise ignored (audit #25 A01-06), and
+    # the boot's own backend checks must see Postgres, as production's do.
+    os.environ["ALLOW_LOCAL_PG"] = "1"
     # The platform's database is `url` for this boot, whatever a caller had
     # routed it to (the suite's Postgres mode routes it per process).
     old_route = models._PG_ROUTES.get(models.DB_PATH)
@@ -341,6 +352,10 @@ def _boot_on(url):
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = old
+        if old_allow is None:
+            os.environ.pop("ALLOW_LOCAL_PG", None)
+        else:
+            os.environ["ALLOW_LOCAL_PG"] = old_allow
 
 
 def _schema():
@@ -441,6 +456,11 @@ def main(argv=None):
         print(f"\n{k}: {len(rep[k])}")
         for item in rep[k]:
             print("  ", item if isinstance(item, str) else " — ".join(str(v) for v in item.values()))
+    # --strict (CI's gate, audit #25): the text check's own rule is a failure
+    # too — "untranslatable: 0, sqlite_only: 0" (CLAUDE.md) — not only a
+    # failed PREPARE.
+    if "--strict" in argv and (rep.get("untranslatable") or rep.get("sqlite_only")):
+        return 1
     return 1 if rep.get("prepare_failed") or rep.get("recorded_failed") else 0
 
 

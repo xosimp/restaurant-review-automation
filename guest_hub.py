@@ -44,7 +44,7 @@ import logging
 import os
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from models import DB_PATH
 
@@ -102,6 +102,7 @@ def init_guest_hub(db_path=DB_PATH):
             marketing_optin INTEGER,
             contact_id     INTEGER,
             visit_counted  INTEGER NOT NULL DEFAULT 0,
+            event_ms       INTEGER,
             created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
             updated_at     TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, kind, tock_id)
@@ -169,6 +170,10 @@ def init_guest_hub(db_path=DB_PATH):
                           ("tock_marketing_optin", "INTEGER"), ("first_seen_at", "TEXT")):
             if col not in cols:
                 conn.execute(f"ALTER TABLE guest_contacts ADD COLUMN {col} {decl}")
+        # The newest applied event's own time (audit #25 A06-09): an older
+        # event delivered later is recorded and never applied.
+        if "event_ms" not in {r[1] for r in conn.execute("PRAGMA table_info(tock_bookings)").fetchall()}:
+            conn.execute("ALTER TABLE tock_bookings ADD COLUMN event_ms INTEGER")
         conn.commit()
     finally:
         conn.close()
@@ -317,6 +322,65 @@ def _guest_part(body):
     return body
 
 
+def _guest_value(body, g, *names, profile=False):
+    """A contact field (phone, email, marketing flag) read from the GUEST
+    only (audit #25 A06-09). On a booking: anywhere inside its guest
+    sub-object when there is one, else the booking's own top-level fields —
+    never another nested object of the booking (the venue, a server, the
+    booker's company): a restaurant's phone read as the guest's merged every
+    such guest into one contact. On a guest-profile event (`profile`) the
+    body IS the guest, so all of it is theirs."""
+    if profile:
+        return _find(g, *names) or (_find(body, *names) if g is not body else None)
+    if g is not body:
+        # The guest object first; when it lacks the field, the booking's own
+        # TOP-LEVEL field (depth 1) — `{reservation: {phone, guest: {name}}}`
+        # carries the guest's phone on the booking — never one deeper in it
+        # (blind re-audit 10/27/26: the fallback was dropped with the venue's).
+        return _find(g, *names) or _find(body, *names, depth=1)
+    return _find(body, *names, depth=1)
+
+
+# Where an event says WHEN the change it reports happened: the record's own
+# last-change time, else the event's stated occurrence. Never the booking's
+# own date and time (`_when`), never a creation time on the record (every
+# event about one booking shares it), and never a time that may be the
+# DELIVERY's (blind re-audit 10/27/26): an envelope's `timestamp`,
+# `createdAt`/`created`, `sentAt`, `publishedAt` or `deliveredAt` can be
+# stamped by the attempt that carried it, so a retried "booked" would
+# outrank the "cancelled" it preceded. An event with no change time is
+# applied in arrival order and never called stale. Tock's format is still
+# unconfirmed: name its real change-time key first here once a captured
+# payload shows it (docs/integrations/TOCK_WEBHOOKS.md).
+_EVENT_TIME_BODY = ("updatedAt", "updated_at", "modifiedAt", "modified_at", "lastModified", "lastModifiedAt",
+                    "lastUpdated", "lastUpdatedAt", "dateModified", "changedAt", "changed_at", "lastChangedAt")
+_EVENT_TIME_EVENT = ("occurredAt", "occurred_at", "eventTime", "eventTimestamp", "eventDateTime")
+# Read as a time by nothing here, named so the next reader does not add one.
+_DELIVERY_TIMES = ("timestamp", "createdAt", "created_at", "created", "sentAt", "publishedAt", "deliveredAt")
+
+
+def _event_ms(event, body):
+    """The time of the change the event reports, as UTC epoch milliseconds,
+    or None when it carries none this build can read (such an event is never
+    called stale)."""
+    enveloped = body is not event
+    raw = _get(body, *_EVENT_TIME_BODY) if enveloped else None
+    raw = raw or _get(event, *_EVENT_TIME_BODY) or _get(event, *_EVENT_TIME_EVENT)
+    if raw is None or isinstance(raw, (dict, list, bool)):
+        return None
+    s = str(raw).strip()
+    try:
+        if re.fullmatch(r"\d{9,13}(\.\d+)?", s):
+            n = float(s)
+            return int(n if n > 10 ** 11 else n * 1000)
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, OverflowError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)      # an unzoned stamp is read as UTC, the API convention
+    return int(dt.timestamp() * 1000)
+
+
 def _status(event, body):
     words = " ".join(str(x or "") for x in (_get(event, "type", "eventType", "event", "action", "topic"),
                                             _get(body, "status", "state", "reservationStatus"))).lower()
@@ -448,11 +512,14 @@ def apply_tock_event(rid, hook, event, db_path=DB_PATH) -> dict:
     name = " ".join(str(x).strip() for x in (first, last) if x) or _get(g, "name", "fullName", "full_name",
                                                                          "guestName", "displayName")
     name = " ".join(str(name or "").split())[:80] or None
-    phone = _phone(_find(g, "phone", "phoneNumber", "mobile", "mobilePhone", "cell", "cellPhone") or
-                   _find(body, "phone", "phoneNumber", "mobile"))
-    email = _find(g, "email", "emailAddress")
-    optin = _bool(_find(g, "marketingOptIn", "optInMarketing", "acceptsMarketing", "marketingConsent",
-                        "smsOptIn", "emailOptIn", "optIn"))
+    # The guest's own contact details only — never a phone or email found
+    # elsewhere in the body (the venue's, a server's) (audit #25 A06-09).
+    whole = hook == "guests"
+    phone = _phone(_guest_value(body, g, "phone", "phoneNumber", "mobile", "mobilePhone", "cell", "cellPhone",
+                                profile=whole))
+    email = _guest_value(body, g, "email", "emailAddress", profile=whole)
+    optin = _bool(_guest_value(body, g, "marketingOptIn", "optInMarketing", "acceptsMarketing", "marketingConsent",
+                               "smsOptIn", "emailOptIn", "optIn", profile=whole))
     guest_ref = _get(g, "guestId", "patronId", "customerId") or (_get(g, "id") if g is not body else None)
     guest_ref = str(guest_ref)[:80] if guest_ref else None
     if hook == "guests":
@@ -466,34 +533,70 @@ def apply_tock_event(rid, hook, event, db_path=DB_PATH) -> dict:
         or _find(body, "reservationId", "walkInId", "bookingId", "confirmationNumber")
     tock_id = str(tock_id or _event_key(event, hook, body))[:120]
     status = _status(event, body)
+    event_ms = _event_ms(event, body)
     when = _when(rid, body)
     from time_utils import BUSINESS_DAY_START_HOUR
     bday = (when.date() - timedelta(days=1)) if when.hour < BUSINESS_DAY_START_HOUR else when.date()
     party = _int(_find(body, "partySize", "party_size", "size", "guestCount", "numberOfGuests", "covers",
                        "seats", "guests"))
-    cid = _touch_contact(rid, phone, name=name, email=email, source="tock", party=party, tock_guest=guest_ref,
-                         tock_optin=optin, db_path=db_path) if phone else None
     conn = get_conn(db_path)
     try:
-        prev = conn.execute("SELECT visit_counted, business_date FROM tock_bookings WHERE restaurant_id=? AND kind=? "
-                            "AND tock_id=?", (rid, kind, tock_id)).fetchone()
-        conn.execute(
+        prev = conn.execute("SELECT visit_counted, business_date, event_ms FROM tock_bookings WHERE restaurant_id=? "
+                            "AND kind=? AND tock_id=?", (rid, kind, tock_id)).fetchone()
+    finally:
+        conn.close()
+    if _older(event_ms, prev):
+        # Tock retried an event after a newer one was applied (a "booked"
+        # after the "cancelled"): kept in tock_events, never applied — the
+        # booking, its covers and the guest stay as the newer event left
+        # them (audit #25 A06-09; stripe_billing_clock's rule).
+        return {"applied": False, "stale": True, "kind": kind, "status": status}
+    conn = get_conn(db_path)
+    try:
+        # The guard is in the write too: of two deliveries racing, the older
+        # one's update matches no row. The guest's contact is touched only
+        # AFTER this write took (below): a stale event used to update the
+        # contact's name, party and opt-in before losing the race (blind
+        # re-audit 10/27/26).
+        wrote = conn.execute(
             "INSERT INTO tock_bookings (restaurant_id, kind, tock_id, status, party_size, booked_for, business_date, "
-            "guest_ref, guest_name, phone, email, marketing_optin, contact_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "guest_ref, guest_name, phone, email, marketing_optin, contact_id, event_ms) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(restaurant_id, kind, tock_id) DO UPDATE SET status=excluded.status, "
             "party_size=COALESCE(excluded.party_size, tock_bookings.party_size), booked_for=excluded.booked_for, "
             "business_date=excluded.business_date, guest_ref=COALESCE(excluded.guest_ref, tock_bookings.guest_ref), "
             "guest_name=COALESCE(excluded.guest_name, tock_bookings.guest_name), "
             "phone=COALESCE(excluded.phone, tock_bookings.phone), email=COALESCE(excluded.email, tock_bookings.email), "
             "marketing_optin=COALESCE(excluded.marketing_optin, tock_bookings.marketing_optin), "
-            "contact_id=COALESCE(excluded.contact_id, tock_bookings.contact_id), updated_at=datetime('now')",
+            "contact_id=COALESCE(excluded.contact_id, tock_bookings.contact_id), "
+            "event_ms=COALESCE(excluded.event_ms, tock_bookings.event_ms), updated_at=datetime('now') "
+            "WHERE excluded.event_ms IS NULL OR tock_bookings.event_ms IS NULL "
+            "OR excluded.event_ms >= tock_bookings.event_ms",
             (rid, kind, tock_id, status, party, when.isoformat(timespec="seconds"), bday.isoformat(), guest_ref, name,
-             phone, (str(email).strip().lower() if email else None), None if optin is None else int(optin), cid))
-        visited = False
-        if status in ("seated", "completed") and cid and not (prev and prev["visit_counted"]):
+             phone, (str(email).strip().lower() if email else None), None if optin is None else int(optin), None,
+             event_ms)).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if not wrote:
+        return {"applied": False, "stale": True, "kind": kind, "status": status, "contact_id": None}
+    cid = _touch_contact(rid, phone, name=name, email=email, source="tock", party=party, tock_guest=guest_ref,
+                         tock_optin=optin, db_path=db_path) if phone else None
+    visited = False
+    conn = get_conn(db_path)
+    try:
+        if cid:
+            # The contact this event names, while this event is still the
+            # booking's newest (a newer one may have landed meanwhile).
+            newest = "" if event_ms is None else " AND (event_ms IS NULL OR event_ms <= ?)"
+            conn.execute("UPDATE tock_bookings SET contact_id=? WHERE restaurant_id=? AND kind=? AND tock_id=?"
+                         + newest, (cid, rid, kind, tock_id) + (() if event_ms is None else (event_ms,)))
+        # One visit per booking, claimed in the write (two "seated"
+        # deliveries at once count it once).
+        if status in ("seated", "completed") and cid and conn.execute(
+                "UPDATE tock_bookings SET visit_counted=1 WHERE restaurant_id=? AND kind=? AND tock_id=? "
+                "AND visit_counted=0", (rid, kind, tock_id)).rowcount == 1:
             _record_visit(conn, rid, cid, when.isoformat(timespec="seconds"))
-            conn.execute("UPDATE tock_bookings SET visit_counted=1 WHERE restaurant_id=? AND kind=? AND tock_id=?",
-                         (rid, kind, tock_id))
             visited = True
         conn.commit()
     finally:
@@ -503,6 +606,19 @@ def apply_tock_event(rid, hook, event, db_path=DB_PATH) -> dict:
         for d in days:
             _sync_covers(rid, d, db_path=db_path)
     return {"applied": True, "kind": kind, "status": status, "contact_id": cid, "visit": visited}
+
+
+def _older(event_ms, prev) -> bool:
+    """Whether an event is older than the one its booking last applied. An
+    event with no readable time, or a booking that never had one, is never
+    older; equal times apply (the later delivery wins a tie)."""
+    if event_ms is None or not prev:
+        return False
+    try:
+        stored = prev["event_ms"]
+    except (KeyError, IndexError):
+        return False
+    return stored is not None and int(event_ms) < int(stored)
 
 
 def _sync_covers(rid, day, db_path=DB_PATH):
@@ -522,21 +638,38 @@ def _sync_covers(rid, day, db_path=DB_PATH):
 
 
 def reprocess_tock(rid, db_path=DB_PATH) -> dict:
-    """Re-apply every stored event in arrival order — the step once Tock's
-    payload format is confirmed and the readers above are adjusted."""
+    """Re-apply every stored event in the order its events HAPPENED (audit
+    #25 A06-09), not the order they arrived — the step once Tock's payload
+    format is confirmed and the readers above are adjusted. Events with no
+    readable time go first, in arrival order, so the timed ones — which say
+    which is newer — decide where each booking ends."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT hook, event_key, payload FROM tock_events WHERE restaurant_id=? ORDER BY id",
+        rows = conn.execute("SELECT id, hook, event_key, payload FROM tock_events WHERE restaurant_id=? ORDER BY id",
                             (rid,)).fetchall()
     finally:
         conn.close()
-    ok = failed = 0
+    ordered = []
     for r in rows:
         try:
-            _apply_logged(rid, r["hook"], r["event_key"], json.loads(r["payload"]), db_path=db_path)
-            ok += 1
-        except Exception:
+            event = json.loads(r["payload"])
+            ms = _event_ms(event, _body(event, r["hook"])) if isinstance(event, dict) else None
+        except (TypeError, ValueError):
+            event, ms = None, None
+        ordered.append((ms is not None, ms or 0, r["id"], r, event))
+    ordered.sort(key=lambda t: t[:3])
+    ok = failed = 0
+    for _timed, _ms, _id, r, event in ordered:
+        if event is None:
             failed += 1
+            log.warning("tock event %s for restaurant %s is not JSON; not re-applied", r["event_key"], rid)
+            continue
+        try:
+            _apply_logged(rid, r["hook"], r["event_key"], event, db_path=db_path)
+            ok += 1
+        except Exception as e:
+            failed += 1
+            log.warning("tock event %s for restaurant %s not re-applied: %s", r["event_key"], rid, e)
     return {"events": len(rows), "ok": ok, "failed": failed}
 
 
@@ -948,15 +1081,19 @@ def followup_one(rid, now=None, db_path=DB_PATH, deadline=None) -> dict:
             conn.close()
         if not claimed:
             continue
+        notify.clear_last_sms_result()
         with notify.sms_context(rid):
             ok = bool(gm.send_sms(g["phone"], body, use_case="guest",
                                   validity_seconds=gm.guest_sms_validity_seconds(rid)))
+        # Claimed above, so never sent twice either way; a text Twilio never
+        # answered is said as unknown, not "not sent" (audit #25 A06-11).
+        why = None if ok else (notify.SMS_UNKNOWN_NOTE if notify.last_sms_uncertain() else "not sent")
         stamp = _local_now(rid).isoformat(timespec="seconds")
         conn = get_conn(db_path)
         try:
             conn.execute("UPDATE guest_followups SET status=?, sent_at=?, error=? WHERE restaurant_id=? "
                          "AND contact_id=? AND visit_date=?", ("sent" if ok else "failed", stamp if ok else None,
-                                                              None if ok else "not sent", rid, g["id"], yday))
+                                                              why, rid, g["id"], yday))
             if ok:
                 conn.execute("UPDATE guest_contacts SET last_campaign_at=? WHERE id=? AND restaurant_id=?", (stamp, g["id"], rid))
                 conn.execute("INSERT INTO guest_inbox (restaurant_id, phone, contact_id, direction, body, kind, status) "
@@ -1000,6 +1137,8 @@ def run_followups(db_path=DB_PATH, now=None) -> dict:
 # ── the restaurant's own number and its replies ────────────────────────────
 
 _SENDER_CACHE = {"at": 0.0, "rows": {}}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("guest_hub._SENDER_CACHE", _SENDER_CACHE)
 
 
 def _senders(db_path=DB_PATH):
@@ -1122,15 +1261,24 @@ def reply(rid, phone, body, user_id=None, db_path=DB_PATH) -> dict:
         return {"ok": False, "error": "You can reply to a guest within 30 days of their own text."}
     restaurant = _restaurant(rid, db_path)
     out_text = gm.sms_prefix(getattr(restaurant, "name", "")) + text
+    notify.clear_last_sms_result()
     with notify.sms_context(rid):
         ok = bool(gm.send_sms(p, out_text, use_case="guest"))
+    # Twilio took it and never answered: it may have reached the guest, so
+    # the owner is not told to send it again (audit #25 A06-11).
+    maybe = not ok and notify.last_sms_uncertain()
     conn = get_conn(db_path)
     try:
         conn.execute("INSERT INTO guest_inbox (restaurant_id, phone, direction, body, kind, user_id, status) VALUES "
-                     "(?,?,'out',?,'reply',?,?)", (rid, p, out_text, user_id, "sent" if ok else "failed"))
+                     "(?,?,'out',?,'reply',?,?)", (rid, p, out_text, user_id,
+                                                   "sent" if ok else (notify.SMS_UNKNOWN_STATUS if maybe else "failed")))
         conn.commit()
     finally:
         conn.close()
+    if maybe:
+        return {"ok": False, "uncertain": True,
+                "error": "We couldn't confirm that reply went out, and it may have. Check with the guest "
+                         "before you send it again."}
     return {"ok": ok, "error": None if ok else "That reply didn't send. Try again in a minute."}
 
 

@@ -16,7 +16,16 @@ the vetted address, redirects never followed (#156).
 """
 import hashlib, hmac, json, os, threading, time, uuid
 from datetime import datetime, timezone
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # Auto-disable a webhook after this many consecutive failed deliveries —
 # previously a broken endpoint (dead Zapier hook, expired URL) just kept
@@ -105,10 +114,11 @@ def init_webhooks(db_path=DB_PATH):
         # Which event a delivery row was (#75): the id the endpoint received.
         "ALTER TABLE webhook_deliveries ADD COLUMN event_id TEXT",
     ):
-        try:
-            conn.execute(col_sql)
-        except Exception:
-            pass
+        # "duplicate column" / "already exists" mean applied; anything else
+        # fails the boot (release-safety audit 10/26/26 A05-07 — it was
+        # swallowed, and a failed ALTER booted "OK").
+        from models import _apply_migration
+        _apply_migration(conn, col_sql)
     conn.commit()
     conn.close()
 
@@ -214,6 +224,12 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH, event_id=None):
     once, connected to the vetted address, no redirect followed; a URL that
     now resolves somewhere private is refused and not retried."""
     import net_safety
+    import config as _config_gate
+    if not _config_gate.outbound_sends_allowed():
+        # A customer's own endpoint, never from staging (A05-06). Nothing
+        # recorded: no delivery happened, and a failure count would disable
+        # the endpoint in a copy of the data.
+        return {"ok": False, "status": 0, "attempts": 0, "error": _config_gate.refused_send("webhook")}
     event_id = event_id or new_event_id()
     payload_str = json.dumps({
         "id":            event_id,
@@ -333,8 +349,11 @@ def _webhook_executor():
         with _executor_lock:
             if _executor is None:
                 from concurrent.futures import ThreadPoolExecutor
+                import pool_sizing
+                # WEBHOOK_MAX_WORKERS is the container's bound: each gunicorn
+                # web worker takes its share (one worker: all of it).
                 _executor = ThreadPoolExecutor(
-                    max_workers=_MAX_WEBHOOK_WORKERS, thread_name_prefix="webhook"
+                    max_workers=pool_sizing.sized("webhook", _MAX_WEBHOOK_WORKERS), thread_name_prefix="webhook"
                 )
     return _executor
 

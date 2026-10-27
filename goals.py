@@ -13,10 +13,20 @@ when the number is moving the right way by more than its own noise band.
 "Met" itself needs the reading past the target by the noise band
 (target_band, CA1 O15); a reading just across the line is "at_target".
 """
+import logging
 from datetime import date, timedelta
 
 import metrics
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # A goal whose deadline passed without reaching it is read as "missed" for
 # this many days — the owner hears it — then retired: status 'missed', kept
@@ -284,6 +294,15 @@ def progress(restaurant_id, db_path=DB_PATH, today=None, include_retired=False):
         conn.close()
     from models import viewer_sees_salaries
     sees = viewer_sees_salaries()
+    if not sees:
+        # With nobody salaried the hourly and all-in figures are one, and
+        # there is no salary to give away: hidden only where there is one.
+        try:
+            _r_g = (_models_mod.get_restaurant(restaurant_id, db_path) if db_path != DB_PATH
+                    else _models_mod.get_restaurant(restaurant_id))
+            sees = _r_g is not None and not _models_mod.salaried_staff(_r_g)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[goals] salaried roster unreadable for {restaurant_id}: {e!r}")
     out = []
     for g in rows:
         info = metrics.describe(g["metric"])
@@ -300,8 +319,14 @@ def progress(restaurant_id, db_path=DB_PATH, today=None, include_retired=False):
         g.update({"label": info["label"], "unit": info["unit"],
                   "lower_is_better": info["lower_is_better"],
                   "current": current, "current_detail": now["detail"]})
-        tb = (target_band(restaurant_id, g["metric"], g["target"], today=today, db_path=db_path)
-              if current is not None and g["status"] != "achieved" else {})
+        # The band on the same basis as the reading it judges (all-in for a
+        # salary goal whose figures are hidden from this viewer).
+        if current is not None and g["status"] != "achieved":
+            import contextlib as _ctx_tb
+            with (_models_mod.salary_view(True) if hide else _ctx_tb.nullcontext()):
+                tb = target_band(restaurant_id, g["metric"], g["target"], today=today, db_path=db_path)
+        else:
+            tb = {}
         g["band"], g["false_alarm_rate"] = tb.get("band"), tb.get("false_alarm_rate")
         if g["status"] == "achieved":
             g["state"] = "met"

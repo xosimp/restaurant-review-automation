@@ -40,8 +40,10 @@ cursor — models.ensure_tracker_change_stamps keeps the stamp — so a night
 re-reads only the trackers that changed (and the others on the same number,
 for the one-result-per-window rule), never every tracker ever written.
 """
+import logging
 import json
 import re
+import sqlite3
 from datetime import date
 
 import models as _models_mod
@@ -273,6 +275,24 @@ def _repair_per_episode(conn):
     except Exception:
         span = 300
     marks = ",".join("?" for _ in _ANSWER_EVENTS)
+    # One unit (Audit #25 A07-15): the deletes, the stamp, the cursors and
+    # the mark land together or not at all — a failure part-way used to
+    # commit the deletes with the cursors left where they were.
+    with _models_mod.atomic(conn, "feedback_per_episode"):
+        _per_episode_unit(conn, marks, span)
+    return True
+
+
+def _has_column(conn, table, column) -> bool:
+    try:
+        return column in {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    except sqlite3.Error as e:
+        logging.getLogger(__name__).warning(f"[intelligence.feedback] columns of {table} unreadable: {e}")
+        return False
+
+
+def _per_episode_unit(conn, marks, span):
+    """_repair_per_episode's statements, run inside its one unit."""
     try:
         conn.execute(
             f"DELETE FROM intel_rec_events WHERE synced_from='rec_ledger' AND instr(source_key, ?) = 0 "
@@ -289,15 +309,15 @@ def _repair_per_episode(conn):
         print(f"[intelligence.feedback] per-episode repair skipped the ledger: {e}")
     conn.execute("DELETE FROM intel_rec_events WHERE synced_from='recommendation_outcomes' AND action='tracking' "
                  "AND instr(source_key, ?) = 0 AND instr(source_key, ?) = 0", (EPISODE_KEY_SEP, MEASURED_KEY_SEP))
-    try:
+    # A database with no change stamp: the pass reads every tracker. Any
+    # other failure of the stamp raises and the unit rolls back (it was
+    # swallowed, and the rest committed — A07-08/A07-15).
+    if _has_column(conn, "recommendation_outcomes", "changed_at"):
         conn.execute("UPDATE recommendation_outcomes SET changed_at = COALESCE(created_at, datetime('now')) "
                      "WHERE changed_at IS NULL")
-    except Exception:
-        pass                          # no change stamp on this database: the pass reads every tracker
     _cursor_set(conn, 0)
     _cursor_set(conn, "", key=TRACKER_CURSOR)
     _cursor_set(conn, 1, key=PER_EPISODE_REPAIR_MARK)
-    return True
 
 
 def _counted_tracker_ids(rows) -> set:

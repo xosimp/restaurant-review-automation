@@ -172,35 +172,7 @@ struct ReviewDetailView: View {
         }
         .cavnarEmberBackButton()
         .keyboardDoneToolbar { isDraftFocused = false }
-        .onChange(of: viewModel.didComplete) { _, completed in
-            guard completed, let status = viewModel.finalStatus else { return }
-            // Queue mode: a short check, then the next reply waiting — the
-            // full 1.6s posted moment plays only on the last one (#21).
-            if status == "posted" || status == "approved", let next = nextReview {
-                let answered = viewModel.review.id
-                quickCheckLabel = Self.doneLabel(status: status, review: viewModel.review)
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(450))
-                    onAdvanced?(status, answered)
-                    quickCheckLabel = nil
-                    viewModel = ReviewDetailViewModel(review: next)
-                    reviewExpanded = false
-                    readExpanded = false
-                    await viewModel.loadTemplates()
-                    await viewModel.loadGoogleConnection()
-                }
-                return
-            }
-            if status == "posted" || status == "approved" {
-                // "Posted" — the ember leaves the draft, travels the wire,
-                // and lands as a checkmark before this screen goes away.
-                // Only ever on the real 200 (didComplete), never optimistic.
-                postedOverlayLabel = Self.doneLabel(status: status, review: viewModel.review)
-            } else {
-                onCompleted(status)
-                dismiss()
-            }
-        }
+        .onChange(of: viewModel.didComplete) { _, completed in handleCompletion(completed) }
         .overlay {
             if let label = postedOverlayLabel {
                 ZStack {
@@ -325,6 +297,37 @@ struct ReviewDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This reply is currently live on your Google Business Profile. Retracting removes it from Google immediately.")
+        }
+    }
+
+    private func handleCompletion(_ completed: Bool) {
+        guard completed, let status = viewModel.finalStatus else { return }
+        // Queue mode: a short check, then the next reply waiting — the
+        // full 1.6s posted moment plays only on the last one (#21).
+        let finished = status == "posted" || status == "approved"
+        if finished, let next = nextReview {
+            let answered = viewModel.review.id
+            quickCheckLabel = Self.doneLabel(status: status, review: viewModel.review)
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(450))
+                onAdvanced?(status, answered)
+                quickCheckLabel = nil
+                viewModel = ReviewDetailViewModel(review: next)
+                reviewExpanded = false
+                readExpanded = false
+                await viewModel.loadTemplates()
+                await viewModel.loadGoogleConnection()
+            }
+            return
+        }
+        if finished {
+            // "Posted" — the ember leaves the draft, travels the wire,
+            // and lands as a checkmark before this screen goes away.
+            // Only ever on the real 200 (didComplete), never optimistic.
+            postedOverlayLabel = Self.doneLabel(status: status, review: viewModel.review)
+        } else {
+            onCompleted(status)
+            dismiss()
         }
     }
 

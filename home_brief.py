@@ -31,6 +31,8 @@ def get_conn(db_path=None):
     return _models_gc.get_conn() if db_path is None else _models_gc.get_conn(db_path)
 
 _CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("home_brief._CACHE", _CACHE)
 _CACHE_TTL = 60  # seconds — a refresh within a minute costs nothing
 # A ceiling on live entries. Nothing ever removed an expired one, so the
 # dict held one full Home payload per (restaurant, login) that had ever
@@ -1455,8 +1457,10 @@ def _build(current_user, present=True, reads=None):
     # still in the 5-minute cache — Home never triggers a model call itself.
     ai_insight = None
     try:
-        from client_api import _cache_get
-        cached = _cache_get("review-insight:" + str(rid))
+        from client_api import _cache_get, review_cache_key
+        # This login's own Reviews read (client_api.review_read_scope): the
+        # owner's carries all-in labor and the waste dollars (B3 10/26/26).
+        cached = _cache_get(review_cache_key(rid, current_user))
         if cached and isinstance(cached, str) and cached.strip():
             ai_insight = {"source": "reviews", "text": cached.strip()[:900]}
     except Exception:

@@ -864,6 +864,8 @@ def test_an_auto_draft_with_nothing_running_claims_its_own_job_and_takes_a_slot(
     seen = []
 
     class _SE:
+        take_generation_failure = staticmethod(se.take_generation_failure)
+
         @staticmethod
         def _run_schedule_job(job_id, rid_, **_kw):
             seen.append((job_id, se.current_clock() is not None, ops.active_job("schedule", rid_)))

@@ -8,7 +8,16 @@ import os
 import config
 import time
 
-from models import get_conn, get_restaurant, update_restaurant
+from models import get_restaurant, update_restaurant
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from auth import verify_password, create_session, delete_session, get_sessions_for_user, revoke_other_sessions, update_password, login_required
 
 

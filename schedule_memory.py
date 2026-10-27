@@ -321,7 +321,9 @@ def init_schedule_memory(db_path=None):
         )""")
         # A measured fact is re-recorded in place; NULL keys (events) never
         # collide — SQLite keeps NULLs distinct in a unique index.
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sched_obs_fact ON schedule_observations(restaurant_id, fact_key)")
+        import models as _models_ix   # duplicates refuse a unique index: recorded, the boot goes on (A05-15)
+        _models_ix.create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS uq_sched_obs_fact ON "
+                                             "schedule_observations(restaurant_id, fact_key)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_obs_kind ON schedule_observations(restaurant_id, kind, date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_obs_created ON schedule_observations(created_at)")
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_memory (

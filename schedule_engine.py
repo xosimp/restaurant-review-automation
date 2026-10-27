@@ -725,6 +725,57 @@ def generation_memory_mb(restaurant_id) -> float:
     return _jq_mem.generation_memory_mb(n)
 
 
+# How each generation that failed in THIS process failed (schedule_job._fail
+# and run_queued_generation record it; the queue handlers take it): whether
+# it is the platform's failure — the operator's to hear about through the
+# queue's dead-letter rule — or the owner's to act on (their data, their
+# week, their AI budget, their Stop), which is never a dead letter
+# (re-audit B7 P1, 10/27/26).
+_GEN_FAILURES = {}
+_GEN_FAILURES_LOCK = threading.Lock()
+_GEN_FAILURES_MAX = 500
+import process_caches as _pc_gen  # noqa: E402 (registered beside each cache, A04-13)
+_pc_gen.register("schedule_engine._GEN_FAILURES", _GEN_FAILURES)
+
+
+def generation_failure_is_platform(exc) -> bool:
+    """Whether a generation that ended on `exc` failed on the platform's
+    side: a code error, the provider, a timeout, a save that failed, the
+    model refusing — not the owner's Stop, an owner-facing refusal
+    (ScheduleGenerationError: closed every day, no team, the week taken,
+    data out of date — except the time-out and save-failed sentences), an
+    AI budget stop or data that isn't ready."""
+    if isinstance(exc, ScheduleStopped):
+        return False
+    if isinstance(exc, ScheduleGenerationError):
+        return str(exc) in (_TIMED_OUT_MESSAGE, _SAVE_FAILED_MESSAGE)
+    return _failure_kind(exc) not in ("budget", "data")
+
+
+def record_generation_failure(job_id, exc) -> None:
+    """Note how generation `job_id` failed, for its queue handler (never
+    raises)."""
+    if not job_id:
+        return
+    try:
+        entry = {"platform": generation_failure_is_platform(exc), "kind": _failure_kind(exc),
+                 "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    except Exception as e:                          # the classification must never sink the failure path
+        log.warning(f"generation failure of {job_id} not classified: {e!r}")
+        entry = {"platform": True, "kind": "other", "error": type(exc).__name__}
+    with _GEN_FAILURES_LOCK:
+        if len(_GEN_FAILURES) >= _GEN_FAILURES_MAX:
+            _GEN_FAILURES.pop(next(iter(_GEN_FAILURES)))
+        _GEN_FAILURES[str(job_id)] = entry
+
+
+def take_generation_failure(job_id):
+    """How generation `job_id` failed in this process ({platform, kind,
+    error}), forgotten once read; None when it did not (or not here)."""
+    with _GEN_FAILURES_LOCK:
+        return _GEN_FAILURES.pop(str(job_id), None)
+
+
 def run_queued_generation(job):
     """job_queue's handler for `schedule_generate`: the owner's generation,
     as submit_generation's pool thread ran it — the slot is the claimed row
@@ -734,7 +785,10 @@ def run_queued_generation(job):
     runs again reading the answers that try already paid for
     (schedule_resume). The job reports its own failures into its async row;
     the queue row is done either way (a failed generation is never re-paid
-    by a retry)."""
+    by a retry) — but a generation that FAILED on the platform's side
+    (record_generation_failure) ends its row as a dead letter
+    (job_queue.dead_letter), so the queue's urgent rule for a failed owner
+    press sees it; one the owner can act on, or stopped, stays done."""
     import schedule_resume as _sres
     p = job.payload
     job_id, restaurant_id = p.get("job_id"), p.get("restaurant_id")
@@ -759,6 +813,7 @@ def run_queued_generation(job):
                 _run_schedule_job(job_id, restaurant_id, **(p.get("kwargs") or {}))
     except Exception as e:
         _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
+        record_generation_failure(job_id, e)
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
     finally:
         # A copy whose queue lease was lost (job_queue.LeaseLost, blind
@@ -771,7 +826,12 @@ def run_queued_generation(job):
             notify_generation_watchers(job_id, restaurant_id)
     state = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
     res = state.get("result") if isinstance(state.get("result"), dict) else {}
-    return {"status": state.get("status"), "history_id": res.get("history_id"), "resumed": bool(resumed)}
+    out = {"status": state.get("status"), "history_id": res.get("history_id"), "resumed": bool(resumed)}
+    failure = take_generation_failure(job_id)
+    if state.get("status") == "error" and not res.get("stopped") and failure and failure.get("platform"):
+        import job_queue as _jq_dead
+        return _jq_dead.dead_letter(dict(out, failure=failure.get("kind")), failure.get("error"))
+    return out
 
 
 def on_queued_generation_expired(job):
@@ -3546,7 +3606,12 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     if not any(x[3] and not x[4] for x in kept_lines):
         if failure is not None:
             raise failure
-        gaps = [{"date": d, "day": _date_of(d).strftime("%A"), "why": unwritten.get(d, "skipped")}
+        # A code source (the solver, production's default) that drafted
+        # nothing was given nothing to build from — no model was asked, so
+        # "the model left them empty" was false (audit #25, found by the
+        # production-config smoke).
+        default_why = "skipped" if chosen == "model" else "no_code_draft"
+        gaps = [{"date": d, "day": _date_of(d).strftime("%A"), "why": unwritten.get(d, default_why)}
                 for d in (sorted(unwritten) or want)]
         why = "; ".join(f"{days}: {words}" for days, words, _n in _gap_groups(gaps))
         raise ScheduleGenerationError(
@@ -3897,7 +3962,7 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
     c = fallback.get("constraints")
     try:
         rows, dropped, unassigned, used, base = [], [], [], None, {}
-        solver_first = None
+        solver_first = cut_try = None
         has_reqs = any(int(e.get("required") or 0) > 0 for row in ((facts or {}).get("requirements") or [])
                        for e in (row.get("roles") or []) if isinstance(e, dict))
         order = _sfb.code_order(chosen, has_requirements=has_reqs)
@@ -3951,6 +4016,13 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
                 plan = [r for r in fallback["manager_plan"].get("rows") or [] if r.get("date") in set(dates)] + \
                     [dict(r) for r in (kept or [])]
                 fallback["plan_rows"] = list(fallback["manager_plan"].get("rows") or [])
+            # A solver-first try an emergency cap cut before it found a week:
+            # said on the draft's solver record below even though the v0 code
+            # draft stands in, so the review and ops.schedule_solve_capped
+            # count it (release-safety audit 10/26/26 A02-01).
+            cut_try = got if (got is not None and not got.get("rows")
+                              and ((got.get("stats") or {}).get("wall_capped")
+                                   or (got.get("stats") or {}).get("memory_capped"))) else None
             if got is None or not got.get("rows"):
                 # The v0 code draft (requirement counts on the usual shift
                 # templates, people by the backtracking solver): what runs
@@ -3995,6 +4067,8 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
             # The demand Stage 1 shaped to: the one objective's need for
             # these dates in every pass after the draft.
             out["objective_need"] = solver_first.get("need") or {}
+        elif used == "solver" and cut_try is not None:
+            out["solver"] = dict(solver_explain(cut_try), stood_in="v0 code draft")
         return out
     except Exception as e:
         _soft_fail("code draft", e, rid)
@@ -4616,7 +4690,16 @@ def _call_pool():
     with _CALL_POOL_LOCK:
         if _CALL_POOL is None:
             from concurrent.futures import ThreadPoolExecutor
-            _CALL_POOL = ThreadPoolExecutor(max_workers=call_pool_workers(), thread_name_prefix="sched-call")
+            # Not split between gunicorn workers (pool_sizing.whole): a
+            # stream exists only for a claimed generation row, and claimed
+            # rows are counted across every process — the fleet's ceiling
+            # is max_running x parallel_calls however many processes hold
+            # this pool, and one process may hold every row.
+            import pool_sizing
+            _CALL_POOL = ThreadPoolExecutor(
+                max_workers=pool_sizing.whole("schedule_call", call_pool_workers(),
+                                              "job_queue claimed generation rows x SCHEDULE_PARALLEL_CALLS"),
+                thread_name_prefix="sched-call")
         return _CALL_POOL
 
 
@@ -7103,6 +7186,8 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
 REQUIREMENT_MODEL_TTL = 15 * 60
 REQUIREMENT_MODEL_ENTRIES = 2048
 _REQUIREMENT_MODEL_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("schedule_engine._REQUIREMENT_MODEL_CACHE", _REQUIREMENT_MODEL_CACHE)
 _REQUIREMENT_MODEL_LOCK = threading.Lock()
 
 
@@ -8359,7 +8444,9 @@ STUDIO_CACHE_PER_RESTAURANT = int(os.getenv("STUDIO_CACHE_PER_RESTAURANT", "3"))
 STUDIO_SCORER_DATES = 96
 import collections as _collections_studio
 _studio_cache = _collections_studio.OrderedDict()
+_process_caches.register("schedule_engine._studio_cache", _studio_cache)
 _studio_live = {}
+_process_caches.register("schedule_engine._studio_live", _studio_live)
 _studio_lock = threading.Lock()
 _studio_counts = {"hits": 0, "misses": 0, "evictions": 0}
 # key -> the lock its one build holds (studio_prepared's single flight).

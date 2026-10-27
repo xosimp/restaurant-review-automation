@@ -360,10 +360,25 @@ def _streak(value, same_days, better, wd):
     return None
 
 
-def _peers(key, restaurant, db_path):
+# The peer figure's pay basis per KPI: the cohort's labor % is HOURLY by
+# design (intelligence.features — a cohort never carries one restaurant's
+# salaries), so it is labelled so, and set beside the owner's own hourly
+# figure when the KPI shown is all-in (blind re-audit 10/26/26 B3: "Labor
+# 26.0% · restaurants like yours 21%" read an all-in figure against hourly
+# peers).
+PEER_BASIS = {"labor_pct": "hourly"}
+
+
+def _peers(key, restaurant, db_path, own_hourly=None):
+    """The cohort's 28-day median for a KPI. For labor % it is hourly
+    (PEER_BASIS) and says so; `own_hourly` is this night's hourly labor %
+    when the KPI's own value is all-in (the owner's view), named beside the
+    peers so the two figures compared share one basis."""
     metric = ENGINE_METRIC.get(key)
     if not metric or restaurant is None:
         return None
+    basis = PEER_BASIS.get(key)
+    label = "Restaurants like yours" + (", hourly staff" if basis == "hourly" else "")
     try:
         from intelligence import engine
         c = engine.compare(restaurant.id, metric, kinds=("peers",), restaurant=restaurant, db_path=db_path)
@@ -373,10 +388,14 @@ def _peers(key, restaurant, db_path):
     if p.get("available") and _num(p.get("p50")):
         unit = KPIS[key][2]
         v = p["p50"]
-        return {"available": True, "value_text": fmt(v, unit), "label": "Restaurants like yours",
-                "detail": f"{p.get('n')} {p.get('cohort_label') or 'similar restaurants'} · 28-day median",
+        own = fmt(own_hourly, unit) if (basis == "hourly" and _num(own_hourly)) else None
+        return {"available": True, "value_text": fmt(v, unit),
+                "label": label + (f" (yours {own})" if own else ""),
+                "detail": (f"{p.get('n')} {p.get('cohort_label') or 'similar restaurants'} · 28-day median"
+                           + (" · hourly staff only, salaries left out" if basis == "hourly" else "")),
+                "basis": basis, "own_value_text": own,
                 "strength_pct": (p.get("strength") or {}).get("pct")}
-    return {"available": False, "label": "Restaurants like yours",
+    return {"available": False, "label": label, "basis": basis,
             "why_not": (p.get("why_not") or "No fair comparison yet")}
 
 
@@ -452,7 +471,9 @@ def kpi(key, blocks, restaurant, day, db_path=None, with_peers=True) -> dict | N
            "better": better, "change": _change(value, last_week, unit, better, wd),
            "streak": None, "spark": spark if len(spark) >= 3 else [],
            "target": _target(key, restaurant),
-           "peers": _peers(key, restaurant, db_path) if with_peers else None,
+           "peers": (_peers(key, restaurant, db_path,
+                            own_hourly=(lab.get("hourly_pct") if key == "labor_pct" and lab.get("includes_salaries")
+                                        else None)) if with_peers else None),
            "derived": fact.startswith("derived:"),
            "estimate": key in ("food_pct", "prime_pct")}
     if key == "prime_pct":

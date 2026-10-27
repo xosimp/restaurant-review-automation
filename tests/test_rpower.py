@@ -638,6 +638,9 @@ def test_a_shift_with_no_payroll_id_is_reported_not_dropped(db_path, monkeypatch
     class _Resp:
         ok, status_code, text = True, 200, "{}"
     monkeypatch.setattr("requests.post", lambda *a, **k: _Resp())
+    # RPOWER's own list by exact name knows nobody called New Hire either
+    # (it used to be read live: the real API, on every run — audit #25).
+    monkeypatch.setattr(rpower, "_payroll_by_name", lambda rid: {})
     out = rpower.push_labor_schedule(rid, [
         {"employee_payroll_id": "A1", "job": "Cook",
          "start": "2026-09-15T09:00:00", "end": "2026-09-15T17:00:00"},

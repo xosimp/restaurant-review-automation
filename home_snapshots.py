@@ -228,16 +228,18 @@ def shared_scope() -> str:
 
 def _salary_for(scope_key, viewer) -> bool:
     """The salary view a rebuild of `scope_key` runs under: the one written
-    into a shared scope's key, else the login's own (permissions.is_principal)."""
+    into a shared scope's key, else the login's own (permissions.sees_salaries:
+    the account holder, never support acting through view-as — B3 10/26/26)."""
     s = str(scope_key or "")
     if s.endswith(":s1"):
         return True
     if s.endswith(":s0"):
         return False
     try:
-        from permissions import is_principal
-        return bool(is_principal(viewer or {}))
-    except Exception:
+        from permissions import sees_salaries
+        return bool(sees_salaries(viewer or {}))
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[home_snapshots] salary view unreadable, built hourly: {e!r}")
         return False
 
 

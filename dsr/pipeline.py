@@ -268,7 +268,11 @@ def deadline_at(restaurant, day):
     hour = hour if 0 <= hour <= 23 else DEFAULT_DEADLINE_HOUR
     deadline = datetime.combine(day + timedelta(days=1), _time(hour, 0))
     close = close_at(restaurant, day) or datetime.combine(day, _time(*DEFAULT_CLOSE))
-    return max(deadline, close + timedelta(hours=MIN_DEADLINE_AFTER_CLOSE_HOURS))
+    # The two hours are real hours as well as wall-clock ones: on the
+    # spring-forward night (3/14/27) a 2:00am close is 08:00 UTC and 4:00am
+    # CDT is 09:00 UTC — one hour, not two (blind re-audit 10/26/26 B2).
+    after = timedelta(hours=MIN_DEADLINE_AFTER_CLOSE_HOURS)
+    return max(deadline, close + after, local_time(restaurant, to_utc(restaurant, close) + after))
 
 
 def just_closed(restaurant, local):
@@ -310,7 +314,13 @@ def day_closed(restaurant, day, now_utc, trigger=None):
         if trigger == TRIGGER_MANUAL:
             return "manual"
         close = close_at(restaurant, day) or datetime.combine(day, _time(*DEFAULT_CLOSE))
-        return "close_time" if local_time(restaurant, now_utc) >= close + timedelta(minutes=CLOSE_GRACE_MINUTES) else None
+        grace = timedelta(minutes=CLOSE_GRACE_MINUTES)
+        # Close + grace on the wall clock (across the repeated fall-back hour
+        # that is the later one) AND in real time: on the spring-forward night
+        # the wall clock jumps past 2:30am at the very moment of a 2:00am
+        # close, which gave the POS no grace at all (blind re-audit B2).
+        late = local_time(restaurant, now_utc) >= close + grace and now_utc >= to_utc(restaurant, close) + grace
+        return "close_time" if late else None
     except Exception as e:
         log.warning("dsr: closeday check failed rid=%s day=%s: %s", restaurant.id, day, e)
         return None
@@ -451,14 +461,37 @@ def _period(rid, day, version):
 
 
 def _claim_age_minutes(period):
+    return _claim_row(period)[1]
+
+
+def _claim_row(period):
+    """(claimed_at exactly as stored, its age in minutes) for a held claim,
+    else (None, None)."""
     conn = store.get_conn()
     try:
         row = conn.execute("SELECT claimed_at FROM job_period_claims WHERE job_key=?",
                            (f"{CLAIM_JOB}:{period}",)).fetchone()
     finally:
         conn.close()
-    at = _parse_utc(row["claimed_at"]) if row else None
-    return None if at is None else (datetime.utcnow() - at).total_seconds() / 60.0
+    stamp = row["claimed_at"] if row else None
+    at = _parse_utc(stamp)
+    return stamp, (None if at is None else (datetime.utcnow() - at).total_seconds() / 60.0)
+
+
+def _take_over(period, stamp) -> bool:
+    """Take a dead run's claim in ONE conditional write (audit #25 A02-08):
+    re-stamped only while it still holds the stamp this pass read, so of two
+    passes that both found it stale exactly one wins. It was released and
+    claimed again — the second taker's release deleted the first's fresh
+    claim and both ran."""
+    conn = store.get_conn()
+    try:
+        n = conn.execute("UPDATE job_period_claims SET claimed_at=datetime('now') WHERE job_key=? AND claimed_at=?",
+                         (f"{CLAIM_JOB}:{period}", stamp)).rowcount
+        conn.commit()
+        return n == 1
+    finally:
+        conn.close()
 
 
 def _last_progress(report):
@@ -476,7 +509,7 @@ def _claim(rid, day, version, db):
     period = _period(rid, day, version)
     if ops.claim_period(CLAIM_JOB, period):
         return True
-    age = _claim_age_minutes(period)
+    stamp, age = _claim_row(period)
     if age is None or age < STALE_RUN_MINUTES:
         return False
     report = store.get_report(rid, day, version=version, db_path=db)
@@ -486,9 +519,10 @@ def _claim(rid, day, version, db):
         last = _last_progress(report)
         if last and (datetime.utcnow() - last).total_seconds() / 60.0 < STALE_RUN_MINUTES:
             return False
+    if not _take_over(period, stamp):
+        return False                    # another pass took it over first
     log.error("dsr: claim %s held %.0f minutes with no progress — reclaimed", period, age)
-    ops.release_period(CLAIM_JOB, period)
-    return ops.claim_period(CLAIM_JOB, period)
+    return True
 
 
 def _result(action, report=None, **extra):
@@ -507,6 +541,15 @@ def _run_claimed(restaurant, day, version, now_utc, db, fn):
     rid = restaurant.id
     if not _claim(rid, day, version, db):
         return _result("in_progress", store.get_report(rid, day, db_path=db))
+    # The claim as this run holds it: given back only while it is still
+    # this run's — a run slow rather than dead may have been taken over
+    # (_take_over re-stamps it), and its release must not delete the
+    # taker's claim (blind re-audit 10/26/26 B2).
+    try:
+        stamp = _claim_row(_period(rid, day, version))[0]
+    except Exception as e:
+        ops.capture(e, job="dsr_claim_release", context=f"restaurant_id={rid} business_date={day} v{version}")
+        stamp = None                        # unread: released as before (the in-memory claim included)
     try:
         return fn()
     except Exception as e:
@@ -516,7 +559,7 @@ def _run_claimed(restaurant, day, version, now_utc, db, fn):
         try:
             done = store.get_report(rid, day, version=version, db_path=db)
             if not (done and done["status"] in dsr.TERMINAL_STAGES):
-                ops.release_period(CLAIM_JOB, _period(rid, day, version))
+                ops.release_period(CLAIM_JOB, _period(rid, day, version), stamp=stamp)
         except Exception as e:
             ops.capture(e, job="dsr_claim_release", context=f"restaurant_id={rid} business_date={day} v{version}")
 
@@ -1492,17 +1535,28 @@ _FAILED_ACTIONS = ("error", "error_retry", "failed")
 # minute, so one read serves ten minutes.
 _MISSING_TTL_SECONDS = 600
 _missing_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("dsr.pipeline._missing_cache", _missing_cache)
 # A night is reported missing this long after its provisional deadline.
 MISSING_AFTER_DEADLINE = timedelta(hours=1)
+# How many business nights back the missing-night check looks (blind
+# re-audit 10/26/26 B2): every one of them not final is listed — it read
+# only the latest, so a Monday that failed vanished once Tuesday went final.
+MISSING_LOOKBACK_NIGHTS = 7
 
 
 def nights_missing(db_path=None, now_utc=None, use_cache=True):
     """[{restaurant_id, restaurant, business_date, status}] for every live,
-    non-demo restaurant with the DSR on and a POS connected whose last
-    business night has no FINAL report an hour past its deadline (#17) — a
-    provisional night went out without its sales, so it is listed too
-    (status "provisional", Audit #23 A6-20). Nothing watched this: dsr_delivery had no SLA and the
-    console never read dsr_reports, so a night that failed read green."""
+    non-demo restaurant with the DSR on and a POS connected: each of its
+    last MISSING_LOOKBACK_NIGHTS business nights with no FINAL report an
+    hour past its deadline (#17), newest first — a provisional night went
+    out without its sales, so it is listed too (status "provisional", Audit
+    #23 A6-20), and a failed one stays listed after the next night goes
+    final (blind re-audit 10/26/26 B2). Nothing watched this: dsr_delivery
+    had no SLA and the console never read dsr_reports, so a night that
+    failed read green. A night with no report at all counts only once the
+    restaurant's reports had started (its latest night, or a night after a
+    report of its own) — a store connected yesterday is not a week behind."""
     import time as _t
     key = (db_path or "", now_utc.isoformat() if now_utc else None)
     hit = _missing_cache.get(key)
@@ -1512,40 +1566,57 @@ def nights_missing(db_path=None, now_utc=None, use_cache=True):
     from models import get_all_restaurants
     db = _db(db_path)
     now = now_utc or datetime.utcnow()
-    latest = _latest_by_night(db, now.date() - timedelta(days=3))
+    latest = _latest_by_night(db, now.date() - timedelta(days=MISSING_LOOKBACK_NIGHTS + 3))
+    conn = store.get_conn(db)
+    try:
+        began = {r[0]: str(r[1])[:10] for r in conn.execute(
+            "SELECT restaurant_id, MIN(business_date) FROM dsr_reports GROUP BY restaurant_id").fetchall()}
+    finally:
+        conn.close()
     out = []
     for r in get_all_restaurants(db):
         if not _live(r) or not getattr(r, "dsr_enabled", 1) or getattr(r, "is_demo", 0):
             continue
         local = local_time(r, now)
-        night = None
-        for back in (1, 2):
+        nights = []
+        for back in range(1, MISSING_LOOKBACK_NIGHTS + 2):
             d = local.date() - timedelta(days=back)
             if close_at(r, d) is not None and local >= deadline_at(r, d) + MISSING_AFTER_DEADLINE:
-                night = d
+                nights.append(d)
+            if len(nights) >= MISSING_LOOKBACK_NIGHTS:
                 break
-        if night is None:
+        if not nights:
             continue
-        row = (latest.get(r.id) or {}).get(night.isoformat())
-        # A provisional night went out WITHOUT its sales (REQUIRED_BLOCKS is
-        # sales alone), so it is missing for the SLA list and its share
-        # (Audit #23 A6-20): FINISHED counted it done, and a store whose sales
-        # stopped for two nights was on no list. Only a final night is done.
-        if row and row["status"] == "final":
-            continue
-        if row and row["status"] != "provisional" and int(row.get("version") or 1) > 1 and \
-                store.get_finished_report(r.id, night, db_path=db) is not None:
-            # A later version still in flight (a late-data version waiting
-            # on its batched narrative, AI cost audit 10/7/26 #20) does not
-            # hide the version the owner already has.
+        mine = latest.get(r.id) or {}
+        first = began.get(r.id)
+        found = []
+        for i, night in enumerate(nights):
+            row = mine.get(night.isoformat())
+            if row is None and i > 0 and (first is None or night.isoformat() < first):
+                continue                # before this restaurant's reports began
+            # A provisional night went out WITHOUT its sales (REQUIRED_BLOCKS
+            # is sales alone), so it is missing for the SLA list and its share
+            # (Audit #23 A6-20): FINISHED counted it done, and a store whose
+            # sales stopped for two nights was on no list. Only a final night
+            # is done.
+            if row and row["status"] == "final":
+                continue
+            if row and row["status"] != "provisional" and int(row.get("version") or 1) > 1 and \
+                    store.get_finished_report(r.id, night, db_path=db) is not None:
+                # A later version still in flight (a late-data version waiting
+                # on its batched narrative, AI cost audit 10/7/26 #20) does not
+                # hide the version the owner already has.
+                continue
+            found.append((night, row))
+        if not found:
             continue
         try:
             if not pos.connected_provider(r.id)[0]:
                 continue
         except Exception:
             continue
-        out.append({"restaurant_id": r.id, "restaurant": r.name, "business_date": night.isoformat(),
-                    "status": row["status"] if row else "missing"})
+        out += [{"restaurant_id": r.id, "restaurant": r.name, "business_date": night.isoformat(),
+                 "status": row["status"] if row else "missing"} for night, row in found]
     if now_utc is None:
         _missing_cache[key] = (_t.monotonic(), list(out))
     return out

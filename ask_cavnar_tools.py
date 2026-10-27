@@ -1167,10 +1167,15 @@ def _with_data_as_of(name, restaurant_id, payload, restaurant=None):
 def _read_labor_detail(restaurant_id, weeks=8):
     """Per-day labor, not just the overstaffed/understaffed counts — which
     is what "which day is killing me?" actually needs."""
-    from models import get_labor_daily, get_labor_history
+    from models import get_labor_history
     try:
-        daily = get_labor_daily(restaurant_id)
-    except Exception:
+        # Each day on the viewer's basis (metrics.daily_labor, audit #25
+        # F2): the stored labor_pct is hourly, and it sat beside an all-in
+        # weekly trend for the owner.
+        import metrics as _metrics_ld
+        daily = _metrics_ld.daily_labor(restaurant_id)
+    except Exception as e:
+        log.warning("ask_cavnar tool read_labor_detail daily labor unreadable: %s", e)
         daily = []
     try:
         # Same source the web Labor tab's trend chart uses; oldest first so
@@ -1968,11 +1973,30 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
     want = str(module or "").strip().lower() or None
     window = _days(days, 30, 180)
     reads, seen = [], set()
+    # The Labor and Food reads are kept per salary view (insight_store.
+    # salary_kind, audit #25 F13): a login who may not see salaries reads
+    # only its own view's, never the owner's all-in one.
+    # Whose view: the login Ask answers for (permissions.sees_salaries —
+    # never a manager, nor support through view-as), else the work's own
+    # (models.viewer_sees_salaries; a job is manager-safe).
+    try:
+        _user_rr = getattr(_viewer, "_ask_dsr_user", None) if _viewer is not None else None
+        if isinstance(_user_rr, dict):
+            from permissions import sees_salaries as _ss_rr
+            _sees_rr = bool(_ss_rr(_user_rr))
+        else:
+            from models import viewer_sees_salaries as _vss_rr
+            _sees_rr = bool(_vss_rr())
+    except Exception as e:
+        log.warning("read_recent_reads: salary view unreadable, read without salaries: %r", e)
+        _sees_rr = False
     try:
         import ai_reads
         for r in ai_reads.recent_reads(restaurant_id, days=window, limit=20) or []:
             surface = str(r.get("surface") or "")
             base = surface.split(":", 1)[0]
+            if not _sees_rr and base in ai_reads.SALARY_VIEW_SURFACES:
+                continue
             # Every kept read is scoped by its surface (ai_reads.SURFACE_MODULE):
             # a module's read needs that module's view, an owner-level one
             # (the monthly review, digest, brief, Monday plan, nightly report)
@@ -1994,11 +2018,18 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
         import insight_store
         import ai_reads as _air_k
         for kind, perm_module, label in _READ_KINDS:
+            # On the login's own salary view (_sees_rr), as the kept history above.
+            stored_kind = (kind if (_sees_rr or kind not in insight_store.SALARY_VIEW_KINDS)
+                           else kind + insight_store.HOURLY_SUFFIX)
+            if kind == "reviews":
+                # The Reviews read is kept per salary view and Food Cost view
+                # (insight_store.review_scope, blind re-audit 10/26/26 B3).
+                stored_kind = kind + insight_store.review_scope(_sees_rr, "inventory" not in denied)
             # The current stored read is already listed when its kept history is.
-            if (perm_module in denied or _air_k.STORE_SURFACE.get(kind, kind) in seen
+            if (perm_module in denied or _air_k.STORE_SURFACE.get(stored_kind, stored_kind) in seen
                     or (want and want not in (kind, perm_module))):
                 continue
-            payload, at = insight_store.latest(restaurant_id, kind)
+            payload, at = insight_store.latest(restaurant_id, stored_kind)
             if (kind == "reviews" and isinstance(payload, dict) and isinstance(payload.get("locations"), dict)
                     and payload["locations"].get("available")):
                 # A Reviews row written before the cross-location read got its
@@ -2061,7 +2092,7 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
 def _read_surface_allowed(surface, viewer, denied) -> bool:
     """Whether the login behind `viewer` may read a kept read of `surface`
     (ai_reads.SURFACE_MODULE): a module's read needs that module's view; an
-    OWNER_ONLY read is the account holder's (permissions.is_principal) — an
+    OWNER_ONLY read is the account holder's (permissions.sees_salaries) — an
     unrestricted caller (no login stamped) reads as the owner; a surface
     the map does not name is refused."""
     import ai_reads
@@ -2073,8 +2104,10 @@ def _read_surface_allowed(surface, viewer, denied) -> bool:
         if user is None:
             return True
         try:
-            from permissions import is_principal
-            return bool(is_principal(user))
+            # The account holder's — never support acting through view-as:
+            # an owner-level read carries the all-in labor (B3 10/26/26).
+            from permissions import sees_salaries
+            return bool(sees_salaries(user))
         except Exception:
             return False
     return m not in denied
@@ -2085,7 +2118,7 @@ _MODULE_OF_SURFACE = {"reviews": "reviews", "review_diagnosis": "reviews", "revi
                       "food": "inventory", "food_diagnosis": "inventory", "food_read": "inventory",
                       "inventory": "inventory", "labor": "labor", "labor_read": "labor", "schedule": "labor",
                       "marketing": "marketing", "competitor": "intel", "competitor_read": "intel",
-                      "intel": "intel"}
+                      "intel": "intel", "labor_read_hourly": "labor", "food_read_hourly": "inventory"}
 
 
 def _read_service_performance(restaurant_id, days=28, _viewer=None):
@@ -2236,6 +2269,8 @@ def _read_events_once(restaurant_id, days=21, past=4, _viewer=None):
             item["last_like_it"] = {"what": last["describe"], "net": last["net"],
                                     "usual_same_weekday": last["baseline"], "lift_pct": last["lift_pct"],
                                     "covers": last["covers"], "labor_pct": last["labor_pct"],
+                                    # The night's stored labor % is hourly (audit #25 F2).
+                                    "labor_pct_basis": "hourly staff only, salaries not included",
                                     "on_the_clock_by_role": last["headcount"]}
         if not item.get("context_only") and _planned[0] < 3:
             # The full plan goes to the next three games that matter, never
@@ -4015,6 +4050,57 @@ _PRINCIPAL_TOOLS = {"add_closed_date",
 _FOOD_METRICS = {"food_cost_pct", "weekly_waste"}
 _MODULE_FLAGS = {"reviews": "module_reviews", "labor": "module_labor",
                  "inventory": "module_inventory", "marketing": "module_marketing"}
+
+# Every tool with no module flag that no name set above (or _STAFF_CONTACT_
+# TOOLS / _TEAM_SETTINGS_TOOLS below) gates, with the reason it is safe for
+# every console login — the Ask twin of auth._UNGATED_PREFIXES (release-
+# safety audit 10/26/26 A04-09). tests/test_ask_tools_classified.py fails on
+# a module-None tool that is in neither, so "who may read this?" is asked
+# when a tool is written. Being here is not "open to everyone": each reason
+# names the per-viewer projection the tool applies inside.
+_MODULELESS_REVIEWED = {
+    "read_business_snapshot": "business_intelligence.executive_brief on the viewer_restaurant: a module the "
+                              "login may not view is off there too, money ranking included",
+    "read_data_health": "the payload /api/data-health gives every console login (data_health.payload_for): "
+                        "source freshness and sync state, no module figures",
+    "read_alerts": "each row filtered by alert_visible (the bell's rule, client_api._sees) against the "
+                   "login's denied modules",
+    "remember": "owner_memory.remember stamped with the login; personnel or money notes default to the "
+                "account holders' audience",
+    "forget": "owner_memory.forget with the login: a teammate drops only notes they added",
+    "read_email_history": "the list /api/email-history gives every console login (get_email_log_for_client): "
+                          "what was sent and whether it landed, no module figures",
+    "change_setting": "runs client_api's own _do_* handler with the login, which refuses a non-owner "
+                      "(_owner_only_setting) as the settings screen does",
+    "read_open_issues": "issues.list_issues with sees_loss (LOSS_VIEW) and hide_modules for the login",
+    "read_goals": "each goal filtered by metric_visible (food cost needs Food Cost, comps LOSS_VIEW)",
+    "read_outcomes": "metric_visible plus outcomes.visible_to for the login (the REST route's rule)",
+    "set_goal": "refused by metric_visible for a metric the login may not see; a teammate's goal is "
+                "proposed for an account holder",
+    "track_outcome": "refused by metric_visible for a metric the login may not see",
+    "read_restaurant_memory": "features, slopes and links projected by intelligence.visible on the denied "
+                              "modules; the advice record by rec_learning.viewer_sees_record",
+    "read_platform_intelligence": "comparisons and patterns projected by intelligence.visible on the denied "
+                                  "modules; anonymous cohort bands only",
+    "read_decisions": "decisions.history with sees_loss and the login as viewer",
+    "read_recent_reads": "each kept read gated by _read_surface_allowed (module view, owner-only surfaces "
+                         "for principals, unknown surfaces refused)",
+    "read_target_history": "only targets whose thresholds.TARGET_MODULES module the login may view",
+    "read_events": "dollars and staffing need Labor, item mix gameday.item_mix_visible, ordering Food Cost, "
+                   "guest-text timing gameday.guest_text_visible, game-night reviews Reviews",
+    "read_upcoming": "posts and guest texts need Marketing, time off Labor, the DSR Tomorrow dsr.access for "
+                     "the login",
+    "read_forecast_record": "each forecast kind dropped when its module is denied; demand accuracy needs "
+                            "Labor; DSR predictions filtered by dsr.access's cite rule",
+    "read_closeouts": "the close-outs /api/closeout gives every console login (the closer is usually not the "
+                      "owner); their words, fenced",
+    "read_past_conversations": "this login's own chats only (permissions.acting_login_id; support's own "
+                               "through view-as)",
+    "set_data_retention": "a proposal: confirming runs POST /api/account-settings/data-retention, which is "
+                          "principal-only in the route",
+    "create_issue": "a proposal: confirming runs POST /api/issues, open to every console login "
+                    "(strategy_routes._do_issue_create); it reveals no module figures",
+}
 
 
 def viewer_restaurant(restaurant, user):

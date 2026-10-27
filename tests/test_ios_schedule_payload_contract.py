@@ -59,6 +59,9 @@ import schedule_engine as se
 import schedule_prompt
 from models import Restaurant, create_restaurant
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IOS = os.path.join(ROOT, "ios", "CavnarAI")
 FIXTURES = os.path.join(IOS, "CavnarAITests", "Fixtures")

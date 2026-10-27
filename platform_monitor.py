@@ -80,7 +80,8 @@ def _platform_ddl():
             request_id    TEXT,
             restaurant_id INTEGER,
             klass         TEXT,
-            duration_ms   INTEGER
+            duration_ms   INTEGER,
+            authed        INTEGER NOT NULL DEFAULT 0
         )""",
         "CREATE INDEX IF NOT EXISTS idx_http_5xx_created ON http_5xx_log(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_http_5xx_route ON http_5xx_log(route, created_at)",
@@ -110,12 +111,33 @@ def _platform_ddl():
             PRIMARY KEY (hour_at, restaurant_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_tenant_request_rollups_hour ON tenant_request_rollups(hour_at)",
+        # The rehearsals the runbook asks for each quarter (release-safety
+        # audit 10/26/26 A05-05 / A05-10): a Railway rollback and a Postgres
+        # point-in-time restore into a scratch service, each with the minutes
+        # it took. A handful of rows a year; never pruned.
+        """CREATE TABLE IF NOT EXISTS release_drills (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind         TEXT NOT NULL,
+            done_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            minutes      REAL,
+            ok           INTEGER NOT NULL DEFAULT 1,
+            note         TEXT,
+            recorded_by  TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_release_drills_kind ON release_drills(kind, done_at)",
     )
+
+
+# Columns added to a telemetry table after it shipped (boot, add_missing_columns).
+# http_5xx_log.authed: the 5xx came from a signed-in customer request (re-audit
+# B8 P2, 10/27/26 — the absolute 5xx floor counts only those).
+_PLATFORM_ALTERS = ("ALTER TABLE http_5xx_log ADD COLUMN authed INTEGER NOT NULL DEFAULT 0",)
 
 
 def init_platform_tables(db_path=None):
     """Create the telemetry tables at boot (hosted_dashboard calls this beside
     the other init_* steps). Never on a request path."""
+    import models
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
@@ -124,6 +146,7 @@ def init_platform_tables(db_path=None):
         conn.commit()
     finally:
         conn.close()
+    models.add_missing_columns(db_path or DB_PATH, _PLATFORM_ALTERS)
 
 
 def _telemetry_conn(db_path=None):
@@ -226,32 +249,123 @@ HTTP_P95_ALERT_MIN_REQUESTS = int(os.getenv("HTTP_P95_ALERT_MIN_REQUESTS", "200"
 HTTP_P95_ALERT_MINUTES = 15
 
 
-def request_slo(db_path=None) -> dict:
+# The absolute 5xx floor (release-safety audit 10/26/26 A07-10): the rate
+# rule above needs HTTP_5XX_ALERT_MIN_REQUESTS customer requests in five
+# minutes, which a quiet hour never has — a deploy that broke a route for
+# the ten owners who hit it paged nobody. So also: at least
+# HTTP_5XX_FLOOR_ERRORS customer 5xx on at least HTTP_5XX_FLOOR_ROUTES routes
+# in HTTP_5XX_FLOOR_MINUTES (urgent), and any 5xx within
+# HTTP_5XX_FRESH_BOOT_MINUTES of a boot on a route with none in the
+# HTTP_5XX_CLEAN_DAYS before it (a warning: a new failure a release brought).
+# The floor counts only SIGNED-IN customer requests (http_5xx_log.authed),
+# from at least HTTP_5XX_FLOOR_TENANTS restaurants — a crawler posting
+# malformed bodies to two routes paged urgently every hour (re-audit B8
+# P2) — and is armed only while the rate rule is not (fewer than
+# HTTP_5XX_ALERT_MIN_REQUESTS requests): at peak, five 5xx in 20,000
+# requests is the rate rule's call, not a page (re-audit B7 P2).
+HTTP_5XX_FLOOR_ERRORS = int(os.getenv("HTTP_5XX_FLOOR_ERRORS", "5"))
+HTTP_5XX_FLOOR_ROUTES = int(os.getenv("HTTP_5XX_FLOOR_ROUTES", "2"))
+HTTP_5XX_FLOOR_TENANTS = max(1, int(os.getenv("HTTP_5XX_FLOOR_TENANTS", "2")))
+HTTP_5XX_FLOOR_MINUTES = 10
+HTTP_5XX_FRESH_BOOT_MINUTES = 30
+HTTP_5XX_CLEAN_DAYS = 7
+
+
+def _utc(dt) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_utc(text):
+    try:
+        return datetime.strptime(str(text)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def latest_boot_at(db_path=None):
+    """When the newest boot that came up started (UTC datetime), or None."""
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        row = conn.execute("SELECT MAX(started_at) FROM boot_events WHERE ok = 1").fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    return _parse_utc(row[0]) if row and row[0] else None
+
+
+def _route_5xx(conn, start, end, classes):
+    """{route: 5xx} for customer traffic in [start, end)."""
+    marks = ",".join("?" * len(classes))
+    return {r[0]: int(r[1] or 0) for r in conn.execute(
+        f"SELECT route, SUM(errors_5xx) FROM request_rollups WHERE minute_at >= ? AND minute_at < ? "
+        f"AND route <> '*' AND klass IN ({marks}) GROUP BY route HAVING SUM(errors_5xx) > 0",
+        (_utc(start), _utc(end)) + tuple(classes)).fetchall()}
+
+
+def _authed_5xx(conn, start, end, classes):
+    """({route: 5xx}, distinct restaurants) of SIGNED-IN customer requests'
+    5xx in [start, end) — the absolute floor's count (http_5xx_log.authed)."""
+    marks = ",".join("?" * len(classes))
+    args = (_utc(start), _utc(end)) + tuple(classes)
+    where = (f"FROM http_5xx_log WHERE created_at >= ? AND created_at < ? AND authed = 1 AND klass IN ({marks}) "
+             "AND route <> '*'")
+    routes = {r[0]: int(r[1] or 0) for r in conn.execute(f"SELECT route, COUNT(*) {where} GROUP BY route",
+                                                         args).fetchall()}
+    tenants = int(conn.execute(f"SELECT COUNT(DISTINCT restaurant_id) {where} AND restaurant_id IS NOT NULL",
+                               args).fetchone()[0] or 0)
+    return routes, tenants
+
+
+def request_slo(db_path=None, now=None, fresh=True) -> dict:
     """{requests, errors_5xx, error_rate, error_rate_over, latency_requests,
-    p95_le_ms, latency_over, ...} for customer traffic (http_layer.
-    CUSTOMER_CLASSES) from the persisted per-minute rollups: the last
-    HTTP_5XX_ALERT_MINUTES whole minutes for the 5xx rate, the last
-    HTTP_P95_ALERT_MINUTES for the p95 (a bucket edge, as the console reads
-    it). The minute still filling is not persisted yet, so each window ends a
-    minute back."""
+    p95_le_ms, latency_over, error_floor_over, fresh_5xx_routes, ...} for
+    customer traffic (http_layer.CUSTOMER_CLASSES) from the persisted
+    per-minute rollups: the last HTTP_5XX_ALERT_MINUTES whole minutes for the
+    5xx rate, the last HTTP_P95_ALERT_MINUTES for the p95 (a bucket edge, as
+    the console reads it), the last HTTP_5XX_FLOOR_MINUTES for the absolute
+    floor (signed-in requests' 5xx from http_5xx_log, armed only below the
+    rate rule's request floor). The minute still filling is not persisted
+    yet, so each window ends a minute back. `now` (UTC) for a test; the
+    clock otherwise. `fresh` False (the /health read-only call) skips the
+    post-boot scan of each failing route's previous HTTP_5XX_CLEAN_DAYS —
+    the one read here that is not bounded by minutes (re-audit B7 P3)."""
     import http_layer
     cols = _bucket_columns()
     classes = tuple(http_layer.CUSTOMER_CLASSES)
     marks = ",".join("?" * len(classes))
     bsum = ", ".join(f"SUM({c})" for c in cols)
+    from datetime import timedelta
     from models import get_conn, DB_PATH
+    ref = now or datetime.utcnow()
+    end = ref + timedelta(minutes=1)              # every persisted minute up to now
+    boot = latest_boot_at(db_path)
     conn = get_conn(db_path or DB_PATH)
     try:
         err = conn.execute(
-            f"SELECT SUM(requests), SUM(errors_5xx) FROM request_rollups WHERE minute_at >= datetime('now', ?) "
+            f"SELECT SUM(requests), SUM(errors_5xx) FROM request_rollups WHERE minute_at >= ? "
             f"AND route <> '*' AND klass IN ({marks})",
-            (f"-{HTTP_5XX_ALERT_MINUTES + 1} minutes",) + classes).fetchone()
+            (_utc(ref - timedelta(minutes=HTTP_5XX_ALERT_MINUTES + 1)),) + classes).fetchone()
         lat = conn.execute(
-            f"SELECT SUM(requests), {bsum} FROM request_rollups WHERE minute_at >= datetime('now', ?) "
+            f"SELECT SUM(requests), {bsum} FROM request_rollups WHERE minute_at >= ? "
             f"AND route <> '*' AND klass IN ({marks})",
-            (f"-{HTTP_P95_ALERT_MINUTES + 1} minutes",) + classes).fetchone()
+            (_utc(ref - timedelta(minutes=HTTP_P95_ALERT_MINUTES + 1)),) + classes).fetchone()
+        try:
+            floor, floor_tenants = _authed_5xx(conn, ref - timedelta(minutes=HTTP_5XX_FLOOR_MINUTES + 1), end,
+                                               classes)
+        except sqlite3.OperationalError as e:       # a database not migrated yet (authed): no floor
+            log.warning("the 5xx floor's log unreadable: %s", e)
+            floor, floor_tenants = {}, 0
+        fresh_routes = []
+        if fresh and boot is not None and ref - boot <= timedelta(minutes=HTTP_5XX_FRESH_BOOT_MINUTES):
+            since_boot = _route_5xx(conn, boot, end, classes)
+            if since_boot:
+                before = _route_5xx(conn, boot - timedelta(days=HTTP_5XX_CLEAN_DAYS), boot, classes)
+                fresh_routes = sorted(r for r in since_boot if r not in before)
     finally:
         conn.close()
+    floor_errors = sum(floor.values())
     n, e5 = int(err[0] or 0), int(err[1] or 0)
     rate = (e5 / n) if n else 0.0
     ln = int(lat[0] or 0)
@@ -261,7 +375,13 @@ def request_slo(db_path=None) -> dict:
             "error_rate_over": bool(n >= HTTP_5XX_ALERT_MIN_REQUESTS and rate > HTTP_5XX_ALERT_RATE),
             "latency_requests": ln, "latency_minutes": HTTP_P95_ALERT_MINUTES, "p95_le_ms": p95,
             "p95_slo_ms": HTTP_P95_SLO_MS,
-            "latency_over": bool(ln >= HTTP_P95_ALERT_MIN_REQUESTS and p95 is not None and p95 > HTTP_P95_SLO_MS)}
+            "latency_over": bool(ln >= HTTP_P95_ALERT_MIN_REQUESTS and p95 is not None and p95 > HTTP_P95_SLO_MS),
+            "floor_errors": floor_errors, "floor_routes": sorted(floor), "floor_minutes": HTTP_5XX_FLOOR_MINUTES,
+            "floor_tenants": floor_tenants,
+            "error_floor_over": bool(n < HTTP_5XX_ALERT_MIN_REQUESTS and floor_errors >= HTTP_5XX_FLOOR_ERRORS
+                                     and len(floor) >= HTTP_5XX_FLOOR_ROUTES
+                                     and floor_tenants >= HTTP_5XX_FLOOR_TENANTS),
+            "fresh_5xx_routes": fresh_routes}
 
 
 def persist_server_errors(samples, db_path=None) -> int:
@@ -276,12 +396,12 @@ def persist_server_errors(samples, db_path=None) -> int:
         rows.append((at, s.get("method"), str(s.get("route") or "")[:200], int(s.get("status") or 500),
                      (s.get("error") or None) and str(s["error"])[:300], s.get("exc_type"),
                      1 if s.get("unhandled") else 0, s.get("request_id"), s.get("restaurant_id"),
-                     s.get("klass"), s.get("duration_ms")))
+                     s.get("klass"), s.get("duration_ms"), 1 if s.get("authed") else 0))
     conn = _telemetry_conn(db_path)
     try:
         conn.executemany(
             "INSERT INTO http_5xx_log (created_at, method, route, status, error, exc_type, unhandled, "
-            "request_id, restaurant_id, klass, duration_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "request_id, restaurant_id, klass, duration_ms, authed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         conn.commit()
     finally:
         conn.close()
@@ -596,6 +716,426 @@ def page_if_crash_looping(boot_id, db_path=None) -> bool:
         return False
 
 
+# ── the quarterly release drills (release-safety audit 10/26/26, A05-05 /
+# A05-10) ───────────────────────────────────────────────────────────────────
+# Recorded by scripts/record_drill.py after each rehearsal (docs/ops/
+# RECOVERY.md → Release drills); the Engineering system card shows the last
+# of each and warns past DRILL_STALE_DAYS.
+DRILL_KINDS = {"rollback": "Rollback drill", "pg_restore": "Postgres restore drill"}
+DRILL_STALE_DAYS = 100
+
+
+def record_drill(kind, minutes=None, ok=True, note=None, recorded_by=None, db_path=None, done_at=None) -> int:
+    if kind not in DRILL_KINDS:
+        raise ValueError(f"unknown drill {kind!r} (one of {', '.join(DRILL_KINDS)})")
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        cur = conn.execute("INSERT INTO release_drills (kind, done_at, minutes, ok, note, recorded_by) "
+                           "VALUES (?, COALESCE(?, datetime('now')), ?, ?, ?, ?)",
+                           (kind, done_at, None if minutes is None else float(minutes), 1 if ok else 0,
+                            (note or None) and str(note)[:500], (recorded_by or None) and str(recorded_by)[:100]))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def drill_status(db_path=None, now=None) -> dict:
+    """{kind: {label, done_at, age_days, minutes, ok, state}} — state "ok",
+    "stale" (over DRILL_STALE_DAYS, or the last one failed) or "never"."""
+    from models import get_conn, DB_PATH
+    now = now or datetime.utcnow()
+    out = {k: {"label": label, "done_at": None, "age_days": None, "minutes": None, "ok": None, "state": "never"}
+           for k, label in DRILL_KINDS.items()}
+    try:
+        conn = get_conn(db_path or DB_PATH)
+    except Exception as e:
+        return {"error": str(e)[:120], **out}
+    try:
+        for kind in DRILL_KINDS:
+            row = conn.execute("SELECT done_at, minutes, ok FROM release_drills WHERE kind = ? "
+                               "ORDER BY done_at DESC, id DESC LIMIT 1", (kind,)).fetchone()
+            if not row:
+                continue
+            done = _parse_utc(row[0])
+            age = (now - done).days if done else None
+            out[kind].update(done_at=row[0], age_days=age, minutes=row[1], ok=bool(row[2]),
+                             state="stale" if (not row[2] or age is None or age > DRILL_STALE_DAYS) else "ok")
+    except sqlite3.OperationalError as e:
+        return {"error": str(e)[:120], **out}
+    finally:
+        conn.close()
+    return out
+
+
+# ── a slow boot pages (release-safety audit 10/26/26, A05-09) ───────────────
+#
+# Every deploy is an outage of old-container-stop plus boot_ms, and a boot
+# past the 120-second healthcheck is a failed deploy. Nothing watched the
+# trend: a boot over SLOW_BOOT_MS, or SLOW_BOOT_GROWTH over the median of the
+# last SLOW_BOOT_BASELINE boots, pages once per build.
+SLOW_BOOT_MS = int(os.getenv("SLOW_BOOT_MS", "60000"))
+SLOW_BOOT_GROWTH = 1.5
+SLOW_BOOT_BASELINE = 10
+
+
+def slow_boot_state(boot_id, db_path=None) -> dict:
+    """{boot_ms, median_ms, slow, reason} for boot `boot_id` against the
+    ready boots before it."""
+    from models import get_conn, DB_PATH
+    out = {"boot_ms": None, "median_ms": None, "slow": False, "reason": None}
+    try:
+        conn = get_conn(db_path or DB_PATH)
+    except Exception:
+        return out
+    try:
+        row = conn.execute("SELECT boot_ms, build FROM boot_events WHERE id=?", (boot_id,)).fetchone()
+        if not row or row[0] is None:
+            return out
+        prior = [int(r[0]) for r in conn.execute(
+            "SELECT boot_ms FROM boot_events WHERE id < ? AND ok = 1 AND boot_ms IS NOT NULL "
+            "ORDER BY id DESC LIMIT ?", (boot_id, SLOW_BOOT_BASELINE)).fetchall()]
+    except sqlite3.OperationalError:
+        return out
+    finally:
+        conn.close()
+    ms = int(row[0])
+    out["boot_ms"], out["build"] = ms, row[1]
+    if prior:
+        s = sorted(prior)
+        mid = len(s) // 2
+        out["median_ms"] = s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) // 2
+    if ms > SLOW_BOOT_MS:
+        out["slow"], out["reason"] = True, f"boot took {ms / 1000:.0f} s (alert past {SLOW_BOOT_MS / 1000:.0f} s)"
+    elif out["median_ms"] and len(prior) >= 3 and ms > SLOW_BOOT_GROWTH * out["median_ms"]:
+        out["slow"], out["reason"] = True, (f"boot took {ms / 1000:.0f} s, {ms / out['median_ms']:.1f}x the median "
+                                            f"of the last {len(prior)} ({out['median_ms'] / 1000:.0f} s)")
+    return out
+
+
+def page_if_slow_boot(boot_id, db_path=None) -> bool:
+    """Tell the operator once per build when this boot was slow. Only where
+    the scheduler would run (a laptop pages nobody); off the boot path."""
+    state = slow_boot_state(boot_id, db_path)
+    if not state["slow"]:
+        return False
+    try:
+        import config
+        import scheduler
+        if not scheduler.scheduling_allowed():
+            return False
+        import ops
+        build = state.get("build") or config.build_label()
+        res = ops.page_operator(f"slow_boot:{build}", "Cavnar AI: the last boot was slow",
+                                [state["reason"] + f" — build {build}.",
+                                 "Each deploy is an outage of the old container's stop plus the boot; past 120 s "
+                                 "the healthcheck fails the deploy. The boot's steps are in the deploy log; "
+                                 "docs/ops/RECOVERY.md → Deploys."], cooldown_minutes=7 * 24 * 60)
+        return bool(res.get("sent"))
+    except Exception as e:
+        log.error("slow-boot page failed: %s", e)
+        return False
+
+
+# ── release health (release-safety audit 10/26/26, A07-01 / R15) ────────────
+#
+# The first RELEASE_WINDOW_MINUTES after a DEPLOYMENT's first boot against the
+# deployment before it, its last RELEASE_BASELINE_MINUTES. Keyed on Railway's
+# deployment id (RAILWAY_DEPLOYMENT_ID), the build SHA alongside (re-audit B7
+# P2, 10/27/26): keyed on the SHA, a redeploy for an env-var change and a
+# rollback to an earlier SHA were judged on a window from days before and
+# never checked. A process with no deployment id (a laptop, a test) falls
+# back to the build. Urgent rows mean roll back; warn rows mean hold the next
+# deploy. A rollback is advised only for a regression that STARTS with the
+# deployment — against the deployment before it, as a rate, with absolute
+# minimums — and never for a provider's outage (provider_health), which a
+# rollback cannot fix and which costs another downtime window. The supervisor
+# runs it once per process, pages once with the deployment, the SHA and the
+# rollback step.
+RELEASE_WINDOW_MINUTES = 15
+RELEASE_BASELINE_MINUTES = 60
+RELEASE_SCHEDULER_TICK_MINUTES = 10
+# A kind's failed rows in the window that count as a regression: at least
+# this many, this share of the kind's finished rows, and this many times its
+# share before the deployment.
+RELEASE_QUEUE_FAILED_MIN = 3
+RELEASE_QUEUE_FAILED_SHARE = 0.2
+RELEASE_REGRESSION_RATIO = 3.0
+# A provider seen failing this long before the window's end (the probes run
+# hourly) explains what fails through it.
+RELEASE_PROVIDER_LOOKBACK_MINUTES = 120
+# The queue kinds and the AI calls that go through one provider.
+_KIND_PROVIDERS = {"pos_archive": ("rpower",), "pos_onboard": ("rpower",), "pos_sync": ("rpower",),
+                   "live_labor": ("rpower",), "pos_schedule_push": ("rpower",), "silent_push": ("apns",),
+                   "schedule_generate": ("anthropic",), "auto_draft": ("anthropic",)}
+ROLLBACK_STEP = ("Roll back: Railway → web service → Deployments → the previous deployment → Redeploy; "
+                 "docs/ops/RECOVERY.md → Rolling back a release.")
+
+
+def current_deployment():
+    """This process's Railway deployment id, or None (not on Railway)."""
+    return (os.getenv("RAILWAY_DEPLOYMENT_ID") or "").strip() or None
+
+
+def _release_windows(conn, build, now, deployment=None):
+    """(window start, previous build, previous deployment, scope SQL, scope
+    args) or None: the deployment's first boot and the deployment (or, with
+    no deployment id, the build) that booted before it."""
+    if deployment:
+        row = conn.execute("SELECT MIN(started_at) FROM boot_events WHERE deployment_id = ?", (deployment,)).fetchone()
+        start = _parse_utc(row[0]) if row and row[0] else None
+        if start is not None:
+            prev = conn.execute("SELECT build, deployment_id FROM boot_events WHERE started_at < ? "
+                                "AND deployment_id IS NOT NULL AND deployment_id <> ? "
+                                "ORDER BY started_at DESC, id DESC LIMIT 1", (_utc(start), deployment)).fetchone()
+            return (start, (prev[0] if prev else None), (prev[1] if prev else None), "deployment_id = ?",
+                    (deployment,))
+    row = conn.execute("SELECT MIN(started_at) FROM boot_events WHERE build = ?", (build,)).fetchone()
+    start = _parse_utc(row[0]) if row and row[0] else None
+    if start is None:
+        return None
+    prev = conn.execute("SELECT build, deployment_id FROM boot_events WHERE started_at < ? AND build IS NOT NULL "
+                        "AND build <> ? ORDER BY started_at DESC, id DESC LIMIT 1", (_utc(start), build)).fetchone()
+    return start, (prev[0] if prev else None), (prev[1] if prev else None), "build = ?", (build,)
+
+
+def _requests_window(conn, start, end, classes, cols):
+    marks = ",".join("?" * len(classes))
+    bsum = ", ".join(f"SUM({c})" for c in cols)
+    row = conn.execute(
+        f"SELECT SUM(requests), SUM(errors_5xx), {bsum} FROM request_rollups WHERE minute_at >= ? "
+        f"AND minute_at < ? AND route <> '*' AND klass IN ({marks})",
+        (_utc(start), _utc(end)) + tuple(classes)).fetchone()
+    n, e5 = int(row[0] or 0), int(row[1] or 0)
+    buckets = [int(x or 0) for x in row[2:]]
+    return n, e5, (_bucket_percentile(buckets, 0.95) if n else None)
+
+
+def _providers_down(conn, start, end) -> set:
+    """Providers provider_health saw failing or unreachable in [start, end)."""
+    try:
+        return {r[0] for r in conn.execute(
+            "SELECT DISTINCT provider FROM provider_health WHERE checked_at >= ? AND checked_at < ? "
+            "AND state IN ('failing', 'error')", (_utc(start), _utc(end))).fetchall()}
+    except sqlite3.OperationalError as e:
+        log.warning("release health: provider_health unreadable: %s", e)
+        return set()
+
+
+def _regressed(rate, prev_rate):
+    """Whether `rate` is a regression on `prev_rate` (RELEASE_REGRESSION_RATIO
+    times it, from a floor of 1%)."""
+    return rate >= RELEASE_REGRESSION_RATIO * max(float(prev_rate or 0.0), 0.01)
+
+
+def _queue_window(conn, start, end):
+    """{kind: (failed, finished)} of queue rows that finished in [start, end)."""
+    import calendar
+    a, b = float(calendar.timegm(start.timetuple())), float(calendar.timegm(end.timetuple()))
+    out = {}
+    for kind, state, n in conn.execute(
+            "SELECT kind, state, COUNT(*) FROM jobs WHERE state IN ('failed', 'done') AND finished_at >= ? "
+            "AND finished_at < ? GROUP BY kind, state", (a, b)).fetchall():
+        f, t = out.get(kind, (0, 0))
+        out[kind] = (f + (int(n) if state == "failed" else 0), t + int(n))
+    return out
+
+
+def release_health(build=None, db_path=None, now=None, deployment=None) -> dict:
+    """{build, deployment_id, previous_build, previous_deployment,
+    window_start, verdict, urgent, warn, ...}. verdict: "pending" (inside the
+    window), "regressed" (an urgent row — roll back), "hold" (a warn row —
+    hold the next deploy), "ok", or "unknown" (no build named, or no boot of
+    it recorded). `deployment` defaults to this process's
+    (RAILWAY_DEPLOYMENT_ID)."""
+    from datetime import timedelta
+    import config
+    import http_layer
+    from models import get_conn, DB_PATH
+    build = build or config.build_label()
+    deployment = deployment or current_deployment()
+    now = now or datetime.utcnow()
+    out = {"build": build, "deployment_id": deployment, "previous_build": None, "previous_deployment": None,
+           "window_start": None, "verdict": "unknown", "urgent": [], "warn": []}
+    if (not build or build == "unknown") and not deployment:
+        return out
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        got = _release_windows(conn, build, now, deployment=deployment)
+        if got is None:
+            return out
+        start, prev, prev_dep, scope_sql, scope_args = got
+        out["previous_build"], out["previous_deployment"], out["window_start"] = prev, prev_dep, _utc(start)
+        end = start + timedelta(minutes=RELEASE_WINDOW_MINUTES)
+        if now < end:
+            out["verdict"] = "pending"
+            return out
+        base_start = start - timedelta(minutes=RELEASE_BASELINE_MINUTES)
+        urgent, warn = out["urgent"], out["warn"]
+        down = _providers_down(conn, end - timedelta(minutes=RELEASE_PROVIDER_LOOKBACK_MINUTES), end)
+        out["providers_down"] = sorted(down)
+
+        # Boots of this deployment that failed (a crash loop on the new code):
+        # each failed boot once — ok = 0, or a boot that never came up and was
+        # replaced (re-audit B8 P2: the boot after a failed one was counted
+        # again through its previous_exit, so one transient failure and a
+        # clean restart read "2 failed boots — roll back").
+        failed = int(conn.execute(
+            f"SELECT COUNT(*) FROM boot_events WHERE {scope_sql} AND (ok = 0 OR (ok IS NULL AND id < "
+            f"(SELECT MAX(id) FROM boot_events WHERE {scope_sql})))", scope_args + scope_args).fetchone()[0] or 0)
+        if failed >= 2:
+            urgent.append(f"{failed} failed boots of this deployment")
+        elif failed == 1:
+            warn.append("1 failed boot of this deployment (it came up on a restart)")
+
+        # Customer 5xx and latency, against the deployment before it.
+        classes, cols = tuple(http_layer.CUSTOMER_CLASSES), _bucket_columns()
+        n, e5, p95 = _requests_window(conn, start, end, classes, cols)
+        pn, pe5, pp95 = _requests_window(conn, base_start, start, classes, cols)
+        routes = _route_5xx(conn, start, end, classes)
+        rate, prate = (e5 / n if n else 0.0), (pe5 / pn if pn else 0.0)
+        try:
+            authed, tenants = _authed_5xx(conn, start, end, classes)
+        except sqlite3.OperationalError as e:
+            log.warning("release health: the 5xx log unreadable: %s", e)
+            authed, tenants = {}, 0
+        floor_hit = (sum(authed.values()) >= HTTP_5XX_FLOOR_ERRORS and len(authed) >= HTTP_5XX_FLOOR_ROUTES
+                     and tenants >= HTTP_5XX_FLOOR_TENANTS)
+        if floor_hit and _regressed(rate, prate):
+            urgent.append(f"{sum(authed.values())} signed-in customer 5xx on {len(authed)} routes from {tenants} "
+                          f"restaurants in its first {RELEASE_WINDOW_MINUTES} min ({rate * 100:.1f}% against "
+                          f"{prate * 100:.1f}% before)")
+        elif n >= 20 and e5 >= 2 and _regressed(rate, prate) and rate >= 0.005:
+            urgent.append(f"customer 5xx rate {rate * 100:.1f}% against {prate * 100:.1f}% before")
+        if routes:
+            clean = _route_5xx(conn, start - timedelta(days=HTTP_5XX_CLEAN_DAYS), start, classes)
+            fresh = sorted(r for r in routes if r not in clean)
+            if fresh:
+                warn.append(f"a 5xx on route(s) clean for {HTTP_5XX_CLEAN_DAYS} days: {', '.join(fresh[:4])}")
+        if p95 is not None and pp95 and n >= 30:
+            if p95 >= 2 * pp95:
+                urgent.append(f"p95 within {p95} ms against {pp95} ms before ({n} requests)")
+            elif p95 >= 1.5 * pp95:
+                warn.append(f"p95 within {p95} ms against {pp95} ms before")
+        out["requests"] = {"n": n, "errors_5xx": e5, "p95_le_ms": p95, "previous_n": pn,
+                           "previous_errors_5xx": pe5, "previous_p95_le_ms": pp95,
+                           "authed_5xx": sum(authed.values()), "authed_tenants": tenants}
+
+        # Jobs that crashed on this deployment after a clean run before it.
+        try:
+            crashed = [r[0] for r in conn.execute(
+                "SELECT DISTINCT job FROM job_runs WHERE started_at >= ? AND started_at < ? AND ok = 0",
+                (_utc(start), _utc(end))).fetchall()]
+            for job in crashed:
+                last = conn.execute("SELECT ok FROM job_runs WHERE job = ? AND started_at < ? "
+                                    "ORDER BY started_at DESC LIMIT 1", (job, _utc(start))).fetchone()
+                if last is not None and last[0] in (1, 2):
+                    urgent.append(f"job {job} crashed; its last run before this deployment was clean")
+            for job, runs, bad in conn.execute(
+                    "SELECT job, COUNT(*), SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) FROM job_runs "
+                    "WHERE started_at >= ? AND started_at < ? GROUP BY job", (_utc(start), _utc(end))).fetchall():
+                if int(runs or 0) >= 2 and int(bad or 0) * 2 >= int(runs) and job not in crashed:
+                    warn.append(f"job {job}: {int(bad)} of {int(runs)} runs failed")
+        except sqlite3.OperationalError as e:
+            log.warning("release health: job_runs unreadable: %s", e)
+
+        # Queue rows that failed in the window, per kind, as a share of the
+        # kind's finished rows against its share before the deployment (a
+        # rate: 3 failed pos_archive rows of 1,500 is no regression).
+        try:
+            now_q, before_q = _queue_window(conn, start, end), _queue_window(conn, base_start, start)
+            for kind, (bad, done) in sorted(now_q.items()):
+                if bad <= 0:
+                    continue
+                share = bad / float(max(done, bad))
+                pb, pd = before_q.get(kind, (0, 0))
+                pshare = pb / float(pd) if pd else 0.0
+                what = f"{bad} of {done} {kind} queue rows failed ({share * 100:.0f}% against {pshare * 100:.0f}% before)"
+                if bad >= RELEASE_QUEUE_FAILED_MIN and share >= RELEASE_QUEUE_FAILED_SHARE:
+                    blamed = sorted(set(_KIND_PROVIDERS.get(kind, ())) & down)
+                    if blamed:
+                        warn.append(f"{what} — {', '.join(blamed)} failing at the same time: the provider, not "
+                                    "the release")
+                    elif _regressed(share, pshare):
+                        urgent.append(what)
+                    else:
+                        warn.append(f"{what} — as before the deployment")
+                elif kind == "schedule_generate":
+                    warn.append(f"{bad} failed schedule generation(s)")
+        except sqlite3.OperationalError as e:
+            log.warning("release health: jobs unreadable: %s", e)
+
+        # AI provider errors.
+        try:
+            def _ai(a, b):
+                row = conn.execute("SELECT COUNT(*), SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) FROM ai_usage "
+                                   "WHERE created_at >= ? AND created_at < ?", (_utc(a), _utc(b))).fetchone()
+                return int(row[0] or 0), int(row[1] or 0)
+            calls, errs = _ai(start, end)
+            pcalls, perrs = _ai(base_start, start)
+            share, pshare = (errs / calls if calls else 0.0), (perrs / pcalls if pcalls else 0.0)
+            if calls >= 10 and share >= 0.2:
+                if "anthropic" in down:
+                    warn.append(f"AI provider errors on {errs} of {calls} calls — Anthropic failing at the same time "
+                                "(provider_health): the provider, not the release")
+                elif _regressed(share, pshare):
+                    urgent.append(f"AI provider errors on {errs} of {calls} calls ({perrs}/{pcalls} before)")
+                else:
+                    warn.append(f"AI provider errors on {errs} of {calls} calls — as before the deployment "
+                                f"({perrs}/{pcalls})")
+            elif calls >= 10 and pcalls and share >= 2 * max(pshare, 0.01):
+                warn.append(f"AI provider errors {errs}/{calls} against {perrs}/{pcalls} before")
+        except sqlite3.OperationalError as e:
+            log.warning("release health: ai_usage unreadable: %s", e)
+
+        # The scheduler completed a tick after the boot (only where it runs).
+        if config.scheduling_allowed():
+            try:
+                row = conn.execute("SELECT loop_completed_at FROM scheduler_heartbeat WHERE id = 1").fetchone()
+                done = _parse_utc(row[0]) if row and row[0] else None
+                if now >= start + timedelta(minutes=RELEASE_SCHEDULER_TICK_MINUTES) and (done is None or done < start):
+                    urgent.append(f"no completed scheduler tick in the {RELEASE_SCHEDULER_TICK_MINUTES} min "
+                                  "after the boot")
+            except sqlite3.OperationalError as e:
+                log.warning("release health: scheduler heartbeat unreadable: %s", e)
+    finally:
+        conn.close()
+    out["verdict"] = "regressed" if urgent else "hold" if warn else "ok"
+    return out
+
+
+def page_release_health(result) -> bool:
+    """Page once per deployment when release_health found a regression
+    (urgent) or a hold (warn). The page carries the deployment, the SHA and
+    the rollback step."""
+    if result.get("verdict") not in ("regressed", "hold"):
+        return False
+    try:
+        import scheduler
+        if not scheduler.scheduling_allowed():
+            return False
+        import ops
+        build, dep = result.get("build"), result.get("deployment_id")
+        what = f"deployment {dep} (build {build or '?'})" if dep else f"build {build}"
+        before = (f"deployment {result.get('previous_deployment')} (build {result.get('previous_build') or '?'})"
+                  if result.get("previous_deployment") else (result.get("previous_build") or "unknown"))
+        lines = [f"{what[0].upper() + what[1:]} (after {before}), first {RELEASE_WINDOW_MINUTES} min from "
+                 f"{result.get('window_start')} UTC:"]
+        lines += [f"ROLL BACK: {u}" for u in result["urgent"]] + [f"hold: {w}" for w in result["warn"]]
+        if result["verdict"] == "regressed":
+            lines.append(ROLLBACK_STEP)
+            subject = f"Cavnar AI: release {build} regressed — roll back"
+        else:
+            lines.append("Hold the next deploy until this is understood.")
+            subject = f"Cavnar AI: release {build} — hold the next deploy"
+        res = ops.page_operator(f"release_health:{dep or build}", subject, lines, cooldown_minutes=7 * 24 * 60)
+        return bool(res.get("sent"))
+    except Exception as e:
+        log.error("release-health page failed: %s", e)
+        return False
+
+
 # ── the web process's supervisor thread ─────────────────────────────────────
 
 class PlatformSupervisor:
@@ -618,11 +1158,15 @@ class PlatformSupervisor:
       * the request rollups and 5xx samples http_layer buffers, flushed to
         the database every tick, kept for the next tick when the write
         fails;
-      * hourly: telemetry retention and the volume marker.
+      * hourly: telemetry retention and the volume marker;
+      * once per build, RELEASE_WINDOW_MINUTES after its first boot: the
+        release-health comparison with the build before it (release_health),
+        paged once with the SHA and the rollback step (release-safety audit
+        10/26/26, A07-01).
     """
 
     def __init__(self, db_path=None, scheduler_thread=None, restart_scheduler=None,
-                 sla_every=300, prune_every=3600, marker_every=3600, clock=None):
+                 sla_every=300, prune_every=3600, marker_every=3600, clock=None, release_every=60):
         import time as _time
         self.db_path = db_path
         self.scheduler_thread = scheduler_thread
@@ -630,7 +1174,10 @@ class PlatformSupervisor:
         self.sla_every, self.prune_every, self.marker_every = sla_every, prune_every, marker_every
         self.clock = clock or _time.monotonic
         now = self.clock()
-        self._last = {"sla": now, "prune": now - prune_every, "marker": now}
+        self._last = {"sla": now, "prune": now - prune_every, "marker": now, "release": now}
+        self.release_every = release_every
+        self.release_done = False
+        self.last_release = None
         self.scheduler_restarts = 0
         self._next_restart_at = 0.0
         self._backoff = 30.0
@@ -741,9 +1288,30 @@ class PlatformSupervisor:
         except Exception as e:
             log.warning("lane watchdog failed: %s", e)
 
+    def _watch_release(self):
+        """This build's release health, once its first window has passed."""
+        if self.stopping or self.release_done:
+            return
+        try:
+            res = release_health(db_path=self.db_path)
+        except Exception as e:
+            log.warning("release health check failed: %s", e)
+            return
+        if res.get("verdict") == "pending":
+            return
+        self.last_release = res
+        self.release_done = True
+        if res.get("verdict") in ("regressed", "hold"):
+            log.error("release %s: %s — urgent %s, warn %s", res.get("build"), res.get("verdict"),
+                      res.get("urgent"), res.get("warn"))
+            page_release_health(res)
+
     def tick(self, now=None):
         now = self.clock() if now is None else now
         self.flush()
+        if now - self._last["release"] >= self.release_every:
+            self._last["release"] = now
+            self._watch_release()
         self._watch_scheduler(now)
         self._watch_lanes()
         self._check_liveness()
@@ -770,6 +1338,8 @@ class PlatformSupervisor:
                                      else "alive" if self.scheduler_thread.is_alive() else "dead"),
                 "scheduler_restarts": self.scheduler_restarts, "last_tick_at": self.last_tick_at,
                 "pending_rollups": len(self._pending_rollups), "pending_errors": len(self._pending_errors),
+                "release": ({k: (self.last_release or {}).get(k) for k in ("build", "verdict", "urgent", "warn")}
+                            if self.last_release is not None else None),
                 "last_sla": ({"heartbeat_minutes": (self.last_sla or {}).get("heartbeat_minutes"),
                               "jobs_overdue": len((self.last_sla or {}).get("jobs_overdue") or []),
                               "alerted": (self.last_sla or {}).get("alerted")}
@@ -957,6 +1527,7 @@ def system_report(db_path=None) -> dict:
                         "marker": _sm.read_volume_marker(path)}
     report["backup"] = _sm.backup_health(db_path)
     report["drill"] = _last_run("restore_drill", db_path)
+    report["release_drills"] = drill_status(db_path)
 
     lease = None
     try:
@@ -1005,6 +1576,29 @@ def system_report(db_path=None) -> dict:
         report["credentials"] = credentials.status(db_path)
     except Exception as e:
         report["credentials"] = {"error": str(e)[:120]}
+    # Which iPhone app builds are installed (live sessions by X-Cavnar-App)
+    # and what they could not read in the last day (client_compat, audit #25
+    # A05-14 / A06-04).
+    try:
+        import client_compat
+        report["mobile_clients"] = {"installed": client_compat.installed_builds(db_path),
+                                    "decode_failures_24h": client_compat.decode_failure_surge(hours=24,
+                                                                                               db_path=db_path),
+                                    # Compatibility telemetry (blind re-audit 10/27/26): reports per build
+                                    # over a week, beside the header/headerless split in `installed`.
+                                    "decode_by_build_7d": client_compat.decode_reports_by_build(db_path=db_path)}
+    except Exception as e:
+        report["mobile_clients"] = {"error": str(e)[:120]}
+    # Which deployment this is, and the sends its gate refused in this
+    # process (config.refused_send — blind re-audit 10/27/26).
+    try:
+        import config as _config_env
+        report["deployment"] = {"env": _config_env.deploy_env(), "problem": _config_env.environment_problem(),
+                                "outbound_sends_allowed": _config_env.outbound_sends_allowed(),
+                                "sends_refused": _config_env.refused_sends(),
+                                "stripe_api_version": (os.getenv("STRIPE_API_VERSION") or "").strip() or None}
+    except Exception as e:
+        report["deployment"] = {"error": str(e)[:120]}
     report["warnings"] = system_warnings(report)
     return report
 
@@ -1046,4 +1640,26 @@ def system_warnings(report) -> list:
     db = report.get("database") or {}
     if isinstance(db.get("write"), dict) and db["write"].get("state") == "failed":
         w.append("The database cannot take a write.")
+    dep = report.get("deployment") or {}
+    if dep.get("problem") == "not_production_env":
+        w.append(f"This deployment's environment is {dep.get('env')!r}, not production, but the service looks "
+                 "like production: the scheduler stands down and every send is refused. Set "
+                 "CAVNAR_ENV=production if this is production; CAVNAR_ENV=staging if it is staging.")
+    refused = dep.get("sends_refused") or {}
+    if refused and dep.get("outbound_sends_allowed") is False:
+        n = sum(int(v.get("count") or 0) for v in refused.values())
+        w.append(f"{n} send{'s were' if n != 1 else ' was'} refused by the environment gate in this process "
+                 f"({', '.join(sorted(refused))}) — right for staging, an outage for production.")
+    if os.getenv("STRIPE_SECRET_KEY") and not dep.get("stripe_api_version") and "error" not in dep:
+        w.append("STRIPE_API_VERSION is not set: every Stripe call follows the SDK's own API version, which a "
+                 "stripe bump in the lock changes silently. Set it to the account's version (Stripe dashboard → "
+                 "Developers → API version).")
+    installed = (report.get("mobile_clients") or {}).get("installed") or {}
+    if installed.get("min_build_problem"):
+        w.append(installed["min_build_problem"])
+    if installed.get("below_minimum"):
+        n = installed["below_minimum"]
+        w.append(f"{n} signed-in iPhone app session{'s run' if n != 1 else ' runs'} a build below "
+                 f"MOBILE_MIN_BUILD ({installed.get('min_build')}) and {'are' if n != 1 else 'is'} "
+                 "shown the update sheet.")
     return w

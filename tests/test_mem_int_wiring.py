@@ -36,6 +36,9 @@ MANAGER = {"id": 22, "role": "manager", "is_admin": 0, "username": "dana"}
 # Harbor Grill's own date (America/Chicago), the day every surface reads -
 # the machine's is tomorrow after 7pm Central on a UTC host (CI, 9/30/26).
 from zoneinfo import ZoneInfo as _ZI
+
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
 TODAY = datetime.now(_ZI("America/Chicago")).date()
 
 
@@ -169,9 +172,11 @@ def _seed(monkeypatch):
     for w in (1, 2, 3):
         attendance.record(rid, "Maria G.", (TODAY - timedelta(weeks=w)).isoformat(), "no_show", "coverage_check")
     # A claim the labor read made about Fridays: what the schedule, asked
-    # about Fridays, reads back.
+    # about Fridays, reads back. The hourly read's — the schedule draft is
+    # read by managers, so the owner's all-in read never reaches it (blind
+    # re-audit 10/26/26 B3; test_the_owners_salary_view_claims_stay_off_shared_outputs).
     _x("INSERT INTO ai_claims (restaurant_id, surface, subject, signature, claim_type, text) VALUES (?,?,?,?,?,?)",
-       (rid, "labor_read", "day:friday", "labor:day:friday", "cause", "Fridays run a server heavy."))
+       (rid, "labor_read_hourly", "day:friday", "labor:day:friday", "cause", "Fridays run a server heavy."))
     # marketing: measured post results (the deep reader, stubbed at its source).
     import marketing_signals
     monkeypatch.setattr(marketing_signals, "measured_lines", lambda r, **k: ["wing night posts: +12% sales, 3 posts"])
@@ -246,8 +251,10 @@ def test_the_silent_pairs_are_silent_by_the_providers_own_rule(monkeypatch):
 
 def test_a_manager_is_not_left_without_claims_by_the_owners_newest():
     rid = create_restaurant(Restaurant(name="Claims Grill", owner_email="claims@x.test", module_reviews=1))
+    # The team's Reviews read (the owner's, written in the salary view, is
+    # the owner's alone — blind re-audit 10/26/26 B3).
     _x("INSERT INTO ai_claims (restaurant_id, surface, subject, claim_type, text) VALUES (?,?,?,?,?)",
-       (rid, "review_read", "category:service", "cause", "Service is slow on Fridays."))
+       (rid, "review_read_team", "category:service", "cause", "Service is slow on Fridays."))
     for i in range(6):                  # six newer owner-level claims
         _x("INSERT INTO ai_claims (restaurant_id, surface, subject, claim_type, text) VALUES (?,?,?,?,?)",
            (rid, "digest", f"week:{i}", "cause", f"Owner-level claim {i}."))
@@ -255,6 +262,27 @@ def test_a_manager_is_not_left_without_claims_by_the_owners_newest():
     assert "Service is slow on Fridays." in manager and "Owner-level claim" not in manager
     owner = memory_context.memory_context(rid, "ask", viewer=OWNER).text
     assert "Owner-level claim 5." in owner
+
+
+def test_the_owners_salary_view_claims_stay_off_shared_outputs():
+    """A claim the owner's all-in Labor read made reaches the owner's next
+    Labor read, never the schedule draft or a manager's, and an hourly read
+    continues from its own twin's claims (blind re-audit 10/26/26 B3)."""
+    rid = create_restaurant(Restaurant(name="Basis Grill", owner_email="basis@x.test", module_labor=1))
+    _x("INSERT INTO ai_claims (restaurant_id, surface, subject, signature, claim_type, text) VALUES (?,?,?,?,?,?)",
+       (rid, "labor_read", "day:friday", "labor:day:friday", "cause", "All-in labor ran 34% on Fridays."))
+    _x("INSERT INTO ai_claims (restaurant_id, surface, subject, claim_type, text) VALUES (?,?,?,?,?)",
+       (rid, "labor_read_hourly", "day:monday", "cause", "Hourly labor ran 22% on Mondays."))
+    with models.salary_view(True):
+        owner_read = memory_context.memory_context(rid, "labor_read").text
+        schedule = memory_context.memory_context(rid, "schedule", subjects=["labor:day:friday"]).text
+    assert "All-in labor ran 34%" in owner_read and "Hourly labor ran 22%" not in owner_read
+    assert "All-in labor ran 34%" not in schedule
+    with models.salary_view(False):
+        hourly_read = memory_context.memory_context(rid, "labor_read").text
+    assert "Hourly labor ran 22%" in hourly_read and "All-in labor ran 34%" not in hourly_read
+    manager = memory_context.memory_context(rid, "ask", viewer=MANAGER).text
+    assert "All-in labor ran 34%" not in manager
 
 
 def test_the_reviews_read_judges_against_the_owners_rating_goal():

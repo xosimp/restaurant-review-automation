@@ -1350,6 +1350,11 @@ def _solve_phases(mdl, max_seconds, seed, workers, deterministic, wall_left=None
         last_name = s.status_name(st)
         if st not in (_cp.OPTIMAL, _cp.FEASIBLE):
             proved = False
+            # A phase the clock ended before it found anything (UNKNOWN at
+            # its cap) is a cut too: the week then stands at the phase
+            # before's answer, which an idle box would have improved on
+            # (release-safety audit 10/26/26 A02-10).
+            capped = capped or _rt._wall_capped(s, st)
             log.append({"phase": name, "status": last_name.lower(), "value": None,
                         "seconds": round(s.wall_time, 3), "budget": round(secs, 2)})
             break
@@ -1489,11 +1494,19 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
     greedy = [u.draft for u in prob.units]
     for u in live:
         greedy[u.id] = mdl.greedy.get(u.id)
-    first = _fixed_eval(mdl, prob, greedy, seconds=min(5.0, max(1.0, max_seconds * 0.2)))
+    first_why = {}
+    first = _fixed_eval(mdl, prob, greedy, seconds=min(5.0, max(1.0, max_seconds * 0.2)), why=first_why)
     start = None
     if first is not None:
         start = list(first.response_proto.solution)
         _set_hints(mdl.m, start)
+    else:
+        # The search starts with no complete week to improve on — recorded
+        # (release-safety audit 10/26/26 A02-10). When the wall clock cut
+        # the starting week's evaluation, an idle box would have started
+        # from it and may reach a different week: a cut like any other.
+        out["start_unhinted"] = True
+        out["start_status"] = first_why.get("status")
     # The whole deterministic budget, whatever building the model took on the
     # wall clock (the same inputs, the same week), spent phase by phase — the
     # rule tiers, then stability, then quality, each holding the one before
@@ -1502,7 +1515,7 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
         mdl, max_seconds, seed, workers, deterministic,
         (lambda: max(0.2, float(wall_cap) - (_time.monotonic() - t0))) if wall_cap else None, start=start)
     start = None
-    out["wall_capped"] = capped
+    out["wall_capped"] = bool(capped or first_why.get("capped"))
     out["phases"] = phases
     # how the solves ran (SP): the deterministic budget the model's size
     # gave, whether they ran in a child process, the most memory one took
@@ -2246,7 +2259,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     draft_eval = _fixed_eval(mdl, prob, [u.draft for u in prob.units]) if mdl is not None else None
     draft_phases = _phase_values(mdl, draft_eval) if draft_eval is not None else None
     stats = {"engine": "cp-sat", "status": solved["status"], "proved_optimal": solved["proved_optimal"],
-             "wall_capped": bool(solved.get("wall_capped")),
+             "wall_capped": bool(solved.get("wall_capped")), "start_unhinted": bool(solved.get("start_unhinted")),
              "memory_capped": bool((solved.get("memory") or {}).get("memory_capped")),
              "memory": solved.get("memory"), "budget": solved.get("budget"), "phases": solved.get("phases"),
              "seconds": solved["seconds"], "slots": solved.get("slots"), "people": solved.get("people"),
@@ -2314,12 +2327,14 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     return out
 
 
-def _fixed_eval(mdl, prob, assignment, seconds=3.0):
+def _fixed_eval(mdl, prob, assignment, seconds=3.0, why=None):
     """The model with every shift held to `assignment` (None: unfilled) and
     only its auxiliaries left to settle — each slack at its least — so a
     week's cost is exact term by term: the search's own last solution may
     carry a slack it had not yet driven down when time ran out. A solved
-    CpSolver, or None."""
+    CpSolver, or None — and then, when `why` (a dict) is given, why:
+    {"status": CP-SAT's status name, "capped": whether the wall clock ended
+    it (_wall_capped) rather than the week being infeasible as held}."""
     if mdl is None or prob is None:
         return None
     # the whole objective with no phase held (_solve_phases bounds mdl.m)
@@ -2334,7 +2349,11 @@ def _fixed_eval(mdl, prob, assignment, seconds=3.0):
     s = _solver_for(seconds, workers=1, deterministic=True)
     st = _rt.run(s, m, isolate=False)
     del m
-    return s if st in (_cp.OPTIMAL, _cp.FEASIBLE) else None
+    if st in (_cp.OPTIMAL, _cp.FEASIBLE):
+        return s
+    if why is not None:
+        why.update(status=s.status_name(st).lower(), capped=_rt._wall_capped(s, st))
+    return None
 
 
 def _draft_objective(mdl, prob):
@@ -2465,9 +2484,16 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
     # daypart's core window, staffed only while the budget has room.
     slots = shaped["rows"] + mgr_slots + [dict(r, _standby=True, employee="") for r in standby_slots or []]
     if not slots:
+        # Stage 1 shaped nothing: when the clock (or the memory bound) cut it
+        # before it found a week, the draft says so — the generation's v0
+        # code draft then stands in for a week an idle box would have shaped.
+        sh_st = shaped["stats"] or {}
         return {"rows": [], "unassigned": [], "short": shaped["short"], "assumed": shaped.get("assumed") or [],
                 "conflicts": [], "reasons": [], "terms": {},
-                "stats": dict(stats, status="nothing_to_solve", seconds=round(_time.monotonic() - t0, 3))}
+                "stats": dict(stats, status="nothing_to_solve", seconds=round(_time.monotonic() - t0, 3),
+                              wall_capped=bool(sh_st.get("wall_capped")),
+                              memory_capped=bool(sh_st.get("memory_capped")),
+                              memory={"assign": None, "shapes": sh_st.get("memory")})}
     ctx_rows = [dict(r, _pinned=True) for r in context_rows or []]
     got = assign(ctx_rows + slots, constraints, signals=sig, weights=weights, profiles=profiles,
                  only_dates=list(dates), last_week=last_week_rows, max_seconds=s2_secs, mode="draft",
@@ -2493,6 +2519,7 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
                  people=got.get("people"), objective=got.get("objective"), bound=got.get("bound"),
                  phases=got.get("phases"), phase_cost=got.get("phase_cost"),
                  wall_capped=bool(got.get("wall_capped") or (shaped["stats"] or {}).get("wall_capped")),
+                 start_unhinted=bool(got.get("start_unhinted")),
                  memory_capped=bool((got.get("memory") or {}).get("memory_capped")
                                     or (shaped["stats"] or {}).get("memory_capped")),
                  memory={"assign": got.get("memory"), "shapes": (shaped["stats"] or {}).get("memory")},

@@ -44,11 +44,75 @@
     if (external) return _origFetch.call(window, input, init);
     return _sendCounted(input, init, 0);
   };
+  /* A tab left open across a deploy (audit 10/26/26 A06-13): the host-stand
+     and office PCs keep the dashboard open for days, and its JavaScript is
+     the build the page was rendered by, calling routes and reading payloads
+     of whatever build now answers. Every JSON answer names its build
+     (X-Cavnar-Build); once one names another build than this page's, one
+     bar says so and offers a reload. Never without both builds (a local run
+     has none, and "unknown" is none), never twice on one page, never over
+     an ended session (its Sign in again reloads anyway). Builds compare on
+     their common prefix, so a 12-character id matches the full commit. */
+  var _pageBuild = _normBuild({{ (cavnar_build or '')|tojson }});
+  var _updated = {shown: false};
+  function _normBuild(b){
+    b = String(b == null ? '' : b).replace(/^\s+|\s+$/g, '').toLowerCase();
+    return b === 'unknown' ? '' : b;
+  }
+  function _buildDiffers(seen){
+    seen = _normBuild(seen);
+    if (!_pageBuild || !seen) return false;
+    var n = Math.min(_pageBuild.length, seen.length);
+    if (n < 7) return _pageBuild !== seen;
+    return _pageBuild.slice(0, n) !== seen.slice(0, n);
+  }
+  function _noteBuild(r){
+    if (_updated.shown || !r || !r.headers || typeof r.headers.get !== 'function') return;
+    if (String(r.headers.get('Content-Type') || '').indexOf('json') === -1) return;
+    if (_buildDiffers(r.headers.get('X-Cavnar-Build'))) _showUpdated();
+  }
+  function _showUpdated(){
+    if (_updated.shown || !document.body || document.getElementById('session-ended')) return;
+    _updated.shown = true;
+    if (!document.getElementById('cav-updated-css')) {
+      var css = document.createElement('style');
+      css.id = 'cav-updated-css';
+      css.textContent = '#cav-updated{position:fixed;top:24px;right:24px;z-index:10040;display:flex;'
+        + 'align-items:center;gap:12px;max-width:calc(100vw - 32px);padding:10px 12px 10px 16px;'
+        + 'border-radius:9px;border-left:4px solid var(--ember);background:var(--ink);color:var(--paper, var(--bg));'
+        + 'font-size:14.5px;font-weight:500;box-shadow:var(--elev-float)}'
+        + '#cav-updated span{flex:1}'
+        + '@media(max-width:520px){ #cav-updated{left:16px;right:16px;top:16px}}';
+      (document.head || document.body).appendChild(css);
+    }
+    var bar = document.createElement('div');
+    bar.id = 'cav-updated';
+    bar.setAttribute('role', 'status');
+    bar.setAttribute('aria-live', 'polite');
+    var msg = document.createElement('span');
+    msg.textContent = 'Cavnar AI was updated.';
+    var reload = document.createElement('button');
+    reload.type = 'button';
+    reload.className = 'cbtn cbtn-primary cbtn-sm';
+    reload.textContent = 'Reload';
+    reload.onclick = function(){ window.location.reload(); };
+    var later = document.createElement('button');
+    later.type = 'button';
+    later.className = 'cbtn cbtn-text cbtn-sm';
+    later.textContent = 'Not now';
+    later.onclick = function(){ if (bar.parentNode) bar.parentNode.removeChild(bar); };
+    bar.appendChild(msg);
+    bar.appendChild(reload);
+    bar.appendChild(later);
+    document.body.appendChild(bar);
+  }
+  window.cavBuildChanged = function(){ return _updated.shown; };
   /* The server's in-flight share (re-audit 10/20/26 R7-02): a 429 with
      in_flight true was refused before the route ran, so even a write is
      safe to send again. A few short waits, then the 429 stands. */
   function _sendCounted(input, init, tries){
     return _origFetch.call(window, input, init).then(function(r){
+      _noteBuild(r);
       if (r.status !== 429 || tries >= 3) return r;
       return r.clone().json().then(function(d){
         if (!d || !d.in_flight) return r;

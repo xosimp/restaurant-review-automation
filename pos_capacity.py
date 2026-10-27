@@ -258,6 +258,8 @@ def fleet_rps() -> float:
 
 
 _rps_cache = {"at": 0.0, "value": None}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("pos_capacity._rps_cache", _rps_cache)
 _rps_lock = threading.Lock()
 RPS_CACHE_SECONDS = 600
 
@@ -357,6 +359,7 @@ NIGHTLY_WINDOW_HOURS = _float_env("POS_NIGHTLY_WINDOW_HOURS", 4)
 UTIL_ALERT_PCT = _float_env("POS_BUDGET_ALERT_PCT", 85)
 UTIL_ALERT_NIGHTS = 3
 _state_cache = {"at": 0.0, "value": None}
+_process_caches.register("pos_capacity._state_cache", _state_cache)
 STATE_CACHE_SECONDS = 60
 
 

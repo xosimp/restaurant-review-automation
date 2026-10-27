@@ -17,6 +17,7 @@ import client_api
 import mobile_api
 import models
 from models import Restaurant, create_restaurant
+from tests.clock import restaurant_today
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -328,7 +329,7 @@ def test_a_manager_enters_a_count_without_seeing_a_dollar(db, monkeypatch):
     assert not p.enter_path_allowed({"role": "manager"}, "DELETE", "/api/food-cost/bar/counts/2026-10-31")
     rid = _rid(db)
     _october(db, rid)
-    day = (date.today() - timedelta(days=2)).isoformat()
+    day = (restaurant_today() - timedelta(days=2)).isoformat()
     _as(monkeypatch, rid, role="manager")
     c = _app().test_client()
     r = c.post("/api/food-cost/bar/counts", json={"count_date": day, "values": {"beer": 4500, "liquor": 7000}})
@@ -362,9 +363,9 @@ def test_a_bad_count_is_refused_with_a_sentence(db, monkeypatch):
     c = _app().test_client()
     r = c.post("/api/food-cost/bar/counts", json={"count_date": "10/31/26", "values": {"beer": 1}})
     assert r.status_code == 400 and r.get_json()["error"] == "Pick the count date from the calendar."
-    r = c.post("/api/food-cost/bar/counts", json={"count_date": date.today().isoformat(), "values": {"food": 1}})
+    r = c.post("/api/food-cost/bar/counts", json={"count_date": restaurant_today().isoformat(), "values": {"food": 1}})
     assert r.status_code == 400 and "beer, liquor and wine" in r.get_json()["error"]
-    future = (date.today() + timedelta(days=3)).isoformat()
+    future = (restaurant_today() + timedelta(days=3)).isoformat()
     assert c.post("/api/food-cost/bar/counts", json={"count_date": future, "values": {"beer": 1}}).status_code == 400
 
 

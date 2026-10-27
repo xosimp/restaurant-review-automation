@@ -875,8 +875,14 @@ final class AskCavnarViewModel {
             ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
             error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
             // A job id is a string today; read a number as one too.
-            jobId = ((try? c.decodeIfPresent(String.self, forKey: .jobId)) ?? nil)
-                ?? ((try? c.decodeIfPresent(Int.self, forKey: .jobId)) ?? nil).map(String.init)
+            // Statements, not one ?? chain: Xcode 26.6 could not type-check it.
+            if let text = try? c.decodeIfPresent(String.self, forKey: .jobId) {
+                jobId = text
+            } else if let number = try? c.decodeIfPresent(Int.self, forKey: .jobId) {
+                jobId = String(number)
+            } else {
+                jobId = nil
+            }
             proposed = (try? c.decodeIfPresent(Bool.self, forKey: .proposed)) ?? nil
             proposalSettled = (try? c.decodeIfPresent(Bool.self, forKey: .proposalSettled)) ?? nil
             warning = (try? c.decodeIfPresent(String.self, forKey: .warning)) ?? nil
@@ -901,7 +907,8 @@ final class AskCavnarViewModel {
         let error: String?
     }
 
-    private struct ConversationsResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (the captured conversations list).
+    struct ConversationsResponse: Decodable {
         let ok: Bool
         let conversations: [AskConversation]?
     }

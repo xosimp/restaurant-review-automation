@@ -89,6 +89,14 @@ SURFACE_LABELS = {
     "review_read_locations": "the Reviews read across your locations",
     "marketing_read": "the Marketing read",
     "labor_read": "the Labor read",
+    # The Labor and Food reads written for a login who may not see salaries
+    # (insight_store.salary_kind, audit #25 F13).
+    "labor_read_hourly": "the Labor read",
+    "food_read_hourly": "the Food Cost read",
+    # The Reviews read written for a login who may not see salaries, with
+    # and without the Food Cost figures (insight_store.review_scope).
+    "review_read_hourly": "the Reviews read",
+    "review_read_team": "the Reviews read",
     "marketing_feed": "the Marketing feed",
     "review_diagnosis": "the review diagnosis",
     "food_diagnosis": "the food cost diagnosis",
@@ -110,12 +118,17 @@ SURFACE_MODULE = {
     "review_read": "reviews", "review_diagnosis": "reviews",
     "marketing_read": "marketing", "marketing_feed": "marketing",
     "labor_read": "labor", "competitor_read": "intel",
+    "labor_read_hourly": "labor", "food_read_hourly": "inventory",
     "monthly_review": OWNER_ONLY, "digest": OWNER_ONLY, "brief": OWNER_ONLY, "weekly_plan": OWNER_ONLY,
     "dsr_narrative": OWNER_ONLY,
     # The Reviews read written for a login shown its other locations (kind
     # "reviews:locations", re-audit 10/8/26 #1) carries their themes: it is
     # the account holder's, never a teammate's.
     "review_read_locations": OWNER_ONLY,
+    # The Reviews read written for a login who may not see salaries
+    # (insight_store.review_scope, blind re-audit 10/26/26 B3): with the
+    # week's waste dollars in it, Food Cost's; without, the Reviews view's.
+    "review_read_hourly": "inventory", "review_read_team": "reviews",
 }
 
 
@@ -134,10 +147,29 @@ def line_scope(surface) -> dict:
 # insight_cache kind -> the surface its read is filed under (insight_store.put).
 STORE_SURFACE = {"food": "food_read", "reviews": "review_read", "marketing": "marketing_read",
                  "labor": "labor_read", "mkt_opps": "marketing_feed",
-                 "reviews:locations": "review_read_locations"}
+                 "reviews:locations": "review_read_locations",
+                 "labor:hourly": "labor_read_hourly", "food:hourly": "food_read_hourly",
+                 "reviews:hourly": "review_read_hourly", "reviews:hourly:nofood": "review_read_team",
+                 "reviews:locations:hourly": "review_read_locations",
+                 "reviews:locations:hourly:nofood": "review_read_locations"}
 # The recommendation-line prefix each stored read's numbered lines carry
 # (client_api.present_read_lines), for the read's rec_keys.
-STORE_LINE_PREFIX = {"food": "insight_food", "marketing": "insight_marketing", "labor": "insight_labor"}
+STORE_LINE_PREFIX = {"food": "insight_food", "marketing": "insight_marketing", "labor": "insight_labor",
+                     "labor:hourly": "insight_labor", "food:hourly": "insight_food"}
+# The surfaces a read written in the SALARY view is kept under (the owner's
+# Labor read carries all-in labor %, the Food read's prime cost the same
+# labor): a login who may not see salaries is never served one — its own
+# reads are the *_hourly surfaces (audit #25 F13). Rows kept before the
+# split may be either view's, so they fail closed the same way.
+SALARY_VIEW_SURFACES = ("labor_read", "food_read", "review_read", "review_read_locations")
+# The stored reads kept per salary view, and the surfaces their hourly
+# twins' claims are filed under (STORE_SURFACE): one memory_context surface
+# builds both, so the read being written in the salary view continues from
+# its own claims, and the hourly one from the hourly twin's — never the
+# owner's (blind re-audit 10/26/26 B3; merge fix 10/27/26: filtering alone
+# left both without any LAST READ).
+HOURLY_TWINS = {"labor_read": ("labor_read_hourly",), "food_read": ("food_read_hourly",),
+                "review_read": ("review_read_hourly", "review_read_team")}
 
 
 # ── the claims ───────────────────────────────────────────────────────────────
@@ -459,7 +491,7 @@ def record_store_read(restaurant_id, kind, fingerprint, payload, raw=None, call_
             prefix = STORE_LINE_PREFIX.get(kind)
             if prefix:
                 rec_keys = [insight_store.line_key(prefix, ln) for ln in insight_store.numbered_lines(shown)]
-            if kind in ("reviews", "reviews:locations"):
+            if str(kind).startswith("reviews"):
                 m = re.search(r"(?m)^.*Do today:\s*(.+)$", shown or "")
                 if m:
                     rec_keys.append(insight_store.signature_key("insight_review", m.group(1).strip()))
@@ -1186,6 +1218,32 @@ def _interim(restaurant_id, row, db_path=None):
         return None
 
 
+def _sees_salaries_for(user, surface=None) -> bool:
+    """Whether output built for `user` (memory_context.viewer_user) may
+    carry the salaries: a shared output (TEAM) never — except a stored read
+    kept per salary view (HOURLY_TWINS), whose all-in copy only logins that
+    see salaries are served, so it follows the work's own view; a login by
+    permissions.sees_salaries; an internal caller or the account holders'
+    unattended view (None / PRINCIPALS) by the work's own salary view
+    (models.viewer_sees_salaries — a job reads manager-safe unless it
+    reports to the owner alone)."""
+    try:
+        import memory_context as _mc
+        if user is None or _mc.is_principals(user):
+            from models import viewer_sees_salaries
+            return bool(viewer_sees_salaries())
+        if _mc.is_team(user):
+            if surface in HOURLY_TWINS:
+                from models import viewer_sees_salaries
+                return bool(viewer_sees_salaries())
+            return False
+        from permissions import sees_salaries
+        return bool(isinstance(user, dict) and sees_salaries(user))
+    except Exception as e:
+        log.warning("ai_reads: salary view unreadable, read without salaries: %r", e)
+        return False
+
+
 def claim_lines(req):
     """memory_context provider: the last claim on req.subjects for
     req.surface and its verdict — ONE line per claim: the model's own
@@ -1227,12 +1285,22 @@ def claim_lines(req):
             marks = ",".join("?" for _ in subjects)
             queries.append((base + [f"(subject IN ({marks}) OR rec_key IN ({marks}) OR signature IN ({marks}))"],
                             base_args + subjects * 3))
+        viewer = getattr(req, "viewer", None)
+        import memory_context as _mc
+        user = _mc.viewer_user(viewer) if viewer is not None else None
+        # A read written in the salary view (SALARY_VIEW_SURFACES: the
+        # owner's Labor, Food and Reviews reads) restates the all-in labor %,
+        # so its claims reach only a viewer who sees salaries — never a
+        # manager's prompt, a shared (TEAM) output, or a job's manager-safe
+        # read (blind re-audit 10/26/26 B3).
+        no_salaries = not _sees_salaries_for(user, surface)
         if surface in CLAIM_CROSS_READERS or (not subjects and surface in CROSS_SURFACES):
             queries.append((base, base_args))  # a read over the whole restaurant: every surface's latest claims
         elif not subjects:
             if not surface:
                 return []
-            queries.append((base + ["surface=?"], base_args + [surface]))
+            own = HOURLY_TWINS[surface] if no_salaries and surface in HOURLY_TWINS else (surface,)
+            queries.append((base + [f"surface IN ({','.join('?' for _ in own)})"], base_args + list(own)))
         # The newest four the viewer may read (memory_context.visible on the
         # claim's surface scope): an owner-level claim is dropped BEFORE the
         # cut, so a manager (or a shared output, memory_context.TEAM) is not
@@ -1241,18 +1309,16 @@ def claim_lines(req):
         # chosen in SQL, before each LIMIT (memory re-audit 9/29/26,
         # INVENTORY-13): the LIMIT was a cut too, so 40 newest owner-level
         # claims left a manager's Ask with no LAST READ at all.
-        viewer = getattr(req, "viewer", None)
-        if viewer is not None:
-            import memory_context as _mc
-            user = _mc.viewer_user(viewer)
-            if user is not None:
-                known = [r[0] for r in conn.execute(
-                    "SELECT DISTINCT surface FROM ai_claims WHERE restaurant_id=?", (rid,)).fetchall()]
-                mine = [sf for sf in known if _mc.visible(dict(line_scope(sf), text="x"), user)]
-                if not mine:
-                    return []
-                vis = f"surface IN ({','.join('?' for _ in mine)})"
-                queries = [(w + [vis], a + mine) for w, a in queries]
+        if user is not None or no_salaries:
+            known = [r[0] for r in conn.execute(
+                "SELECT DISTINCT surface FROM ai_claims WHERE restaurant_id=?", (rid,)).fetchall()]
+            mine = [sf for sf in known if user is None or _mc.visible(dict(line_scope(sf), text="x"), user)]
+            if no_salaries:
+                mine = [sf for sf in mine if sf not in SALARY_VIEW_SURFACES]
+            if not mine:
+                return []
+            vis = f"surface IN ({','.join('?' for _ in mine)})"
+            queries = [(w + [vis], a + mine) for w, a in queries]
         rows, seen_ids = [], set()
         for where, args in queries:
             for r in conn.execute(

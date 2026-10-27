@@ -258,6 +258,9 @@ def _auto(db, rid, monkeypatch, run):
     class _SE:
         GenerationSlotTimeout = _Timeout
         _run_schedule_job = staticmethod(run)
+        # How the job failed (schedule_engine.record_generation_failure):
+        # nothing recorded here — the owner's own refusal, not a dead letter.
+        take_generation_failure = staticmethod(lambda job_id: None)
     watched = {}
 
     real_claim = ops.claim_async_job

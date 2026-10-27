@@ -63,9 +63,13 @@ def active() -> bool:
     if flag in ("1", "true", "on", "yes"):
         return True
     # Production: Railway, with its volume mounted (models.require_volume
-    # refuses a boot without one) — never a laptop or a test's process.
+    # refuses a boot without one) — or with no volume on purpose
+    # (VOLUME_OPTIONAL: its files live in object storage, marker_store) —
+    # never a laptop or a test's process.
     import config
-    return config.on_railway() and bool((os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip())
+    import marker_store
+    return config.on_railway() and (bool((os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip())
+                                    or marker_store.backend() == "object")
 
 
 def _dir():
@@ -81,16 +85,45 @@ def freeze_path():
     return os.path.join(_dir(), FREEZE_FILE)
 
 
-def _read_json(path):
+def _object_backed():
+    """No volume, on purpose: the epoch and the freeze live in object
+    storage (marker_store — release-safety audit 10/26/26, P3)."""
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except (OSError, ValueError):
-        return None
+        import marker_store
+        return marker_store.backend() == "object"
+    except Exception as e:
+        log.warning("restore guard: marker backend unknown, using the volume path: %s", e)
+        return False
+
+
+def _remove(path):
+    if _object_backed():
+        import marker_store
+        marker_store.remove(os.path.basename(path))
+        return
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def _read_json(path, strict=False):
+    """The epoch or freeze record, None when there is none. A read that
+    fails is None too — unless `strict`, when it raises
+    marker_store.MarkerUnreadable so the guard takes its safe side (blind
+    re-audit 10/27/26 B5/B7 P3: an object-storage blip read as "no epoch",
+    and the tick then wrote a fresh one over the evidence of a restore)."""
+    import marker_store
+    if _object_backed():
+        return marker_store.read(os.path.basename(path), strict=strict)
+    return marker_store.read_file(path, strict=strict)
 
 
 def _write_json(path, data):
+    if _object_backed():
+        import marker_store
+        marker_store.write(os.path.basename(path), data)
+        return
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f)
@@ -109,8 +142,16 @@ def _parse(value):
 
 
 def frozen() -> dict:
-    """The freeze record (detected_at, db_seq, volume_seq, db_id), or None."""
-    return _read_json(freeze_path()) if os.path.exists(freeze_path()) else None
+    """The freeze record (detected_at, db_seq, volume_seq, db_id), or None.
+    A record that cannot be read (a store that cannot answer, a damaged
+    file) is a freeze too ({unreadable: True, error}): "no freeze" there resumed briefs and alerts against a
+    rewound database during an outage (blind re-audit 10/27/26 B5 P3)."""
+    import marker_store
+    try:
+        return _read_json(freeze_path(), strict=True)
+    except marker_store.MarkerUnreadable as e:
+        log.error("restore guard: the freeze marker is unreadable (%s) - holding as frozen", e)
+        return {"unreadable": True, "error": str(e)[:200]}
 
 
 def _db_value(conn):
@@ -123,11 +164,19 @@ def check_and_stamp(db_path=None) -> dict:
     is the tick that found the database behind the volume (it writes the
     freeze and pages); `frozen` every tick after it until confirm(). Called
     by scheduler_loop at the top of each tick, before any job. Never raises
-    for a read or write it could not make (state 'error' — the tick goes on:
-    a guard that cannot read is no reason to stop the platform)."""
+    for a read or write it could not make (state 'error' — the tick goes on,
+    and an epoch it could not read is never written over). A freeze record
+    it cannot read holds the tick (state 'frozen', `unreadable`)."""
     if not active():
         return {"state": "off"}
-    held = frozen()
+    import marker_store
+    try:
+        held = frozen()
+    except marker_store.MarkerUnreadable as e:
+        # The freeze record cannot be read: the tick is held (its safe side —
+        # marker_store's docstring), never run as if no freeze were there.
+        log.error("restore guard: the freeze record is unreadable — the tick is held: %s", e)
+        return {"state": "frozen", "unreadable": True, "error": str(e)[:200]}
     if held is not None:
         return dict(held, state="frozen")
     try:
@@ -135,7 +184,9 @@ def check_and_stamp(db_path=None) -> dict:
         conn = get_conn(db_path) if db_path else get_conn()
         try:
             db_id, db_seq = _parse(_db_value(conn))
-            mark = _read_json(epoch_path()) or {}
+            # Strict: an unreadable copy is NOT "no baseline" — re-baselining
+            # on it would stamp a restored database's counter as the truth.
+            mark = _read_json(epoch_path(), strict=True) or {}
             vol_id, vol_seq = mark.get("db_id"), int(mark.get("seq") or 0)
             if db_id and vol_id == db_id and db_seq < vol_seq:
                 record = {"detected_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), "db_id": db_id,
@@ -190,14 +241,8 @@ def confirm(actor="operator", db_path=None) -> dict:
     if db_id:
         _write_json(epoch_path(), {"db_id": db_id, "seq": db_seq, "at": time.time(), "confirmed_by": actor})
     else:
-        try:
-            os.remove(epoch_path())
-        except FileNotFoundError:
-            pass
-    try:
-        os.remove(freeze_path())
-    except FileNotFoundError:
-        pass
+        _remove(epoch_path())
+    _remove(freeze_path())
     log.warning("restore guard: confirmed by %s (database counter %s); scheduling resumes on the next tick",
                 actor, db_seq)
     return {"ok": True, "was_frozen": held is not None, "db_seq": db_seq, "freeze": held}
@@ -209,9 +254,7 @@ def forget_baseline() -> None:
     as a second, unreviewed one). The next tick baselines again."""
     for p in (epoch_path(),):
         try:
-            os.remove(p)
-        except FileNotFoundError:
-            pass
+            _remove(p)
         except OSError as e:
             log.warning("restore guard: %s not removed: %s", p, e)
 

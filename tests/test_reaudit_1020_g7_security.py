@@ -636,8 +636,14 @@ def test_support_masking_fails_closed(monkeypatch):
 
 
 def test_the_app_registers_the_masking_hook_app_wide():
-    src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
-    assert "app.after_request(_support_mask)" in src
+    # hosted_dashboard registers through blueprints.register_all (audit #25
+    # A04-06): the hook is an app-wide step of its plan, and
+    # tests/test_cross_tenant_crawl.py checks the booted app runs it;
+    # tests/test_real_app_permissions.py sees the masking through a real
+    # support sign-in.
+    import admin_routes
+    import blueprints
+    assert ("after_request", admin_routes._admin_support_redaction) in blueprints.plan()
 
 
 # ── R7-14: Sentry events leave scrubbed, without frame locals ──────────────

@@ -4567,7 +4567,8 @@ def mobile_labor_insight(current_user):
 
     payload, status = insight_refresh.serve(
         "labor", rid, render=render, refresh=lambda: _capi.labor_refresh(rid), stale=_stale,
-        pending=_pending, failed=_failed, refresh_job=insight_refresh.refresh_job_arg())
+        pending=_pending, failed=_failed, key=_capi.labor_refresh_key(),
+        refresh_job=insight_refresh.refresh_job_arg())
     return jsonify(**payload), status
 
 
@@ -5170,13 +5171,35 @@ def mobile_labor_availability_save(current_user):
     available, blocked, notes, err = availability_from_submission(sorted(blocked_in), data.get("notes"))
     if err:
         return jsonify(ok=False, error="Every day is blocked. Tick at least one day they can work."), 400
+    # A weekday blocked under a manager's published shifts is judged by the
+    # manager rule first (blind re-audit 10/26/26 B2): 409 needs_cover
+    # unless `covered_by` names who runs the floor instead.
+    import shift_requests as _sq_req
+    import staff_settings as _ss_av
+    rid_av = current_user["restaurant_id"]
+    covered = (data.get("covered_by") or "").strip() if isinstance(data.get("covered_by"), str) else None
+    refused = _sq_req.self_cover_refused(current_user, covered)
+    if refused:
+        return jsonify(ok=False, error=refused), 400
+    try:
+        floor_gap = _sq_req.hold_manager_rule(
+            rid_av, name, f"saving {name}'s availability", covered_by=covered,
+            off=lambda: _ss_av.live_shifts_on_days(rid_av, name, blocked))
+    except _sq_req.ManagerGapRefused as e:
+        # The refusal's own sentence (ManagerGapRefused.gap), never an
+        # exception's text (test_intel_integrity's rule).
+        return jsonify(ok=False, needs_cover=True, manager_gap=e.gap, error=e.gap), 409
+    except _sq_req.ShiftRequestError:
+        return jsonify(ok=False, error=_sq_req.RULE_UNREADABLE), 503
+    if floor_gap:
+        _sq_req._tell_managers(rid_av, "No manager on", floor_gap + ".", _sq_req._models.DB_PATH)
     save_staff_availability(
         current_user["restaurant_id"], name,
         available_days=available,
         unavailable_days=blocked,
         notes=notes,
     )
-    return jsonify(ok=True)
+    return jsonify(ok=True, **({"manager_gap": floor_gap + ".", "warning": floor_gap + "."} if floor_gap else {}))
 
 
 @mobile_bp.route("/labor/availability/delete", methods=["POST"])
@@ -9666,6 +9689,35 @@ def mobile_request_account_deletion(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/client-errors", methods=["POST"])
+def mobile_client_errors():
+    """The app could not decode an answer (release-safety audit #25 A06-04):
+    {route, method, status, coding_path, description, kind, device_id} —
+    never the body — with the build in its X-Cavnar-App header. Fire and
+    forget on the phone (one per route per hour per device); stored in
+    client_error_reports, deduplicated and capped per device, per address
+    and in total (client_compat.record_report). A live session's token, of
+    either tier, attributes it; none is needed — a sign-in that cannot be
+    decoded must still be heard — and a dead one never answers 401 here.
+    Only a signed-in report counts toward the operator's alert, and a route
+    the server has no rule for is refused (blind re-audit 10/27/26)."""
+    import client_compat
+    data = request.get_json(silent=True)
+    data = data if isinstance(data, dict) else {}
+    token = _bearer_token()
+    user = None
+    if token:
+        from auth import get_session_user
+        user = get_session_user(token)
+    payload, status = client_compat.record_report(
+        route=data.get("route"), method=data.get("method"), status=data.get("status"),
+        coding_path=data.get("coding_path"), description=data.get("description"), kind=data.get("kind"),
+        device_id=data.get("device_id"), user=user, ip=_get_client_ip(),
+        client=client_compat.from_headers(request.headers),
+        known=client_compat.known_route(data.get("route"), data.get("method")))
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/account/report-bug", methods=["POST"])
 @mobile_login_required
 def mobile_report_bug(current_user):
@@ -9684,6 +9736,11 @@ def mobile_report_bug(current_user):
     restaurant = get_restaurant(rid)
     meta = {k: str(data.get(k))[:80] for k in ("build", "app_version", "ios_version", "device", "screen") if data.get(k)}
     meta["username"] = current_user.get("username")
+    # The build as the request itself names it (X-Cavnar-App), whatever the
+    # sheet filled in — every build used to report "1.0 (1)" (audit #25 A06-02).
+    import client_compat as _cc_bug
+    if _cc_bug.request_client_app():
+        meta["client_app"] = _cc_bug.request_client_app()
     import admin_events
     try:
         report_id = admin_events.store_bug_report(rid, current_user, message[:4000], meta, source="ios")
@@ -9732,9 +9789,12 @@ def mobile_topic_weeks(current_user):
 @mobile_bp.route("/labor/daily")
 @mobile_login_required
 def mobile_labor_daily(current_user):
-    from models import get_labor_daily
+    # Each day's labor % on the viewer's basis (metrics.daily_labor, audit
+    # #25 F2): all-in for the owner, as the web Labor tab's daily line;
+    # hourly for anyone else. The stored labor_pct is hourly.
+    import metrics as _metrics_ld
     try:
-        return jsonify(ok=True, days=get_labor_daily(current_user["restaurant_id"], days=14))
+        return jsonify(ok=True, days=_metrics_ld.daily_labor(current_user["restaurant_id"], days=14))
     except Exception as e:
         return jsonify(ok=False, days=[], error=_safe_err(e)), 500
 

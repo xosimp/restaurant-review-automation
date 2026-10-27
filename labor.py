@@ -394,6 +394,8 @@ import os as _os_sh
 SHIFT_HISTORY_CACHE_SECONDS = float(_os_sh.getenv("SHIFT_HISTORY_CACHE_SECONDS", "900"))
 SHIFT_HISTORY_CACHE_ROWS = int(_os_sh.getenv("SHIFT_HISTORY_CACHE_ROWS", "300000"))
 _shared_history = _collections_sh.OrderedDict()
+import process_caches as _process_caches  # noqa: E402
+_process_caches.register("labor._shared_history", _shared_history)   # blind re-audit 10/27/26 B1 F15
 _shared_history_lock = _threading_sh.Lock()
 
 
@@ -2206,6 +2208,8 @@ def _check_leader_rule(rule: dict, buckets: dict, scores: dict, close_times: dic
 # device, so an owner read different "Recommendations" on the phone and the
 # laptop for the same numbers. Bounded; process-local like the other caches.
 _NOTE_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("labor._NOTE_CACHE", _NOTE_CACHE)
 _NOTE_CACHE_MAX = 500
 
 
@@ -2258,7 +2262,12 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
         except Exception as _sx:
             _degraded(f"packet failed — went on without it: {_sx!r}", _sx)
             pk = ""
-    key = (restaurant_id, fingerprint + f":m{mem_v}" + pk)
+    # One state per restaurant AND salary view (audit #25 F13): the owner's
+    # all-in analysis and a manager's hourly one are two reads, and one
+    # entry per restaurant made each view evict the other — a model call
+    # on every alternate open.
+    view = read_store_kind()
+    key = (restaurant_id, view, fingerprint + f":m{mem_v}" + pk)
     hit = _NOTE_CACHE.get(key)
     if hit is not None:
         return hit[0]
@@ -2266,8 +2275,8 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     _keep_note(restaurant_id, note, fingerprint)
     if len(_NOTE_CACHE) >= _NOTE_CACHE_MAX:
         _NOTE_CACHE.pop(next(iter(_NOTE_CACHE)), None)
-    for k in [k for k in _NOTE_CACHE if k[0] == restaurant_id]:
-        _NOTE_CACHE.pop(k, None)          # one state per restaurant
+    for k in [k for k in _NOTE_CACHE if k[0] == restaurant_id and k[1] == view]:
+        _NOTE_CACHE.pop(k, None)          # one state per restaurant and view
     # Stored with when the model wrote it, so the Labor tab's "as of" is
     # the note's own age, not the five-minute route cache's — and a read
     # served from insight_store after a deploy keeps the time it was
@@ -2288,7 +2297,7 @@ def _keep_note(restaurant_id, note, fingerprint):
         if not restaurant_id or getattr(note, "verdict", None) is None or LABOR_READ_UNCHECKED in str(note):
             return
         import ai_reads
-        ai_reads.record_store_read(restaurant_id, "labor", fingerprint, note)
+        ai_reads.record_store_read(restaurant_id, read_store_kind(), fingerprint, note)
     except Exception as e:
         _degraded(f"not kept as history rid={restaurant_id}: {e}", e)
 
@@ -2304,12 +2313,29 @@ def _note_local_day(restaurant_id) -> str:
 
 
 def note_generated_at(restaurant_id):
-    """When the restaurant's current labor note was written (naive UTC
-    datetime), or None when no note is held."""
+    """When the restaurant's current labor note for this viewer's salary
+    view (read_store_kind) was written (naive UTC datetime), or None when
+    no note is held."""
+    view = read_store_kind()
     for k, v in list(_NOTE_CACHE.items()):
-        if k[0] == restaurant_id and isinstance(v, tuple) and len(v) == 2:
+        if k[0] == restaurant_id and k[1] == view and isinstance(v, tuple) and len(v) == 2:
             return v[1]
     return None
+
+
+# The labor read for a viewer who may not see salaries, kept apart from the
+# owner's (insight_store kind; audit #25 F13).
+LABOR_HOURLY_KIND = "labor:hourly"
+
+
+def read_store_kind() -> str:
+    """Where the labor read is kept for the current viewer
+    (insight_store.salary_kind): "labor" for one who sees salaries (the
+    owner's all-in analysis), LABOR_HOURLY_KIND for anyone else (hourly).
+    The two analyses differ, so one shared entry made owner and manager
+    evict each other's read on every alternate open."""
+    import insight_store as _ist_kind
+    return _ist_kind.salary_kind("labor")
 
 
 # The login a SHARED model output is built for: one stored labor read, and
@@ -2804,10 +2830,10 @@ The Recommendations section must start with exactly the word "Recommendations:" 
             _fp = _ist_lab.read_fingerprint(_key_prompt, readiness=_ready_lab,
                                             extra=(_note_local_day(restaurant_id),)
                                             + ((_packet.fingerprint,) if _packet is not None else ()))
-            stored = _ist_lab.get(restaurant_id, "labor", _fp, revalidate=_finish)
+            stored = _ist_lab.get(restaurant_id, read_store_kind(), _fp, revalidate=_finish)
             if isinstance(stored, str) and stored.strip():
                 try:
-                    _at = _ist_lab.latest(restaurant_id, "labor")[1]
+                    _at = _ist_lab.latest(restaurant_id, read_store_kind())[1]
                     stored.written_at = datetime.strptime(str(_at)[:19], "%Y-%m-%d %H:%M:%S")
                 except Exception as _sx:
                     _degraded(f"latest failed — went on without it: {_sx!r}", _sx)
@@ -2874,7 +2900,7 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     if _fp and str(out).strip():
         try:
             import insight_store as _ist_put
-            _ist_put.put(restaurant_id, "labor", _fp, out, raw=raw)
+            _ist_put.put(restaurant_id, read_store_kind(), _fp, out, raw=raw)
         except Exception as _pe:
             _degraded(f"{_pe}", _pe)
     out.written_at = datetime.utcnow().replace(microsecond=0)

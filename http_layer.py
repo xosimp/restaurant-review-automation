@@ -644,6 +644,9 @@ def _record_request(response):
             sample = {"at": now, "method": method, "route": rule, "status": status,
                       "error": _short_error(response), "request_id": rid, "klass": klass,
                       "restaurant_id": _restaurant_of_request(), "duration_ms": round(elapsed_ms),
+                      # A signed-in request (auth bound its login to the log
+                      # context): the 5xx floor counts only these (re-audit B8).
+                      "authed": logging_setup.current().get("user_id") is not None,
                       "unhandled": getattr(g, "_unhandled_exc", None) is not None,
                       "exc_type": type(g._unhandled_exc).__name__ if getattr(g, "_unhandled_exc", None) is not None else None}
             with _metrics_lock:

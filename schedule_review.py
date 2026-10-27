@@ -34,6 +34,8 @@ def _unstaffable_line(items) -> str:
 
 _UNWRITTEN_WHY = {
     "skipped": "the model left them empty even when asked again",
+    "no_code_draft": "no staffing needs could be read for them from the shift history, and there was no earlier "
+                     "week to copy",
     "cut": "the model ran out of room writing them, even in smaller parts",
     "calls": "the generation used every call it is allowed",
     "time": "the generation ran out of time",

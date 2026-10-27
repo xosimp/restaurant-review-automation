@@ -35,6 +35,9 @@ import ops
 import scheduler
 import status_manager
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 _LOOP_SRC = inspect.getsource(scheduler.scheduler_loop)
 
 

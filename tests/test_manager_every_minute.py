@@ -4,6 +4,10 @@ week had no manager and neither owner on any day)."""
 from datetime import date, timedelta
 
 import schedule_rules as sr
+import pytest
+
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
 
 WEEK = [(date(2026, 10, 5) + timedelta(days=i)).isoformat() for i in range(7)]
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

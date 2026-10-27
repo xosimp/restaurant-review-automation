@@ -343,8 +343,12 @@ def _translate_later(membership_id, text, restaurant_id, db_path=DB_PATH) -> boo
             return False
         _tx_pending.add(key)
         if _tx_pool is None:
-            _tx_pool = concurrent.futures.ThreadPoolExecutor(max_workers=TRANSLATE_WORKERS,
-                                                             thread_name_prefix="staff-translate")
+            # The container's bound, split between gunicorn web workers
+            # (pool_sizing; one worker: all of it).
+            import pool_sizing
+            _tx_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=pool_sizing.sized("staff_translate", TRANSLATE_WORKERS),
+                thread_name_prefix="staff-translate")
 
     def run():
         try:
@@ -1016,6 +1020,8 @@ ANSWER_CACHE_SECONDS = 24 * 3600
 REFUSAL_CACHE_SECONDS = 3600
 ANSWER_CACHE_MAX = 500
 _ANSWER_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("staff_knowledge._ANSWER_CACHE", _ANSWER_CACHE)
 _ANSWER_LOCK = threading.Lock()
 
 

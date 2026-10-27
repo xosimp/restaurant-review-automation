@@ -302,6 +302,9 @@ def _fail(job: GenerationRun, e: Exception) -> None:
         return
     log.error(f"FAILED:\n{traceback.format_exc()}")
     se._run_failed(e)
+    # How it failed, for the queue row (a platform failure is a dead letter
+    # the urgent rule reads — re-audit B7 P1).
+    se.record_generation_failure(req.job_id, e)
     try:
         se._ops.capture(e, job="schedule_generate", context=f"restaurant_id={req.restaurant_id}")
     except Exception as _sx:
@@ -1682,6 +1685,12 @@ def _stage_inputs(cand: Candidate) -> None:
     # moved says so, held at publish.
     import schedule_resume as _sres_in
     _rf = _sres_in.resume_facts()
+    if _rf.get("resumed"):
+        # The resume's promise — the code stages rebuild the week the try
+        # that died was building — holds only for solves their work budget
+        # ended; one an emergency cap cut (review.solve_capped, now read by
+        # the clock alone — release-safety audit 10/26/26 A02-01) may differ.
+        _rf["deterministic"] = not bool((result.get("review") or {}).get("solve_capped"))
     result["resumed_inputs"] = _rf
     if _rf.get("inputs_moved") and isinstance(result.get("review"), dict):
         review = result["review"]

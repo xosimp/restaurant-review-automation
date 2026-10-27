@@ -74,6 +74,8 @@ _GENERIC_NAMES = {"other", "bar", "pub", "cafe", "café", "grill", "kitchen", "p
                   "cavnar", "cavnar ai", "cavnar demo", "cavnar test"}
 _NAMES_TTL_SECONDS = 60
 _names_cache = {"key": None, "at": 0.0, "rx": None}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("intelligence.privacy._names_cache", _names_cache)
 
 
 _WORD_RE = re.compile(r"[\w']+")
@@ -438,6 +440,7 @@ def org_members(restaurant_id, db_path=None) -> tuple:
 # lives in app_secrets (models.kept_secret), which the off-site copies empty.
 ORG_HASH_SECRET = "intel_org_hash"
 _org_secret_cache = {"key": None, "value": None}
+_process_caches.register("intelligence.privacy._org_secret_cache", _org_secret_cache)
 
 
 def _org_secret() -> bytes:

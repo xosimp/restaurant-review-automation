@@ -434,7 +434,7 @@ def test_ing_05_a_dmarc_fail_is_not_unsigned_mail():
 
 def test_ing_05_vouch_refuses_a_file_that_names_no_store(db):
     rid = _rid(db)
-    real = FT_HEAD + ("Breakthru Beverage Illinois LLC,128850598,10/01/2026,420.00,000001 St. Charles,9031,"
+    real = FT_HEAD + ("Breakthru Beverage Illinois LLC,233150629,10/01/2026,420.00,000001 St. Charles,9031,"
                       "TITOS VDK 1L,CA,2,210.00,420.00\n")
     assert fi.ingest_file(rid, "real.csv", real.encode(), db_path=db)["status"] == "stored"
     forged = ("Vendor Name,Invoice Number,Invoice Date,Invoice Total,Product Number,Product Description,"

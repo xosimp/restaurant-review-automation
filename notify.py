@@ -3,6 +3,7 @@ notify.py — alert system via Twilio (SMS) and Resend (email).
 Both channels use the same 6 alert toggles; delivery is controlled
 by urgent_via_sms and urgent_via_email per restaurant.
 """
+import logging
 import os
 import re
 import sqlite3
@@ -245,22 +246,35 @@ class SmsResult:
 
     `permanent` — will not change by retrying (a STOP, an invalid number, a
     number without consent). `account_level` — every text is failing (bad
-    credentials, a suspended account, carrier filtering). Neither — worth
-    another go later (a 429, a 5xx, Twilio not configured right now)."""
-    __slots__ = ("ok", "sid", "status", "error_code", "error", "permanent", "account_level", "log_id")
+    credentials, a suspended account, carrier filtering). `uncertain` — the
+    request reached Twilio and its answer never came back (a read timeout, a
+    connection reset after the request was written): the text may well have
+    gone out, status "unknown" (audit #25 A06-11). Twilio's Messages API has
+    no idempotency key, so a caller that retries failed texts treats an
+    uncertain one as SENT — a retry could text the person twice. None of the
+    three — worth another go later (a 429, a 5xx, Twilio not configured)."""
+    __slots__ = ("ok", "sid", "status", "error_code", "error", "permanent", "account_level", "log_id",
+                 "uncertain")
 
     def __init__(self, ok, sid=None, status=None, error_code=None, error=None, permanent=False,
-                 account_level=False, log_id=None):
+                 account_level=False, log_id=None, uncertain=False):
         self.ok, self.sid, self.status = bool(ok), sid, status
         self.error_code = str(error_code) if error_code not in (None, "") else None
         self.error, self.permanent, self.account_level, self.log_id = error, permanent, account_level, log_id
+        self.uncertain = bool(uncertain) and not self.ok
 
     def __bool__(self):
         return self.ok
 
+    @property
+    def maybe_sent(self) -> bool:
+        """Accepted, or of unknown outcome: what a retrying caller counts as
+        sent so it never texts the same person twice."""
+        return self.ok or self.uncertain
+
     def __repr__(self):
         return (f"<SmsResult ok={self.ok} status={self.status} code={self.error_code} "
-                f"permanent={self.permanent} err={self.error!r}>")
+                f"permanent={self.permanent} uncertain={self.uncertain} err={self.error!r}>")
 
 
 @contextmanager
@@ -286,6 +300,22 @@ def last_sms_result():
 
 def clear_last_sms_result():
     _sms_local.last = None
+
+
+def last_sms_uncertain() -> bool:
+    """Whether this thread's last text reached Twilio with no answer back —
+    it may have been delivered (SmsResult.uncertain). For a caller that
+    sends through send_sms (a bool): clear_last_sms_result() first, then
+    read this after a False to tell "not sent" from "maybe sent"."""
+    res = last_sms_result()
+    return bool(res is not None and getattr(res, "uncertain", False))
+
+
+# What sms_log, the console and a caller's own record say for a text whose
+# outcome Twilio never answered (SmsResult.uncertain).
+SMS_UNKNOWN_STATUS = "unknown"
+SMS_UNKNOWN_NOTE = ("delivery unknown: Twilio did not answer in time and the text may have gone out, "
+                    "so it was not sent again")
 
 
 def _sms_hash(phone: str) -> str:
@@ -529,6 +559,11 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             # The showcase demo (Halsted & Rye) never texts anyone.
             return _done(SmsResult(False, status="blocked", error="demo store: texts are never sent",
                                    permanent=True))
+    # Never from staging or another non-production environment, whatever
+    # Twilio keys it holds (config.outbound_sends_allowed — release-safety
+    # audit 10/26/26 A05-06). No sms_log row: nothing happened.
+    if not config.outbound_sends_allowed():
+        return _done(SmsResult(False, status="blocked", error=config.refused_send("sms"), permanent=True))
     # Every text, a verification code included (re-audit 10/20/26 R7-09: a
     # sign-in code to a premium-rate number abroad, looped by anyone with the
     # owner's password, is toll fraud billed to the platform).
@@ -631,11 +666,22 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
                 break
         except requests.exceptions.ConnectionError as e:
             print(f"[notify] SMS send failed: {e}")
-            last = SmsResult(False, status="failed", error=str(e)[:300])
             if not _sms_never_sent(e):
                 # The request may have reached Twilio (a reset while its
-                # answer was read): a retry could text twice (R9-21).
+                # answer was read): a retry could text twice (R9-21), and
+                # the outcome is unknown, not failed (A06-11).
+                last = SmsResult(False, status=SMS_UNKNOWN_STATUS, error=f"{SMS_UNKNOWN_NOTE} ({str(e)[:200]})",
+                                 uncertain=True)
                 break
+            last = SmsResult(False, status="failed", error=str(e)[:300])
+        except (requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as e:
+            # A read timeout (a connect timeout is a ConnectionError, above)
+            # or an answer cut off mid-read: Twilio had the request, and
+            # may have sent it (A06-11). Never retried here.
+            logging.getLogger(__name__).warning(f"[notify] SMS send outcome unknown: {e}")
+            last = SmsResult(False, status=SMS_UNKNOWN_STATUS, error=f"{SMS_UNKNOWN_NOTE} ({str(e)[:200]})",
+                             uncertain=True)
+            break
         except Exception as e:
             print(f"[notify] SMS send failed: {e}")
             last = SmsResult(False, status="failed", error=str(e)[:300])
@@ -647,7 +693,8 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
     # away the real code and reason (the same trap emails.deliver notes).
     if last is None:
         last = SmsResult(False, status="failed", error="unknown SMS failure")
-    last.log_id = _log_sms(rid, use_case, phone, "failed", last.error_code, last.error, db_path=db_path)
+    last.log_id = _log_sms(rid, use_case, phone, SMS_UNKNOWN_STATUS if last.uncertain else "failed",
+                           last.error_code, last.error, db_path=db_path)
     if last.error_code == SMS_STOP_ERROR_CODE:
         record_platform_stop(phone, db_path=db_path)
     if last.account_level:
@@ -3997,7 +4044,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             # (memory audit 9/29/26, labor_periods) — the alert's period_start
             # is the calendar week Home's labor_over card is keyed on too.
             recent = c2.execute("""
-                SELECT labor_pct, period_start, period_end
+                SELECT period_start, period_end
                 FROM labor_history
                 WHERE restaurant_id=?
                   AND period_end >= date('now', ?)
@@ -4007,8 +4054,20 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 ORDER BY period_end DESC, saved_at DESC LIMIT 1
             """, (rid, f"-{_labor_alert_max_age_days()} days", LABOR_ALERT_MIN_PERIOD_DAYS)).fetchone()
             c2.close()
-            if recent and recent["labor_pct"] is not None:
-                actual = recent["labor_pct"]
+            # Like with like (blind re-audit 10/26/26 B3): the stored period
+            # is HOURLY (labor_daily_history keeps the shifts alone) and the
+            # owner's target judges labor WITH salaries (9/30/26), so this
+            # compared hourly with all-in and stayed silent on exactly the
+            # weeks the salaries pushed labor over. The period is read again
+            # through models.get_labor_history on the owner's basis for the
+            # judgement (_labor_alert_figure); what the alert SAYS is
+            # labor_alert_words' — it reaches alert contacts, the "Also
+            # email" addresses and every login that sees Labor, so with
+            # anyone salaried it names the hourly figure, never the all-in
+            # one or the gap that would give the salaries away.
+            fig = _labor_alert_figure(rid, recent, db_path) if recent else None
+            if fig is not None:
+                actual = fig["all_in_pct"]
                 target = labor_target_for(dict(r))
                 # One definition of "over target" (thresholds.py) shared with
                 # the labor issue and Home. Any overage at all used to fire
@@ -4018,21 +4077,66 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 # a volatile restaurant is not texted about noise.
                 import restaurant_thresholds as _rthr_al
                 if actual - target >= _rthr_al.margin(rid, "labor_over_period", stated=LABOR_OVER_TARGET_PTS):
-                    from time_utils import mdy_range
-                    over_by = round(actual - target, 1)
                     _period_label = _short_period(recent["period_start"], recent["period_end"])
-                    sms  = (
-                        f"💸 {name}: Labor at {actual:.1f}% for {_period_label} — "
-                        f"{over_by}pts over your {target:.0f}% target.\n"
-                        f"dashboard.cavnar.ai"
-                    )
-                    _fire(sms, f"Labor over target — {name}", [
-                        f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
-                        f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
-                        # M/D/YY, never the stored ISO dates (#16).
-                        f"Period: {mdy_range(recent['period_start'], recent['period_end'])}",
-                    ], "labor_over", recs=[alert_rec("labor_over", subject=str(recent["period_start"])[:10],
-                                                     title=f"Labor {actual:.1f}% against a {target:.0f}% target")])
+                    words = labor_alert_words(name, fig, target, _period_label,
+                                              recent["period_start"], recent["period_end"])
+                    _fire(words["sms"], f"Labor over target — {name}", words["lines"], "labor_over",
+                          recs=[alert_rec("labor_over", subject=str(recent["period_start"])[:10],
+                                          title=words["title"])])
+
+
+def _labor_alert_figure(restaurant_id, period, db_path=None):
+    """{all_in_pct, hourly_pct, hourly_only} for one stored labor period on
+    the owner's basis (the target judges all-in labor), or None when the
+    period cannot be read. Through models.get_labor_history in the owner's
+    salary view — the one read that adds the salaried day share to a stored
+    (hourly) period — never the stored labor_pct itself. `hourly_only`:
+    someone is salaried, so the shared words name the hourly figure
+    (labor_alert_words)."""
+    try:
+        with models.salary_view(True):
+            hist = models.get_labor_history(restaurant_id, limit=12, db_path=db_path or models.DB_PATH)
+    except Exception as e:
+        print(f"[notify] labor history unreadable for rid={restaurant_id}: {e!r}")
+        return None
+    start = str(period["period_start"])[:10]
+    row = next((h for h in hist if str(h.get("period_start") or "")[:10] == start), None)
+    if row is None or row.get("labor_pct") is None:
+        return None
+    salaried = bool(row.get("includes_salaries"))
+    return {"all_in_pct": float(row["labor_pct"]),
+            "hourly_pct": row.get("hourly_labor_pct") if salaried else row.get("labor_pct"),
+            "hourly_only": salaried}
+
+
+def labor_alert_words(name, fig, target, period_label, period_start, period_end) -> dict:
+    """{sms, lines, title} for the labor-over alert. Its audience is mixed
+    (alert contacts — the people issues are routed to — the "Also email"
+    addresses, and every login that sees Labor), so with anyone salaried
+    the words name the HOURLY figure and say the target counts salaried
+    pay, never the all-in % or the points over (hourly % plus the points
+    over IS the all-in %). With nobody salaried the figure is the labor."""
+    from time_utils import mdy_range
+    period = mdy_range(period_start, period_end)
+    if fig.get("hourly_only") and fig.get("hourly_pct") is not None:
+        hourly = float(fig["hourly_pct"])
+        return {"sms": (f"💸 {name}: Labor over your {target:.0f}% target for {period_label} once salaried pay "
+                        f"is counted — hourly staff ran {hourly:.1f}% of sales.\ndashboard.cavnar.ai"),
+                "lines": [f"Labor ran over your {target:.0f}% target for the most recent labor period, counted "
+                          f"the way the target counts it — with salaried pay.",
+                          f"Hourly staff: <strong>{hourly:.1f}%</strong> of sales — the part next week's "
+                          f"schedule controls. Open Labor for the whole figure.",
+                          # M/D/YY, never the stored ISO dates (#16).
+                          f"Period: {period}"],
+                "title": f"Labor over the {target:.0f}% target — hourly staff {hourly:.1f}%"}
+    actual = float(fig["all_in_pct"])
+    over_by = round(actual - target, 1)
+    return {"sms": (f"💸 {name}: Labor at {actual:.1f}% for {period_label} — "
+                    f"{over_by}pts over your {target:.0f}% target.\ndashboard.cavnar.ai"),
+            "lines": [f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
+                      f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
+                      f"Period: {period}"],
+            "title": f"Labor {actual:.1f}% against a {target:.0f}% target"}
 
 
 def health_bypasses_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:

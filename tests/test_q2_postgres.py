@@ -531,6 +531,7 @@ def _boot(tmp_path, url=None):
     env["RAILWAY_VOLUME_MOUNT_PATH"] = str(vol)
     if url:
         env["DATABASE_URL"] = url
+        env["ALLOW_LOCAL_PG"] = "1"            # a scratch server, deliberately (off Railway it is ignored)
     r = subprocess.run([sys.executable, "-c", _BOOT], cwd=ROOT, env=env, capture_output=True, text=True,
                        timeout=600)
     assert r.returncode == 0, r.stderr[-2000:]

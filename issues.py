@@ -17,6 +17,7 @@ at a location that has a manager routed. Loss-prevention signals are NEVER
 auto-routed to a manager — the approving manager may be the subject of one.
 Anything else is created by the owner, from the app or from Ask.
 """
+import logging
 import hashlib
 import re
 import config
@@ -372,6 +373,13 @@ def _notify(issue_id, token=None, db_path=DB_PATH, now=None):
             conn.close()
         _present(r, "issue_sms", db_path)
         return True
+    if getattr(res, "uncertain", False):
+        # Twilio took the request and never answered: the text may well have
+        # gone out, so it counts as sent for retrying (audit #25 A06-11) —
+        # the claim stands, nothing is scheduled again, and the console reads
+        # "delivery unknown". Escalation still follows if nobody answers.
+        _hold_as_sent(issue_id, r["restaurant_id"], "notify", db_path)
+        return False
     attempts = int((r["notify_attempts"] if "notify_attempts" in r.keys() else 0) or 0) + 1
     reason = res.error or res.status or "the text was not accepted"
     if res.permanent or attempts >= MAX_NOTIFY_ATTEMPTS:
@@ -386,6 +394,30 @@ def _notify(issue_id, token=None, db_path=DB_PATH, now=None):
         finally:
             conn.close()
     return False
+
+
+_HOLD_AS_SENT_SQL = {
+    "notify": "UPDATE ops_issues SET notify_error=?, notify_next_at=NULL WHERE id=? AND restaurant_id=?",
+    "escalation": "UPDATE ops_issues SET escalation_error=?, escalation_next_at=NULL WHERE id=? AND restaurant_id=?",
+}
+
+
+def _hold_as_sent(issue_id, restaurant_id, which, db_path=DB_PATH):
+    """An issue text (`which` notify | escalation) whose outcome Twilio never
+    answered (SmsResult.uncertain): its claim (notified_at / escalated_at)
+    stays, no retry is scheduled, and the error column says delivery is
+    unknown — what the console shows. Never raises: the send already
+    happened, or may have."""
+    import notify
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute(_HOLD_AS_SENT_SQL[which], (notify.SMS_UNKNOWN_NOTE[:300], issue_id, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[issues] could not record an unknown text outcome on issue {issue_id}: {e!r}")
 
 
 def texts_on(restaurant_id) -> bool:
@@ -983,6 +1015,9 @@ def _escalate(s, db_path=DB_PATH, now=None):
         finally:
             conn.close()
         return True
+    if getattr(res, "uncertain", False):
+        _hold_as_sent(s["id"], rid, "escalation", db_path)      # maybe delivered: never texted twice (A06-11)
+        return False
     attempts += 1
     reason = res.error or res.status or "the text was not accepted"
     if res.permanent or attempts >= MAX_NOTIFY_ATTEMPTS:
@@ -1068,29 +1103,56 @@ def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
 
     if getattr(r, "module_labor", 0):
         try:
-            from labor import analyse_shifts_for_restaurant
             from thresholds import LABOR_OVER_TARGET_PTS
             import notify as _notify_mod
-            labor = analyse_shifts_for_restaurant(restaurant_id) or {}
             target = _notify_mod.labor_target_for(r, db_path=db_path)
-            # overall_labor_pct is what analyse_shifts returns; this read
-            # "labor_pct", a key it never had, so the labor issue could not
-            # open (#34). One threshold with the alert and Home.
-            pct = labor.get("overall_labor_pct")
+            fig = labor_issue_figures(restaurant_id)
             # Not on Cavnar's unconfirmed starting target (Benchmarking audit #13).
             import thresholds as _thr_t
             # The margin fitted to this restaurant's own swing, never below
             # the stated one (restaurant_thresholds, memory audit 9/29/26).
             import restaurant_thresholds as _rthr_iss
             _over = _rthr_iss.margin(restaurant_id, "labor_over_period", stated=LABOR_OVER_TARGET_PTS)
-            if labor.get("is_live") and pct is not None and _thr_t.target_alerts_allowed(r, "labor"):
-                issue = _sync_labor_issue(restaurant_id, float(pct), float(target), float(pct) - target >= _over,
-                                          f"labor:{today.strftime('%G-W%V')}", db_path)
+            if fig and _thr_t.target_alerts_allowed(r, "labor"):
+                issue = _sync_labor_issue(restaurant_id, fig["shown_pct"], float(target),
+                                          fig["all_in_pct"] - float(target) >= _over,
+                                          f"labor:{today.strftime('%G-W%V')}", db_path,
+                                          hourly_only=fig["hourly_only"])
                 if issue:
                     opened.append(issue)
         except Exception as e:
             _capture(e, "issue_signals_labor", restaurant_id)
     return opened
+
+
+def labor_issue_figures(restaurant_id):
+    """{all_in_pct, shown_pct, hourly_only} for the labor issue, or None
+    without live shifts.
+
+    The issue is SHARED: it is texted to the routed manager, listed in
+    every login's issues and read by Ask — so its words never carry the
+    salaries (blind re-audit 10/26/26 B3 P0: built in a job, where every
+    read was the owner's, it texted a manager "Labor 13.0% against a 8%
+    target" while their own Labor tab said 9.5%). Whether labor is over is
+    the owner's rule — the target judges labor with salaries (9/30/26) —
+    so the judgement reads the all-in figure, which is the same as the
+    hourly figure against the hourly staff's share of the target; the
+    figure the issue SHOWS is the hourly one (`hourly_only`) whenever
+    anyone is salaried. With nobody salaried the two are one."""
+    import models as _models_iss
+    from labor import analyse_shifts_for_restaurant
+    with _models_iss.salary_view(True):
+        labor = analyse_shifts_for_restaurant(restaurant_id) or {}
+    # overall_labor_pct is what analyse_shifts returns; this read
+    # "labor_pct", a key it never had, so the labor issue could not open
+    # (#34). One threshold with the alert and Home.
+    pct = labor.get("overall_labor_pct")
+    if not labor.get("is_live") or pct is None:
+        return None
+    hourly_only = bool(labor.get("includes_salaries"))
+    shown = labor.get("hourly_labor_pct") if hourly_only else pct
+    return {"all_in_pct": float(pct), "shown_pct": float(shown if shown is not None else 0.0),
+            "hourly_only": hourly_only}
 
 
 def _open_issue_of_kind(conn, restaurant_id, kind):
@@ -1103,7 +1165,7 @@ def _target_words(target) -> str:
     return f"{float(target):g}%"
 
 
-def _sync_labor_issue(restaurant_id, pct, target, over, week_key, db_path=DB_PATH):
+def _sync_labor_issue(restaurant_id, pct, target, over, week_key, db_path=DB_PATH, hourly_only=False):
     """ONE open labor issue, kept current - as stock is.
 
     It was one per ISO week, written once: a restaurant over target for two
@@ -1115,6 +1177,9 @@ def _sync_labor_issue(restaurant_id, pct, target, over, week_key, db_path=DB_PAT
     has it) and any older one closes as carried on; back under, they close
     themselves. Only when none is open does a new one open (and text), keyed
     by the week, so one a manager closed stays closed until the next.
+    `pct` is the figure the issue may show everyone who reads it: the
+    hourly staff's with anyone salaried (`hourly_only` — labor_issue_figures),
+    since an all-in figure in a shared issue gives the salaries away.
     Returns the newly opened issue, else None."""
     conn = get_conn(db_path)
     try:
@@ -1123,13 +1188,20 @@ def _sync_labor_issue(restaurant_id, pct, target, over, week_key, db_path=DB_PAT
     finally:
         conn.close()
     if not over:
+        _now_words = f"hourly staff {pct:.1f}%" if hourly_only else f"{pct:.1f}%"
         for row in open_:
             _resolve(restaurant_id, row["id"], f"Closed automatically: labor is back near the "
-                                               f"{_target_words(target)} target ({pct:.1f}%).", db_path)
+                                               f"{_target_words(target)} target ({_now_words}).", db_path)
         return None
-    title = f"Labor {pct:.1f}% against a {_target_words(target)} target"
-    detail = ("The latest labor data ran over. Trim the overstaffed days in next week's "
-              "schedule before it is published.")
+    if hourly_only:
+        title = f"Hourly labor {pct:.1f}% — over its share of the {_target_words(target)} target"
+        detail = ("The latest labor data ran over. The target counts salaried pay too; the hourly staff's "
+                  "figure is the part next week's schedule controls — trim the overstaffed days before it "
+                  "is published.")
+    else:
+        title = f"Labor {pct:.1f}% against a {_target_words(target)} target"
+        detail = ("The latest labor data ran over. Trim the overstaffed days in next week's "
+                  "schedule before it is published.")
     if open_:
         conn = get_conn(db_path)
         try:

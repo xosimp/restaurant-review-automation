@@ -36,7 +36,16 @@ import time as _boot_time
 _BOOT_STARTED = _boot_time.monotonic()
 PORT = int(os.getenv("PORT", 5000))
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
-from models import get_conn, get_restaurant, get_review_stats, get_reviews_data, get_top_issues, get_sentiment_trend, is_full_tier, get_active_modules
+from models import get_restaurant, get_review_stats, get_reviews_data, get_top_issues, get_sentiment_trend, is_full_tier, get_active_modules
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from auth import get_session_user, create_user
 
 # ── Sentry error monitoring ───────────────────────────────────────────────────
@@ -177,9 +186,15 @@ def health():
         payload, status = health_snapshot()
         _health_cache["at"], _health_cache["result"] = now, (payload, status)
     payload = dict(payload)
-    sha = os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or ""
-    if sha and status == 200:
-        payload["build"] = sha[:12]
+    # Always named (release-safety audit 10/26/26 A05-13): "unknown" for a
+    # deploy that is not a commit (`railway up`), which the post-deploy
+    # smoke test (scripts/smoke.py) fails on.
+    import config as _config_build
+    payload["build"] = _config_build.build_label()
+    # Which deployment answered (config.deploy_env — release-safety audit
+    # 10/26/26 A05-06): the post-deploy smoke checks production says
+    # "production", or its scheduler and sends would be standing down.
+    payload["env"] = _config_build.deploy_env()
     return jsonify(**payload), status
 
 @app.template_filter("format_num")
@@ -227,6 +242,18 @@ http_layer.register(app)
 # immutable files (static_bundles, scheduler audit 10/10/26 SCALE-28).
 import static_bundles
 static_bundles.install(app)
+# The build every page was rendered by (config.build_id, "" locally): the
+# fetch wrapper (_csrf_fetch.html) compares it with each JSON answer's
+# X-Cavnar-Build and offers a reload once they differ — a tab left open
+# across a deploy otherwise runs the old JavaScript against the new routes
+# (audit 10/26/26 A06-13). A cohort switch (rollout "stale_tab_reload",
+# default on — client_compat.page_build) turns the bar off at run time.
+app.context_processor(lambda: {"cavnar_build": client_compat.page_build()})
+# The iPhone app's build on every /mobile/api and /staff/api request: a build
+# under MOBILE_MIN_BUILD gets 426 {update_required} (client_compat, audit #25
+# A06-02); one with no header is served until MOBILE_HEADERLESS_CUTOFF.
+import client_compat
+client_compat.install(app)
 
 
 @app.after_request
@@ -235,105 +262,27 @@ def add_security_headers(response):
     import security_headers
     return security_headers.apply(response)
 
-# Register blueprints
-from admin_routes import admin_bp
-from webhook_routes import webhook_bp
-from social_routes import social_bp
-from auth_routes import auth_bp
-from client_api import client_bp
-from toast_routes import toast_bp
-from square_routes import square_bp
-from clover_routes import clover_bp
-from rpower_routes import rpower_bp
-from status_routes import status_bp
-from mobile_api import mobile_bp
-from csrf import csrf_protect, ensure_csrf_cookie
 
-# Every browser-facing blueprint gets double-submit CSRF enforcement.
-# webhook_bp (HMAC-verified external callers), auth_bp (own form tokens) and
-# mobile_bp (bearer-token auth, no cookie jar to carry a CSRF cookie — see
-# mobile_api.py's module docstring) are intentionally exempt. status_bp is
-# protected: its public pages are GETs, which the check never touches, and
-# its /admin/status writes post the public outage banner (SEC-23).
-for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpower_bp, status_bp):
-    csrf_protect(_bp)
+@app.after_request
+def add_build_header(response):
+    """Every JSON response names the build that answered it (release-safety
+    audit 10/26/26 A06-13 / A05-13): an open tab compares it with the build
+    it loaded with, and a support screenshot or the smoke test can tell
+    which deploy said what."""
+    if response.mimetype == "application/json":
+        import config as _config_build
+        response.headers["X-Cavnar-Build"] = _config_build.build_label()
+    return response
 
-app.register_blueprint(admin_bp)
-# Support's masking on every blueprint under /admin, not only admin_bp's
-# (re-audit 10/20/26 R7-11; applied once per response).
-from admin_routes import _admin_support_redaction as _support_mask
-app.after_request(_support_mask)
-from sales_audit_routes import audit_bp
-if not getattr(audit_bp, "_csrf_wired", False):
-    csrf_protect(audit_bp)
-    audit_bp._csrf_wired = True
-app.register_blueprint(audit_bp)
-# Onboarding at scale (scale audit 10/19/26): bulk provisioning, backfill
-# pacing, setup confirmations, checklists, the DSR calendar, partners —
-# admin-console writes, CSRF-protected like admin_bp.
-from onboarding_routes import onboarding_bp
-if not getattr(onboarding_bp, "_csrf_wired", False):
-    csrf_protect(onboarding_bp)
-    onboarding_bp._csrf_wired = True
-app.register_blueprint(onboarding_bp)
-app.register_blueprint(webhook_bp)
-app.register_blueprint(social_bp)
-app.register_blueprint(auth_bp)
-app.register_blueprint(client_bp)
-app.register_blueprint(toast_bp)
-app.register_blueprint(square_bp)
-app.register_blueprint(clover_bp)
-app.register_blueprint(rpower_bp)
-app.register_blueprint(status_bp)
-app.register_blueprint(mobile_bp)
-
-# Issues, goals, outcomes, menu, invoices, demand, loss, morning brief — web
-# half is CSRF-protected like client_bp; the mobile half is bearer-token like
-# mobile_bp; the /i/<token> issue page is a public link whose token is the
-# credential (no session, no cookie jar to double-submit from).
-from strategy_routes import strategy_bp, strategy_mobile_bp, issue_link_bp
-if not getattr(strategy_bp, "_csrf_wired", False):
-    csrf_protect(strategy_bp)
-    strategy_bp._csrf_wired = True
-app.register_blueprint(strategy_bp)
-app.register_blueprint(strategy_mobile_bp)
-app.register_blueprint(issue_link_bp)
-
-# The staff portal. Deliberately NOT in the csrf_protect tuple above: the
-# iPhone app calls it with a Bearer token, and its sign-in POST happens
-# before any session exists. The browser portal (/staff/home, 10/7/26) is
-# cookie-authenticated, so staff_csrf_check — app-wide, for staff_bp and
-# staff_knowledge_bp only — holds every cookie-authenticated write to the
-# double-submit token; a Bearer call and the pre-session sign-in, sign-up
-# and forgot-PIN routes are left alone (staff_routes, "CSRF for the browser
-# portal").
-from staff_routes import staff_bp, staff_csrf_check
-app.before_request(staff_csrf_check)
-# Running late, announcements and the staff ↔ manager thread (staff_comms):
-# its staff routes are on staff_bp (staff_routes imports them). Its owner
-# half is the Team inbox under Labor — web CSRF-protected like strategy_bp,
-# mobile bearer-token like mobile_bp.
-from staff_comms_routes import staff_comms_bp, staff_comms_mobile_bp
-if not getattr(staff_comms_bp, "_csrf_wired", False):
-    csrf_protect(staff_comms_bp)
-    staff_comms_bp._csrf_wired = True
-app.register_blueprint(staff_comms_bp)
-app.register_blueprint(staff_comms_mobile_bp)
-app.register_blueprint(staff_bp)
-# The staff brief's approval, house rules, docs and certifications (console,
-# web + mobile twins) and the employee's language, docs and ask
-# (staff_knowledge_routes, employee audit B7). The web half is CSRF-protected
-# like strategy_bp; the staff half takes the staff portal's posture above.
-from staff_knowledge_routes import staff_knowledge_bp, knowledge_bp, knowledge_mobile_bp
-if not getattr(knowledge_bp, "_csrf_wired", False):
-    csrf_protect(knowledge_bp)
-    knowledge_bp._csrf_wired = True
-app.register_blueprint(knowledge_bp)
-app.register_blueprint(knowledge_mobile_bp)
-app.register_blueprint(staff_knowledge_bp)
+# Register blueprints: every blueprint, its CSRF wiring and the app-wide hooks
+# that go with them (support masking, the staff portal's CSRF check, the CSRF
+# cookie) live in blueprints.py — one list the module-gate sweep, the
+# cross-tenant crawl and the client-path tests build from too (audit #25
+# A04-06). Order is kept: support masking after the security headers above,
+# ensure_csrf_cookie last.
+import blueprints as _blueprints
+_blueprints.register_all(app)
 _check_duplicate_routes()
-
-app.after_request(ensure_csrf_cookie)
 
 
 @app.teardown_appcontext
@@ -578,8 +527,8 @@ def index(current_user):
         # alone - it is two people's pay.
         labor_salaried = None
         try:
-            from permissions import is_principal as _is_principal
-            if _is_principal(current_user):
+            from permissions import sees_salaries as _sees_salaries_hd
+            if _sees_salaries_hd(current_user):
                 from labor import salaried_summary
                 labor_salaried = salaried_summary(restaurant, labor)
         except Exception:
@@ -1125,19 +1074,6 @@ import platform_monitor as _pm_boot
 _BOOT_ID = None
 
 try:
-    from models import init_db as _init_db, ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
-    from models import init_staff_notes as _isn, init_staff_availability as _isa
-    from models import init_two_fa_backup_codes as _i2fabc
-    from models import init_competitor_snapshots as _ics
-    from models import init_ai_visibility_queries as _iavq
-    from models import init_staff_capabilities as _isc
-    from models import init_shift_profiles as _isp
-    from models import init_capability_changes as _icc
-    from models import init_ask_memory as _iam
-    from auth import init_auth as _init_auth
-    from webhooks import init_webhooks as _iwh
-    from guest_marketing import init_guest_marketing as _igm
-    from push import init_push as _ipush
     # A requested restore swaps the snapshot in before the first connection
     # (db_restore.py). A refused one raises, so the deploy fails loudly.
     import db_restore as _dbr
@@ -1146,58 +1082,52 @@ try:
     # over an emptied database and make it look like a platform: a volume
     # whose marker says it held client restaurants must still hold them.
     _sm_boot.assert_platform_not_emptied()
-    _init_db()
-    # A database loaded from an off-site copy some other way than
-    # RESTORE_FROM (scripts/run_pg_copy.py into Postgres) still carries its
-    # credentials and link secrets sealed under CREDENTIAL_KEY (scale audit
-    # OPS-1): opened here, once; a few empty reads on every other boot.
-    try:
-        import offsite_backup as _ob_boot
-        from models import get_conn as _gc_boot
-        _c_boot = _gc_boot()
+
+    def _boot_db_ready():
+        """Straight after init_db, inside boot_schema."""
+        global _BOOT_ID
+        # A database loaded from an off-site copy some other way than
+        # RESTORE_FROM (scripts/run_pg_copy.py into Postgres) still carries its
+        # credentials and link secrets sealed under CREDENTIAL_KEY (scale audit
+        # OPS-1): opened here, once; a few empty reads on every other boot.
         try:
-            _un = _ob_boot.unseal(_c_boot)
-            _c_boot.commit()
-        finally:
-            _c_boot.close()
-        if _un.get("unsealed") or _un.get("failed"):
-            _boot_log.warning("unsealed an off-site copy's values at boot: %s", _un)
-    except Exception as _e_boot:
-        _boot_log.exception("unseal pass at boot failed: %s", _e_boot)
-    # This boot, in boot_events (#76): the row before it says whether the
-    # last process ended cleanly. After init_db, never before it: creating
-    # the file first would stop adopt_legacy_db from ever running.
-    _BOOT_ID = _pm_boot.record_boot_start()
-    _init_auth()
-    # Telemetry tables (boot events, 5xx log, request rollups) and the
-    # provider probe ledger — created here, never on a request.
-    _pm_boot.init_platform_tables()
-    import provider_health as _ph_boot
-    _ph_boot.init_provider_health()
+            import offsite_backup as _ob_boot
+            from models import get_conn as _gc_boot
+            _c_boot = _gc_boot()
+            try:
+                _un = _ob_boot.unseal(_c_boot)
+                _c_boot.commit()
+            finally:
+                _c_boot.close()
+            if _un.get("unsealed") or _un.get("failed"):
+                _boot_log.warning("unsealed an off-site copy's values at boot: %s", _un)
+        except Exception as _e_boot:
+            _boot_log.exception("unseal pass at boot failed: %s", _e_boot)
+        # This boot, in boot_events (#76): the row before it says whether the
+        # last process ended cleanly. After init_db, never before it: creating
+        # the file first would stop adopt_legacy_db from ever running.
+        _BOOT_ID = _pm_boot.record_boot_start()
+
+    # The whole boot schema in one call (release-safety audit 10/26/26
+    # A05-07): init_db, then auth, telemetry, provider probes, webhooks,
+    # guest marketing, push and the rest of the init_* chain — the same
+    # function worker.py, /health's reference schema and the tests build
+    # with, so /health checks every table this boot migrates.
+    _models_boot.boot_schema(on_db_ready=_boot_db_ready)
     # The public status page's service rows. Seeded here, once, rather than
     # by /status on every public GET (SEC-38); the scheduler's health check
     # also re-seeds, so a service added to SERVICES appears without a deploy.
     from status_manager import seed_default_services as _seed_status
     _seed_status()
+    # A MOBILE_MIN_BUILD above every installed build is ignored, loudly
+    # (client_compat.check_min_build; blind re-audit 10/27/26). Which
+    # deployment this is, and a misnamed one, is logged by _post_boot
+    # (status_manager.boot_environment_report).
+    client_compat.check_min_build()
     # What's new: release notes kept in whats_new.ENTRIES reach the table
     # with the push that ships them (missing titles only).
     import whats_new as _wn_boot
     _wn_boot.sync()
-    _isn()
-    _isa()
-    _ec()
-    _iel()
-    _ioe()
-    _iwh()
-    _igm()
-    _ipush()
-    _i2fabc()
-    _ics()
-    _iavq()
-    _isc()
-    _isp()
-    _icc()
-    _iam()
     # A previous process may have been killed mid-generation, leaving a job
     # pending forever and a client polling an answer that will never come.
     try:
@@ -1205,8 +1135,7 @@ try:
         _ops_boot.sweep_stale_jobs()
     except Exception:
         pass
-    from sales_audits import init_sales_audits as _isa2, ensure_first_audit as _efa
-    _isa2()
+    from sales_audits import ensure_first_audit as _efa
     _efa()
     # A reply rule that changed clears the draft flags it no longer raises
     # (drafter.recheck_draft_flags) - off the boot path, a few regex reads.
@@ -1369,6 +1298,10 @@ _demo_seed.start_background_seed()
 def _post_boot():
     import atexit
     import threading
+    # What this deployment is, and loudly what is wrong with its settings: an
+    # environment name that stands a production-looking service down, a drain
+    # shorter than the shutdown (blind re-audit 10/27/26 RF6).
+    _sm_boot.boot_environment_report()
     # The reference schema /health compares against, built now rather than
     # inside the first /health — i.e. inside Railway's deploy check (#134).
     try:
@@ -1423,6 +1356,10 @@ def _post_boot():
     # A crash loop pages Will (at most hourly) — off the boot path.
     threading.Thread(target=_pm_boot.page_if_crash_looping, args=(_BOOT_ID,), daemon=True,
                      name="boot-crash-check").start()
+    # A boot past 60 s, or 50% over the median of the last ten, pages once
+    # per build (release-safety audit 10/26/26 A05-09) — off the boot path.
+    threading.Thread(target=_pm_boot.page_if_slow_boot, args=(_BOOT_ID,), daemon=True,
+                     name="boot-slow-check").start()
     # The boot backfills init_db left for after the boot when it ran past
     # BOOT_BACKFILL_BUDGET_SECONDS (models._boot_backfill — blind re-audit
     # 10/20/26 R1-14), off the worker's boot path.

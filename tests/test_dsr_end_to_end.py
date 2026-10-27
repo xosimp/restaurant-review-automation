@@ -10,12 +10,15 @@ and the model — so a seam between the pieces (a key one writes and another
 reads under a different name) fails here.
 
 Chicago, open 11am–11pm. Business date Tuesday 9/22/26 closes 04:00 UTC on
-9/23; the run is at 04:10 UTC.
+9/23; the run is at 04:10 UTC. The one-night test also runs in Los Angeles,
+New York and Honolulu (audit #25 A01-19: the synthetic data was Chicago
+only), each run ten minutes after that zone's own 11pm close.
 """
 import json
 import sys
 import types
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from flask import Flask
@@ -31,8 +34,18 @@ import dsr
 from dsr import pipeline, store
 from models import Restaurant, create_restaurant, update_restaurant, get_restaurant
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 DAY = date(2026, 9, 22)
 RUN_AT = datetime(2026, 9, 23, 4, 10)
+ZONES = ("America/Chicago", "America/Los_Angeles", "America/New_York", "Pacific/Honolulu")
+
+
+def run_at(tz):
+    """Ten minutes after 11pm on business date 9/22/26 in `tz`, as naive UTC."""
+    local = datetime(2026, 9, 22, 23, 10, tzinfo=ZoneInfo(tz))
+    return local.astimezone(timezone.utc).replace(tzinfo=None)
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
@@ -118,9 +131,9 @@ REPLY = {
 
 # ── the restaurant and its night ────────────────────────────────────────────
 
-def _restaurant(db):
+def _restaurant(db, tz="America/Chicago"):
     rid = create_restaurant(Restaurant(name="Simple EJ's", owner_email="erik@example.com",
-                                       timezone="America/Chicago"), db_path=db)
+                                       timezone=tz), db_path=db)
     # The owner's own blended wage ($440 over 32h): labor dollars are costed
     # at a rate somebody entered, never Cavnar's assumed $26 (D1-5).
     update_restaurant(rid, {"open_times_json": json.dumps({d: "11:00am" for d in DAYS}),
@@ -151,12 +164,18 @@ def _as(monkeypatch, rid, role):
         "id": 7, "restaurant_id": rid, "is_admin": 0, "role": role, "username": "u", "email": "u@x.com"})
 
 
-def test_one_night_from_close_to_the_owner_and_manager_views(db, fake_pos, monkeypatch):
-    r = _restaurant(db)
+@pytest.mark.parametrize("tz", ZONES)
+def test_one_night_from_close_to_the_owner_and_manager_views(db, fake_pos, monkeypatch, tz):
+    r = _restaurant(db, tz)
     model = _Client(REPLY)
     monkeypatch.setattr(ai_utils, "get_client", lambda timeout=None: model)
+    at = run_at(tz)
+    # Ten minutes before this zone's close nothing runs; ten after, it does.
+    assert pipeline.run_night(r, DAY, pipeline.TRIGGER_SWEEP, now_utc=at - timedelta(minutes=20),
+                              db_path=db)["action"] == "before_close"
+    assert pipeline.deadline_at(r, DAY) == datetime(2026, 9, 23, 4, 0)
 
-    out = pipeline.run_night(r, DAY, pipeline.TRIGGER_SWEEP, now_utc=RUN_AT, db_path=db)
+    out = pipeline.run_night(r, DAY, pipeline.TRIGGER_SWEEP, now_utc=at, db_path=db)
     assert out["action"] == "final" and out["version"] == 1 and out["required_missing"] == []
     rep = store.get_report(r.id, DAY, db_path=db)
     assert rep["status"] == "final" and not rep["provisional"]
@@ -200,7 +219,7 @@ def test_one_night_from_close_to_the_owner_and_manager_views(db, fake_pos, monke
                                                          "dsr_action:adjust_staffing:labor"]
 
     # A later sweep leaves a finished night alone — no second version, no second call.
-    again = pipeline.run_night(r, DAY, pipeline.TRIGGER_SWEEP, now_utc=RUN_AT.replace(hour=5), db_path=db)
+    again = pipeline.run_night(r, DAY, pipeline.TRIGGER_SWEEP, now_utc=at + timedelta(hours=1), db_path=db)
     assert again["action"] == "none" and len(model.calls) == 1
 
     web = _app()

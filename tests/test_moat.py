@@ -211,8 +211,9 @@ def test_a_closed_month_is_scored_from_measured_food_and_labor(db_path, monkeypa
     import food_cost_intelligence as fci, metrics
     rid = _rid(db_path, module_inventory=1)
     fci.record_forecast(rid, "profitability_month", "2026-08-31", 60.0, basis="test", db_path=db_path)
-    vals = {"food_cost_pct": (32.0, "measured"), "labor_pct": (26.0, "measured")}
-    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db: vals[key])
+    # COGS + labor as one share of net sales (metrics.prime_cost_pct — blind
+    # re-audit 10/26/26 B3: food cost % is over food sales and does not add).
+    monkeypatch.setattr(metrics, "prime_cost_pct", lambda r, s, e, db_path=None, with_salaries=None: (58.0, "measured"))
     monkeypatch.setattr(fci, "load_waste_history", lambda *a, **k: [], raising=False)
     import waste_trend
     monkeypatch.setattr(waste_trend, "load_waste_history", lambda *a, **k: ([], None))
@@ -224,7 +225,7 @@ def test_a_closed_month_is_scored_from_measured_food_and_labor(db_path, monkeypa
     assert row["actual"] == 58.0 and row["error_pct"] is not None
     # a month whose labor cannot be measured stays unscored — never scored against zero
     fci.record_forecast(rid, "profitability_month", "2026-07-31", 60.0, basis="test", db_path=db_path)
-    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db: (None, "no data") if key == "labor_pct" else (32.0, ""))
+    monkeypatch.setattr(metrics, "prime_cost_pct", lambda r, s, e, db_path=None, with_salaries=None: (None, "no data"))
     assert fci.score_forecasts(rid, db_path=db_path)["scored"] == 0
 
 

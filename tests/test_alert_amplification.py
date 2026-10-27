@@ -80,17 +80,19 @@ def test_the_daily_cap_counts_the_restaurants_day_not_utc(db_path):
     in UTC — so for a Chicago restaurant the cap reset at 7pm local, in the
     middle of the dinner service it existed to protect."""
     rid = _restaurant(db_path, timezone="America/Chicago")
-    from time_utils import restaurant_now_by_id
-    local = restaurant_now_by_id(rid)
-    if local.hour < 2:
-        pytest.skip("run too close to the restaurant's local midnight to be meaningful")
-    # An alert from an hour ago is inside the restaurant's own day.
-    _log(db_path, rid, 1, hours_ago=1)
-    assert models.count_alerts_today(rid, db_path) >= 1
-
-    # And one from well before local midnight must not count.
-    _log(db_path, rid, 3, hours_ago=48)
-    assert models.count_alerts_today(rid, db_path) < 4
+    from tests.clock import frozen
+    # 8:30pm in Chicago, in the dinner service — 01:30 UTC the next day. It
+    # used to skip whenever the run fell before 2am Chicago, which is when
+    # the nightly starts (blind re-audit 10/27/26 B1 F13): a fixed instant
+    # instead, the one the bug was about.
+    with frozen("2026-10-27 20:30", tz="America/Chicago"):
+        # 6pm local (23:00 UTC the day before, by UTC's calendar) is inside
+        # the restaurant's own day: it counts.
+        _log(db_path, rid, 1, hours_ago=2.5)
+        assert models.count_alerts_today(rid, db_path) == 1
+        # And one from well before local midnight does not.
+        _log(db_path, rid, 3, hours_ago=48)
+        assert models.count_alerts_today(rid, db_path) == 1
 
 
 def test_a_timezone_failure_does_not_become_no_cap_at_all(db_path, monkeypatch):

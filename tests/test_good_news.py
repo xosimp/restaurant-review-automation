@@ -406,4 +406,5 @@ def test_a_labor_streak_is_judged_with_the_salaries_in(db_path):
     assert [x for x in good_news.streaks(rid, today=today, db_path=db_path) if x["metric"] == "labor_pct"]
     models.update_restaurant(rid, {"salaried_staff_json": _json.dumps([{"name": "Pat Manager", "annual": 52000}])},
                              db_path=db_path)
-    assert not [x for x in good_news.streaks(rid, today=today, db_path=db_path) if x["metric"] == "labor_pct"]
+    with models.salary_view(True):                  # the owner's view (off a request: manager-safe)
+        assert not [x for x in good_news.streaks(rid, today=today, db_path=db_path) if x["metric"] == "labor_pct"]

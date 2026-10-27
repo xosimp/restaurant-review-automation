@@ -6,3 +6,11 @@
 # own final `COPY . /app`). Same builder, same Python, same /opt/venv.
 [phases.install]
 onlyIncludeFiles = ["requirements.txt"]
+
+# /health's reference schema, built here once per image instead of inside
+# every deploy's boot (release-safety audit 10/26/26 A05-09): a scratch
+# boot into reference_schema.json, stamped with the code's hash, under a
+# scrubbed environment (no DATABASE_URL, no provider keys). Never fails the
+# build: without the file the app builds the reference at runtime, as before.
+[phases.build]
+cmds = ["(/opt/venv/bin/python scripts/build_reference_schema.py || python3 scripts/build_reference_schema.py) || echo 'reference schema not prebuilt; built at runtime'"]

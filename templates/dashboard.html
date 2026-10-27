@@ -3144,6 +3144,30 @@ function cField(anchor, o) {
   inp.focus(); inp.select();
 }
 window.cField = cField;
+/* A change to a published week that would leave part of it with no manager
+   on (409 needs_cover — a drop, time off, an availability cut, a manager
+   taken off the roster or the floor) goes through only with who runs the
+   floor instead: asked inline, the same body sent again to the url with
+   covered_by (re-audit 10/11/26 STRESS-16; blind re-audit 10/26/26 B2).
+   ok(answer, who) runs once it went through. */
+function floorCoverAgain(anchor, url, body, d, ok, saveLabel) {
+  cField(anchor, {label: 'Who runs the floor instead?', placeholder: 'A manager, or you',
+    hint: (d && (d.manager_gap || d.error)) || '', save: saveLabel || 'Approve',
+    onSave: function (v, close) {
+      var who = String(v || '').replace(/^\s+|\s+$/g, '');
+      if (!who) { close('Name who runs the floor through it'); return; }
+      var b2 = {}, k;
+      for (k in body) { if (Object.prototype.hasOwnProperty.call(body, k)) b2[k] = body[k]; }
+      b2.covered_by = who;
+      fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(b2)}).then(apiJson).then(function (r) {
+        if (!r || !r.ok) { close((r && r.error) || 'That didn\u2019t go through'); return; }
+        close();
+        if (ok) ok(r, who);
+      }).catch(function () { close('Network error \u2014 check your connection.'); });
+    }});
+}
+window.floorCoverAgain = floorCoverAgain;
 </script>
 
 <!-- The full-width "Measured results" strip that sat here is gone. Home's
@@ -6750,6 +6774,7 @@ svg:hover .hb-xh{opacity:1}
     }
     h+=dhDistrustHtml(d.distrusted);
     h+=dhLaborNotesHtml(d.labor_notes);
+    h+=dhSetupNotesHtml(d.setup_notes);
     var nc=d.not_connected||[];
     if(nc.length){
       h+='<div class="cf-p-k">Not connected</div>';
@@ -6779,6 +6804,15 @@ svg:hover .hb-xh{opacity:1}
   // labor.data_health_notes): punches still open, a record that behaves
   // like a station login (the owner's two answers, POST
   // /api/data-health/station), a job the POS renamed.
+  /* What the setup can't vouch for — a time zone nobody chose, or one the
+     restaurant's own location contradicts (blind re-audit 10/26/26 B2). */
+  function dhSetupNotesHtml(list){
+    var h='',i;list=list||[];
+    for(i=0;i<list.length;i++){var x=list[i]||{};if(!x.text)continue;
+      h+='<div class="cf-p-row '+(x.tone==='warn'?'warn':'mid')+'"><div class="cf-p-h"><span class="t"><i class="dh-dot" aria-hidden="true"></i>'+esc(x.label||'Setup')+'</span></div>'
+        +'<div class="b">'+num(x.text)+'</div></div>';}
+    return h?'<div class="cf-p-k">Setup to check</div>'+h:'';
+  }
   function dhLaborNotesHtml(list){
     var h='',i;list=list||[];
     for(i=0;i<list.length;i++){var x=list[i]||{},a=x.action||null;if(!x.text)continue;
@@ -23956,8 +23990,11 @@ function lb2LoadTimeOff(){
 }
 document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-timeoff]'):null;if(!t)return;
-  var done=cbtnBusy(t,'\u2026');
-  fetch('/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:t.getAttribute('data-decision')})}).then(apiJson).then(function(d){
+  var done=cbtnBusy(t,'\u2026'),toUrl='/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',toBody={decision:t.getAttribute('data-decision')};
+  fetch(toUrl,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(toBody)}).then(apiJson).then(function(d){
+    // Time off that leaves a published minute with no manager on goes only
+    // with who runs the floor instead (blind re-audit 10/26/26 B2).
+    if(d&&d.needs_cover){done();shrNeedsCover(t,null,toBody,d,function(r){lb2LoadTimeOff();if(window.lb2AfterTimeOff)lb2AfterTimeOff(r);},toUrl);return;}
     // An approval over a week staff already have names the shifts to cover.
     done();if(typeof toast==='function')toast(d&&d.ok?(d.warning?('Approved \u2014 '+d.warning):(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved')):((d&&d.error)||'Could not decide'),d&&d.ok?(d.warning?'warning':'success'):'error');lb2LoadTimeOff();if(window.lb2AfterTimeOff)lb2AfterTimeOff(d);
   }).catch(function(){done();});
@@ -27108,11 +27145,21 @@ function saveAvailability() {
     else unDays.push(dayMap[checks[i].value] || checks[i].value);
   }
   var notes = (document.getElementById('av-notes').value || '').trim();
+  var avBody = {employee_name: name, available_days: avDays, unavailable_days: unDays, notes: notes || null};
   fetch('/api/labor/availability', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({employee_name: name, available_days: avDays, unavailable_days: unDays, notes: notes || null})
+    body: JSON.stringify(avBody)
   }).then(apiJson).then(function(d){
+    /* A day blocked under a manager's published shift: saved only with who
+       runs the floor instead (blind re-audit 10/26/26 B2). */
+    if (d.needs_cover && window.floorCoverAgain) {
+      floorCoverAgain(document.getElementById('av-name'), '/api/labor/availability', avBody, d, function (r) {
+        toast('Saved \u2014 ' + (r.warning || ''), 'warning');
+        loadAvailability();
+      }, 'Save');
+      return;
+    }
     if (d.ok) {
       document.getElementById('av-name').value = '';
       document.getElementById('av-notes').value = '';
@@ -30940,7 +30987,11 @@ function fc2LoadCfo(){
       var pcHeld=!!(pcaObj&&pcaObj.withheld)||!!(p&&p.withheld);
       if(p&&p.available){
         more+='<div class="fc2-prof"><span class="n"><span class="hb-num">'+p.prime_cost_pct+'%</span>'+(window.cavConf?' '+cavConf.claimTag(pcHeld?'measured':(p.claim_kind||'forecast')):'')+'</span>'
-          +'<span class="l">prime cost month to date (food '+p.food_cost_pct+'% + labor '+p.labor_pct+'%).';
+          // Both parts over net sales, so they add up to the prime cost; the
+          // food cost % over food sales is a different denominator and is
+          // said apart, never added (blind re-audit 10/26/26 B3).
+          +'<span class="l">prime cost month to date'+(p.food_share_pct!=null&&p.labor_pct!=null?' (food '+p.food_share_pct+'% + labor '+p.labor_pct+'% of sales)':'')+'.'
+          +(p.food_cost_pct!=null?' Food cost on food sales alone: '+p.food_cost_pct+'%.':'');
         // Corrected by its own record when it has leaned one way (M4
         // forecasts: projection_correction) — the corrected figure, and the
         // note saying so, never the raw one silently.
@@ -37474,9 +37525,19 @@ document.addEventListener('click', function(e) {
     if (!window.confirm((yes ? 'Approve' : 'Deny') + ' this request? It can\u2019t be changed afterwards.')) return;
     var base = n.request_kind === 'time_off' ? '/api/labor/time-off/' : '/api/labor/shift-requests/';
     var done = (typeof cbtnBusy === 'function') ? cbtnBusy(btn, yes ? 'Approving\u2026' : 'Denying\u2026') : function() {};
-    fetch(base + encodeURIComponent(n.request_id) + '/decide', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision: decision})})
+    var url = base + encodeURIComponent(n.request_id) + '/decide';
+    fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision: decision})})
       .then(apiJson).then(function(d) {
         done();
+        /* No manager on the floor without it: who runs the floor instead
+           (STRESS-16 for a drop; blind re-audit 10/26/26 B2 for time off). */
+        if (d && d.needs_cover && window.floorCoverAgain) {
+          floorCoverAgain(btn, url, {decision: decision}, d, function (r, who) {
+            _rowSettled(n, 'Approved');
+            if (typeof toast === 'function') toast('Approved \u2014 ' + (r.warning || (who + ' runs the floor')), 'warning');
+          });
+          return;
+        }
         if (!d || !d.ok) { n.can_decide = false; renderList(); if (typeof toast === 'function') toast((d && d.error) || 'That request was already answered.', 'error'); return; }
         _rowSettled(n, yes ? 'Approved' : 'Denied');
         // An approval over a published week names the shifts to cover.
@@ -39506,6 +39567,11 @@ window._cuRole=window.CAV_BOOT.role;
   function _rstSave(name,patch,after){
     patch.employee_name=name;
     jsend('/api/labor/staff-settings',patch,function(d){
+      /* Leaves a published minute with no manager on: saved only with who
+         runs the floor instead (blind re-audit 10/26/26 B2). */
+      if(d.needs_cover&&window.floorCoverAgain){var anc=document.querySelector('[data-rst="'+(window.CSS&&CSS.escape?CSS.escape(name):name)+'"]');
+        floorCoverAgain(anc,'/api/labor/staff-settings',patch,d,function(r){toast('Saved \u2014 '+(r.warning||''),'warning');if(window.loadRoster)loadRoster();if(after)after();},'Save');
+        renderRoster();return;}
       if(!d.ok){toast(d.error||'Could not save that','error');renderRoster();return;}
       var e=_rstFind(name);
       if(e){var s=d.settings||{},k;e.settings=e.settings||{};for(k in s)if(s.hasOwnProperty(k))e.settings[k]=s[k];if(s.active!==undefined)e.active=s.active;}
@@ -40145,10 +40211,12 @@ window._cuRole=window.CAV_BOOT.role;
     var chip=document.getElementById('floor-chip');
     if(!r.available){h+='<div class="hb-empty">'+esc(r.reason||'Nothing to read yet today.')+'</div>';if(chip)chip.textContent='';}
     else{
-      if(chip)chip.textContent=p.all_in_projected!==null&&p.all_in_projected!==undefined?p.all_in_projected+'% projected':'';
+      var allIn=p.all_in_projected!==null&&p.all_in_projected!==undefined;
+      var hrProj=p.hourly_projected!==null&&p.hourly_projected!==undefined;
+      if(chip)chip.textContent=allIn?p.all_in_projected+'% projected':(hrProj?p.hourly_projected+'% hourly projected':'');
       h+='<div class="lb2-intro"><b>'+esc(r.sentence||'')+'</b></div>';
       h+='<div class="shr-row"><div class="who"><b>Sales</b><span class="sub">'+_flMoney(s.so_far)+' so far ('+esc(s.basis||'no reading yet')+') · '+_flMoney(s.projected)+' projected at close: '+esc(s.projected_basis||'not enough to project from yet')+(s.covers_booked?' · <span class="hb-num">'+esc(s.covers_booked)+'</span> covers booked':'')+'</span></div></div>';
-      h+='<div class="shr-row"><div class="who"><b>Labor</b><span class="sub">'+_flMoney(lab.to_date)+' so far ('+_flPct(p.hourly_so_far)+' of sales, hourly) · '+_flMoney(lab.rest)+' still scheduled · '+_flPct(p.all_in_projected)+' projected all-in'+(p.target!==null&&p.target!==undefined?' against '+esc(p.target_label||'your target')+' of '+_flPct(p.target):'')+(lab.basis==='schedule'?' · the POS has no live clock feed, so labor so far is the schedule’s':'')+'</span></div></div>';
+      h+='<div class="shr-row"><div class="who"><b>Labor</b><span class="sub">'+_flMoney(lab.to_date)+' so far ('+_flPct(p.hourly_so_far)+' of sales, hourly) · '+_flMoney(lab.rest)+' still scheduled · '+(allIn?_flPct(p.all_in_projected)+' projected all-in'+(p.target!==null&&p.target!==undefined?' against '+esc(p.target_label||'your target')+' of '+_flPct(p.target):''):_flPct(p.hourly_projected)+' projected for hourly staff')+(lab.basis==='schedule'?' · the POS has no live clock feed, so labor so far is the schedule’s':'')+'</span></div></div>';
       var ms=r.moves||[];
       if(ms.length)h+='<div class="sr-k" style="margin:14px 0 4px">Worth doing now</div>';
       for(i=0;i<ms.length;i++){h+='<div class="shr-row"><div class="who"><span class="shr-kind">'+esc(ms[i].kind.replace('_','-'))+'</span> <span class="sub">'+esc(ms[i].text)+'</span></div></div>';}
@@ -40425,20 +40493,11 @@ window._cuRole=window.CAV_BOOT.role;
   /* A drop whose approval leaves part of the day with no manager on is
      approved only with who runs the floor instead (the owner counts) —
      asked inline, sent again with covered_by (re-audit 10/11/26 STRESS-16). */
-  window.shrNeedsCover=function(btn,id,body,d,after){
-    cField(btn,{label:'Who runs the floor instead?',placeholder:'A manager, or you',hint:d.manager_gap||d.error||'',save:'Approve',
-      onSave:function(v,close){
-        var who=String(v||'').replace(/^\s+|\s+$/g,'');
-        if(!who){close('Name who runs the floor through it');return;}
-        var b2={};for(var k in body){if(Object.prototype.hasOwnProperty.call(body,k))b2[k]=body[k];}
-        b2.covered_by=who;
-        jsend('/api/labor/shift-requests/'+id+'/decide',b2,function(r){
-          if(!r.ok){close(r.error||'Could not approve that');return;}
-          close();
-          toast('Approved \u2014 '+(r.warning||(who+' runs the floor')),'warning');
-          if(after)after();
-        });
-      }});
+  window.shrNeedsCover=function(btn,id,body,d,after,url){
+    floorCoverAgain(btn,url||('/api/labor/shift-requests/'+id+'/decide'),body,d,function(r,who){
+      toast('Approved \u2014 '+(r.warning||(who+' runs the floor')),'warning');
+      if(after)after(r);
+    });
   };
   window.decideShiftRequest=function(id,decision,btn){
     var row=btn;while(row&&!(row.getAttribute&&row.getAttribute('data-shr')))row=row.parentNode;
@@ -41973,6 +42032,14 @@ function sfw1RatingLine(s) {
     var done = busy(btn, decision === 'approve' ? 'Approving…' : 'Denying…');
     jpost('/api/labor/availability-changes/' + id + '/decide', {decision: decision}, function (d) {
       done();
+      if (d.needs_cover && window.floorCoverAgain) {
+        floorCoverAgain(btn, '/api/labor/availability-changes/' + id + '/decide', {decision: decision}, d, function (r) {
+          say('Approved \u2014 ' + (r.warning || 'they are told'), 'warning');
+          sfw1LoadAvailChanges();
+          if (window.lb2LoadWaiting) lb2LoadWaiting();
+        });
+        return;
+      }
       if (!d.ok) { say(d.error || 'Could not answer that', 'error'); return; }
       say(d.warning ? 'Approved — ' + d.warning : (decision === 'approve' ? 'Approved — they are told' : 'Denied — they are told'), d.warning ? 'warning' : 'success');
       sfw1LoadAvailChanges();
@@ -46611,6 +46678,13 @@ function sfw2RuleCheck(chk) {
     if (box) box.textContent = '';
     jpost('/api/labor/staff-settings', patch, function (d) {
       done();
+      if (d.needs_cover && window.floorCoverAgain) {
+        floorCoverAgain(btn, '/api/labor/staff-settings', patch, d, function (r) {
+          say('Saved \u2014 ' + (r.warning || ''), 'warning');
+          if (window.loadRoster) window.loadRoster();
+        }, 'Save');
+        return;
+      }
       if (!d.ok) { if (box) box.textContent = d.error || 'Couldn’t save that.'; else say(d.error || 'Couldn’t save that', 'error'); return; }
       say(after || 'Saved — the next draft keeps it');
       if (window.loadRoster) window.loadRoster();
@@ -46698,6 +46772,13 @@ function sfw2RuleCheck(chk) {
       var off = t.getAttribute('data-sfw2-dorm') === 'off', fin2 = busy(t, '');
       jpost('/api/labor/staff-settings', {employee_name: name, active: !off}, function (d) {
         fin2();
+        if (d.needs_cover && window.floorCoverAgain) {
+          floorCoverAgain(t, '/api/labor/staff-settings', {employee_name: name, active: !off}, d, function (r) {
+            say('Saved \u2014 ' + (r.warning || ''), 'warning');
+            if (window.loadRoster) window.loadRoster();
+          }, 'Save');
+          return;
+        }
         if (!d.ok) { say(d.error || 'Couldn’t save that', 'error'); return; }
         if (!(off && staffHoldingSay(name, d.weeks_holding)))
           say(off ? name + ' is off the roster — Still here on their row brings them back' : name + ' stays on the roster — asked again if six more weeks pass with no shift');
@@ -48293,6 +48374,16 @@ function sfw2RuleCheck(chk) {
 .br-mrow .m .nos{color:var(--ink3)}
 .br-mrow .br-sug{font:700 11.5px/1 'Apfel Grotezk',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--ember2)}
 .br-mrow .r .br-form{flex-wrap:nowrap}
+/* A match in flight, refused or done is said ON its row (owner, 10/27/26: a corner toast and a
+   three-second re-read made Match look dead). */
+.br-mrow.br-busy{overflow:hidden}
+.br-mrow.br-busy::after{content:"";position:absolute;bottom:0;left:-30%;width:30%;height:2px;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:pulseBarSlide 1.4s linear infinite}
+.br-mrow .br-msg{grid-column:1/-1;margin-top:-8px;font-size:13.5px;color:var(--ink2)}
+.br-mrow .br-msg:empty{display:none}
+.br-mrow .br-msg.err{color:var(--br-red-text)}
+.br-mrow .br-msg.ok{color:var(--green)}
+.br-mrow .br-sel.br-need{outline:2px solid var(--red);outline-offset:1px}
+.br-mrow.br-done .r{opacity:.5}
 .br-nml{display:flex;flex-direction:column;border-radius:22px;border:1px solid var(--br-hair2);background:var(--br-plate);box-shadow:var(--elev-1);overflow:hidden}
 .br-nm2{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1.2fr) auto;gap:16px;align-items:center;padding:16px 22px}
 .br-nm2+.br-nm2::before{content:"";position:absolute;left:22px;right:22px;top:0;height:1px;background:var(--br-hair2)}
@@ -48301,9 +48392,12 @@ function sfw2RuleCheck(chk) {
 .br-nm2 .a>span,.br-nm2 .b>span{display:block;margin-top:5px;font-size:13.5px;color:var(--ink3)}
 .br-nm2 .ar{color:var(--ember2);display:flex}
 .br-nm2 .act{display:flex;gap:6px;align-items:center;white-space:nowrap}
-/* Recipe cards flow as balanced columns, so a short card never leaves a hole beside a tall one (owner, 10/16/26). */
-.br-rcps{column-count:2;column-gap:14px}
-.br-rcps>.br-rcp{break-inside:avoid;margin-bottom:14px;width:100%}
+/* Recipe cards in two balanced columns, so a short card never leaves a hole beside a tall one (owner, 10/16/26);
+   the script deals each card to the shorter column - CSS columns painted a card's shadow into the empty one in
+   Safari (10/27/26). */
+.br-rcps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+.br-rcol{display:flex;flex-direction:column;gap:14px;min-width:0}
+.br-rcol:empty{display:none}
 .br-rcp{display:flex;flex-direction:column;border-radius:22px;border:1px solid var(--br-hair2);background:var(--br-plate);box-shadow:var(--elev-1);overflow:hidden}
 .br-rcp>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:20px 22px 14px}
 .br-rcp>header b{display:block;font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink)}
@@ -48364,7 +48458,7 @@ function sfw2RuleCheck(chk) {
   .br-top{margin-bottom:32px}
   #bar .cbtn.br-tab{padding:0 14px;font-size:14.5px}
   .br-feat,.br-insl,.br-cstat,.br-cform .br-ccats,.br-mhead,.br-cfigs{grid-template-columns:minmax(0,1fr)}
-  .br-rcps{column-count:1}
+  .br-rcps{grid-template-columns:minmax(0,1fr)}
   .br-sigs,.br-sigs.few{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   #bar .cbtn.br-sig.lead,#bar .br-sigs.few .cbtn.br-sig.lead{grid-column:span 2;grid-row:auto;min-height:200px}
   #bar .cbtn.br-sig{min-height:0;padding:18px 16px 14px;border-radius:18px}
@@ -48412,6 +48506,7 @@ function sfw2RuleCheck(chk) {
 /* Reduce Motion (V16): the entrances, sweeps and shimmer stop and show
    their end state. Sizing belongs to .br-chart .dot.sm above, never here. */
 @media (prefers-reduced-motion:reduce){
+  .br-mrow.br-busy::after{animation:none;left:35%}
 .br-rise,.br-fade,.br-bar i,.br-sk,.br-steps i{animation:none!important;opacity:1;transform:none}
 .br-chart .dot.hot::after{animation:none!important;opacity:1}
 .br-draw{animation:none!important;clip-path:none}
@@ -49037,15 +49132,35 @@ function sfw2RuleCheck(chk) {
       + (x.not_bought_in_span ? '<div class="r">—<span>poured from stock bought before this span</span></div></div>'
         : '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>');
   }
+  /* What a drink button is (owner, 10/27/26: "no one is ordering a Malibu shot"): a button named for a spirit is
+     a pour of that bottle however it is served (the mixer rings on its own line); a made drink pours from more
+     than one bottle and needs its recipe card; a wine button is a glass. bar.variance.serve_kind decides. */
+  function serveLine(u) {
+    if (u.serve === 'spirit') return 'A pour of ' + esc2(posName(u.item)) + ' — neat, on the rocks or with a mixer';
+    if (u.serve === 'made') return 'A made drink — it pours from more than one bottle';
+    if (u.serve === 'glass') return 'A glass of wine';
+    return '';
+  }
+  function pourDefault(cat) {
+    var b = (DATA && DATA.bar_settings) || {};
+    return cat === 'liquor' ? b.liquor_oz : (cat === 'wine' ? b.wine_oz : null);
+  }
+  function noSuggestion(u) {
+    if (u.serve === 'made') return '<span class="nos">Needs its recipe card — or match the spirit it mostly pours</span>';
+    var since = ((DATA && DATA.invoices) || {}).from_mdy;
+    if (u.on_invoices === false && since) return '<span class="nos">No ' + esc2(posName(u.item)) + ' on an invoice since ' + hn(since) + '</span>';
+    return '<span class="nos">No suggestion</span>';
+  }
   function varUnmapped(u) {
-    var sg = u.suggest || null;
+    var sg = u.suggest || null, sl = serveLine(u), pd = pourDefault(u.category);
     // One row of the matching queue: the drink and what it sold, the
     // suggestion when there is one, and the match on the same line.
     return '<div class="br-mrow' + (sg ? ' sg' : '') + '" data-br-nm="' + esc2((String(u.item || '') + ' ' + posName(u.item)).toLowerCase()) + '"><div class="n"><b>' + esc2(posName(u.item)) + '</b><span><i class="br-swt" style="--s:' + seriesOf(u.category).css + '"></i>' + esc2(LABELS[u.category] || u.category || '') + ' · ' + hn(u.rung_units) + ' sold · ' + hn(money(u.sales_usd)) + '</span>'
+      + (sl ? '<span class="br-serve">' + sl + '</span>' : '')
       + (u.spec_suggested ? '<span class="br-tagx">Recipe card suggests one</span>' : '') + '</div>'
-      + '<div class="m">' + (sg ? '<span class="br-sug">Suggested</span><b>' + esc2(sg.product) + '</b>' + (sg.oz != null ? '<span class="oz">' + hn(sg.oz + ' oz') + '</span>' : '') : '<span class="nos">No suggestion</span>') + '</div>'
+      + '<div class="m">' + (sg ? '<span class="br-sug">Suggested</span><b>' + esc2(sg.product) + '</b>' + (sg.oz != null ? '<span class="oz">' + hn(sg.oz + ' oz') + '</span>' : '') : noSuggestion(u)) + '</div>'
       + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(posName(u.item)) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key) + '<optgroup label="Not a drink to match"><option value="skip:not_a_drink">Set aside — not a drink</option><option value="skip:not_on_invoices">Set aside — not bought on any invoice</option></optgroup></select>'
-        + '<input class="br-in2" style="width:84px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="oz" value="' + (sg && sg.oz != null ? esc2(String(sg.oz)) : '') + '" aria-label="Ounces a drink">'
+        + '<input class="br-in2" style="width:84px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="' + (pd ? esc2(pd + ' oz') : 'oz') + '" value="' + (sg && sg.oz != null ? esc2(String(sg.oz)) : '') + '" aria-label="Ounces a drink' + (pd ? ' — ' + esc2(String(pd)) + ' if left empty' : '') + '">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-vmap="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '">Match</button></div>' : '') + '</div></div>';
   }
   // A recipe card's ingredient, inside its cocktail's card: the owner picks
@@ -49829,9 +49944,13 @@ function sfw2RuleCheck(chk) {
     if (!un.length) return '';
     for (i = 0; i < un.length; i++) { if (i < FIRST) h += varUnmapped(un[i]); else rest += varUnmapped(un[i]); }
     var tot = v.unmapped_total || un.length;
+    var lz = pourDefault('liquor');
     return '<section class="br-sec2" id="br-unm">' + head('Drinks to match', hn(tot) + ' · ' + hn(money(v.unmapped_sales_usd)) + ' sold',
-        'A POS drink counts in bought vs sold once it is matched to the product it pours from. Most arrive with a suggestion — the bottle or keg its name points at and the ounces its name states — saved only when you press Match. A drink not matched is left out, never counted as zero.'
-        + (tot > un.length ? ' The ' + hn(un.length) + ' with the most sales show; the rest come up as these are matched.' : ''), null,
+        '<b class="cav-tl-lead">A drink counts in bought vs sold once it is matched to what it pours from.</b><ul class="cav-tl">'
+        + '<li>Named for a spirit (Malibu, Bombay): a pour of that bottle — neat, on the rocks or with a mixer the POS rings on its own. It counts ' + (lz ? hn(lz + ' oz') : 'the house pour') + ' unless you set one, twice for a Double.</li>'
+        + '<li>A made drink (a shot, a martini, a mule) pours from more than one bottle: it needs its recipe card.</li>'
+        + '<li>A suggestion is the bottle or keg its name points at, saved only when you press Match.</li>'
+        + '<li>A drink not matched is left out, never counted as zero.' + (tot > un.length ? ' The ' + hn(un.length) + ' with the most sales show; the rest come up as these are matched.' : '') + '</li></ul>', null,
         '<input class="br-q br-mq" id="br-mq" type="search" placeholder="Find a drink" aria-label="Find a drink to match" aria-controls="br-unm-list">')
       + '<div class="br-mlist" id="br-unm-list">' + h + (rest ? fold('br-unm-rest', hn(un.length - FIRST) + ' more', null, rest, 'br-mlist') : '') + '</div>'
       + '<div class="br-empty" id="br-mq-none" hidden>No drink matches that.</div>' + setAsideList(v) + '</section>';
@@ -49864,7 +49983,10 @@ function sfw2RuleCheck(chk) {
   }
   /* Recipe cards grouped by cocktail: one card a drink, its ingredients in it. */
   function recipes(v) {
-    var sg = (ST.specs && ST.specs.specs) || v.suggestions || [], groups = [], by = {}, i, h = '';
+    // An open card carries its confirmed ingredients too (card_confirmed), so it shows the whole recipe and its
+    // count includes them (owner, 10/27/26: the Chocolate Martini read "0 of 2", its confirmed Baileys left off).
+    var open = v.suggestions || [], sg = (ST.specs && ST.specs.specs) || open.concat(v.card_confirmed || []);
+    var groups = [], by = {}, i, cols = ['', ''], tall = [0, 0];
     for (i = 0; i < sg.length; i++) {
       if (sg[i].status === 'removed') continue;
       var k = String(sg[i].item_name || '').toLowerCase();
@@ -49873,14 +49995,19 @@ function sfw2RuleCheck(chk) {
     }
     if (!groups.length) return '';
     for (i = 0; i < groups.length; i++) {
-      var g = groups[i], done = 0, rh = '', j;
+      var g = groups[i], done = 0, rh = '', j, c;
+      g.rows.sort(function (a, b) { return (+a.id || 0) - (+b.id || 0); });
       for (j = 0; j < g.rows.length; j++) { if (g.rows[j].status === 'confirmed') done++; rh += specRow(g.rows[j]); }
       var st = done === g.rows.length ? '<span class="br-stc ok">Confirmed</span>' : '<span class="br-stc">' + hn(done) + ' of ' + hn(g.rows.length) + ' confirmed</span>';
-      h += '<article class="br-rcp br-rise" style="animation-delay:' + (0.04 * i) + 's"><header><div><b>' + esc2(posName(g.name)) + '</b>' + (g.recipe && g.recipe !== g.name && g.recipe !== posName(g.name) ? '<span>' + esc2(g.recipe) + '</span>' : '') + '</div>' + st + '</header><div class="ings">' + rh + '</div></article>';
+      // Two columns, each card to the shorter one (header plus its rows): the balance CSS columns gave, without
+      // their painting a card's shadow into the empty column in Safari (owner, 10/27/26).
+      c = tall[0] <= tall[1] ? 0 : 1;
+      tall[c] += 2 + g.rows.length;
+      cols[c] += '<article class="br-rcp br-rise" style="animation-delay:' + (0.04 * i) + 's"><header><div><b>' + esc2(posName(g.name)) + '</b>' + (g.recipe && g.recipe !== g.name && g.recipe !== posName(g.name) ? '<span>' + esc2(g.recipe) + '</span>' : '') + '</div>' + st + '</header><div class="ings">' + rh + '</div></article>';
     }
-    var more = !ST.specs && (v.suggestions_total || 0) > sg.length;
+    var more = !ST.specs && (v.suggestions_total || 0) > open.length;
     return '<section class="br-sec2" id="br-specs">' + head('Recipe cards', hn(groups.length) + ' ' + plural(groups.length, 'cocktail'), 'Each cocktail’s spirits from its recipe card, against the bought product its name matches best. A card counts in bought vs sold once its ingredients are confirmed; until then it is only a suggestion.')
-      + '<div class="br-rcps">' + h + '</div>'
+      + '<div class="br-rcps"><div class="br-rcol">' + cols[0] + '</div><div class="br-rcol">' + cols[1] + '</div></div>'
       + (more ? '<div class="br-showall"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-specall="1">Show all ' + hn(v.suggestions_total) + '</button></div>' : '') + '</section>';
   }
   function matchPanel(d) {
@@ -50212,6 +50339,29 @@ function sfw2RuleCheck(chk) {
       say(okMsg, 'success'); reread();
     });
   }
+  /* A line under one matching row: what its Match did, or why it didn't. */
+  function rowSay(row, msg, kind) {
+    if (!row) { if (msg) say(msg, kind === 'err' ? 'error' : 'success'); return; }
+    var m = row.querySelector('.br-msg');
+    if (!m) { m = document.createElement('div'); m.className = 'br-msg'; m.setAttribute('role', 'status'); row.appendChild(m); }
+    m.className = 'br-msg' + (kind ? ' ' + kind : '');
+    m.textContent = msg || '';
+  }
+  /* ownerWrite for one matching row: the row shows the save in flight and
+     its result at once; the payload re-read (seconds on a big store)
+     repaints the list behind it. */
+  function rowWrite(url, body, row, btn, doneMsg, okToast) {
+    if (btn) btn.disabled = true;
+    if (row) row.classList.add('br-busy');
+    rowSay(row, '', '');
+    send('POST', url, body, function (d) {
+      if (row) row.classList.remove('br-busy');
+      if (!d.ok) { if (btn) btn.disabled = !!d.lost; rowSay(row, refusal(d), 'err'); return; }
+      if (row) { row.classList.add('br-done'); var f = row.querySelector('.br-form'); if (f) f.setAttribute('inert', ''); }
+      rowSay(row, doneMsg, 'ok');
+      say(okToast, 'success'); reread();
+    });
+  }
   function valOf(sel) { var e = document.querySelector(sel); return e ? String(e.value || '').replace(/^\s+|\s+$/g, '') : ''; }
   function attrSel(a, v) { return '[' + a + '="' + String(v).replace(/["\\]/g, '\\$&') + '"]'; }
   function goTo(id) {
@@ -50295,6 +50445,10 @@ function sfw2RuleCheck(chk) {
         return;
       }
       if (t.id === 'br-cdate') { ST.cnt.date = t.value; return; }
+      if (t.getAttribute && t.getAttribute('data-br-vmapto') != null) {
+        t.classList.remove('br-need');
+        rowSay(t.closest ? t.closest('.br-mrow') : null, '', '');
+      }
       if (t.id === 'br-fcat') { ST.cat = t.value; ST.shown = 0; refreshList(); }
       else if (t.id === 'br-fdist') { ST.dist = t.value; ST.shown = 0; refreshList(); }
       else if (t.id === 'br-fsort') { ST.sort = t.value; refreshList(); }
@@ -50387,11 +50541,19 @@ function sfw2RuleCheck(chk) {
           say('Removed the waste entry', 'success'); reread();
         });
       } else if (a('data-br-vmap') != null) {
-        var vid = a('data-br-vmap'), vk = valOf(attrSel('data-br-vmapto', vid)), oz = +valOf(attrSel('data-br-vmapoz', vid)).replace(/[^\d.]/g, '');
-        if (!vk) { say('Pick what it pours from first.', 'error'); return; }
+        var vid = a('data-br-vmap'), vsel = document.querySelector(attrSel('data-br-vmapto', vid)), vk = valOf(attrSel('data-br-vmapto', vid)), oz = +valOf(attrSel('data-br-vmapoz', vid)).replace(/[^\d.]/g, '');
+        var vrow = t.closest ? t.closest('.br-mrow') : null;
+        if (!vk) {
+          rowSay(vrow, 'Pick what it pours from first.', 'err');
+          if (vsel) { vsel.classList.add('br-need'); try { vsel.focus(); } catch (e2) {} }
+          return;
+        }
         var vb = {provider: a('data-provider'), item_id: vid, product_key: vk}, skip = vk.indexOf('skip:') === 0;
         if (oz > 0 && !skip) vb.pour_oz = oz;
-        ownerWrite('/api/food-cost/bar/drink-map', vb, skip ? 'Set aside — it is listed under Set aside' : 'Matched — it counts in bought vs sold now', t);
+        var vname = vsel && vsel.selectedIndex >= 0 ? vsel.options[vsel.selectedIndex].text : '';
+        rowWrite('/api/food-cost/bar/drink-map', vb, vrow, t,
+                 skip ? 'Set aside — it moves to Set aside' : 'Matched to ' + vname + (oz > 0 ? ' at ' + oz + ' oz' : '') + ' — it counts in bought vs sold now',
+                 skip ? 'Set aside — it is listed under Set aside' : 'Matched — it counts in bought vs sold now');
       } else if (a('data-br-unaside') != null) {
         ownerWrite('/api/food-cost/bar/drink-map', {provider: a('data-provider'), item_id: a('data-br-unaside'), product_key: null}, 'Back in Drinks to match', t);
       } else if (a('data-br-entry') != null) {

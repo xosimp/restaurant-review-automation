@@ -395,7 +395,8 @@ final class SessionStore {
                               body: ResendTwoFactorBody(pendingToken: pendingToken))
     }
 
-    private struct MeResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (Fixtures/me.json).
+    struct MeResponse: Decodable {
         let ok: Bool
         let user: User
         /// The active restaurant's IANA zone (RestaurantClock); nil from an

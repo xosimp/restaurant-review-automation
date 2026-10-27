@@ -8,7 +8,16 @@ import os, json, io
 from datetime import datetime
 
 # Import everything needed from the main app
-from models import get_conn, get_restaurant, update_restaurant, create_restaurant, Restaurant, get_reviews_data, get_review_stats, log_email, get_changelog, save_changelog_entry, delete_changelog_entry, location_group_conflict, place_id_conflict
+from models import get_restaurant, update_restaurant, create_restaurant, Restaurant, get_reviews_data, get_review_stats, log_email, get_changelog, save_changelog_entry, delete_changelog_entry, location_group_conflict, place_id_conflict
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from auth import get_session_user, delete_session, create_user, update_password, admin_required, login_required, recent_auth_required
 import admin_events as _admin_events_c   # the typed audit decorator on admin writes (R7-13)
 from emails import send_payment_email, send_welcome_email
@@ -190,6 +199,12 @@ def create_client(current_user):
             location_name=(data.get("location_name") or "").strip() or None,
             timezone=timezone,
         ))
+        if (data.get("timezone") or "").strip():
+            # The zone the admin chose, stamped as chosen (update_restaurant):
+            # the Chicago default nobody chose is what Data Health flags
+            # (blind re-audit 10/26/26 B2).
+            from models import update_restaurant as _upd_tz
+            _upd_tz(rid, {"timezone": timezone})
         try:
             create_user(
                 restaurant_id=rid,
@@ -4563,6 +4578,43 @@ def admin_api_set_demo(restaurant_id, current_user):
 _PAYING_STATUSES = ("active", "past_due", "paused")
 
 
+@admin_bp.route("/admin/api/rollout", methods=["GET"])
+@admin_required
+def admin_api_rollout_list(current_user):
+    """Every cohort rollout flag (rollout.py): percent, allow and deny lists,
+    who set it, and any ROLLOUT_* environment override that wins over it."""
+    import rollout
+    return jsonify(ok=True, flags=rollout.list_flags(), known=rollout.known_features())
+
+
+@admin_bp.route("/admin/api/rollout", methods=["POST"])
+@admin_required
+def admin_api_rollout_set(current_user):
+    """Set one feature's cohort: {feature, percent 0-100, allow: [rid],
+    deny: [rid], note}. Audited with the before and after state; refused
+    (and audited) when the setting is malformed."""
+    import admin_events
+    import rollout
+    data = request.get_json(silent=True) or {}
+    feature = str(data.get("feature") or "").strip().lower()
+    try:
+        before, after = rollout.set_flag(feature, data.get("percent", 0), allow=data.get("allow") or (),
+                                         deny=data.get("deny") or (), note=data.get("note"),
+                                         by=current_user.get("username"))
+    except rollout.RolloutError as e:
+        # RolloutError carries rollout's own sentence, never a provider's URL.
+        refusal = str(e)
+        admin_events.record_admin_action(current_user, "rollout.set", target=f"rollout:{feature[:64]}",
+                                         after={"request": {k: data.get(k) for k in ("percent", "allow", "deny")},
+                                                "refused": refusal}, result="refused")
+        return jsonify(ok=False, error=refusal), 400
+    admin_events.record_admin_action(current_user, "rollout.set", target=f"rollout:{feature}", before=before,
+                                     after=after, summary=f"{feature} rollout set to {after['percent']}% by "
+                                                          f"{current_user.get('username')}")
+    env = rollout.parse_env(os.environ.get(rollout.env_name(feature)))
+    return jsonify(ok=True, feature=feature, flag=after, env_override=env)
+
+
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/delete-demo", methods=["POST"])
 @admin_required
 @recent_auth_required()
@@ -6274,7 +6326,11 @@ def _admin_job_executor():
         with _admin_job_lock:
             if _admin_job_pool is None:
                 from concurrent.futures import ThreadPoolExecutor
-                _admin_job_pool = ThreadPoolExecutor(max_workers=ADMIN_JOB_WORKERS, thread_name_prefix="admin-job")
+                # The container's bound, split between gunicorn web
+                # workers (pool_sizing; one worker: all of it).
+                import pool_sizing
+                _admin_job_pool = ThreadPoolExecutor(max_workers=pool_sizing.sized("admin_job", ADMIN_JOB_WORKERS),
+                                                     thread_name_prefix="admin-job")
     return _admin_job_pool
 
 

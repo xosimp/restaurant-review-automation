@@ -38,7 +38,18 @@ def test_a_rating_is_logged_under_the_person_with_its_attribute_apart(db_path, r
     assert shown["subject"] == "Antonio Corona Martinez · overall" and shown["person"] == "Antonio Corona Martinez"
 
 
+def _a_database_from_before_the_split(db_path):
+    """The split runs once per database (data_migrations, blind re-audit
+    10/27/26 B5 P3); the test database booted with it done, so forget it to
+    stand for one written before it."""
+    conn = models.get_conn(db_path)
+    conn.execute("DELETE FROM data_migrations WHERE name=?", ("capability_rating_subject_split_v1",))
+    conn.commit()
+    conn.close()
+
+
 def test_old_labelled_subjects_are_split_once_at_boot(db_path, rid):
+    _a_database_from_before_the_split(db_path)
     conn = models.get_conn(db_path)
     conn.execute("INSERT INTO capability_changes (restaurant_id, kind, subject) VALUES (?,?,?)",
                  (rid, "rating", "Evan Price · can_close"))
@@ -62,6 +73,7 @@ def test_a_labelled_string_is_never_a_person(db_path, rid):
 
 def test_the_phantom_people_and_their_questions_are_removed(db_path, rid):
     people.init_people(db_path)
+    _a_database_from_before_the_split(db_path)
     conn = models.get_conn(db_path)
     try:
         real = conn.execute("INSERT INTO people (restaurant_id, display_name, name_key, created_via) VALUES "

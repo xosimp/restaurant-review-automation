@@ -137,9 +137,9 @@ def test_thinning_keeps_a_snapshot_taken_on_a_real_count(db_path):
 def test_a_number_and_amount_at_a_sister_house_is_that_fintech_invoice(monkeypatch):
     import backoffice_ap as bo
     from fintech_invoices import distributor_key as dk
-    fins = [{"id": 1, "distributor": "Euclid Beverage, LLC. - North Aurora", "invoice_number": "W-4638131",
+    fins = [{"id": 1, "distributor": "Euclid Beverage, LLC. - North Aurora", "invoice_number": "W-6050222",
              "invoice_date": "2026-05-06", "total": 2249.45},
-            {"id": 2, "distributor": "Relax LLC - North Aurora, IL (H)", "invoice_number": "W-4638130",
+            {"id": 2, "distributor": "Relax LLC - North Aurora, IL (H)", "invoice_number": "W-3182296",
              "invoice_date": "2026-05-06", "total": 208.0}]
     for f in fins:
         f["distributor_key"] = dk(f["distributor"])
@@ -150,8 +150,8 @@ def test_a_number_and_amount_at_a_sister_house_is_that_fintech_invoice(monkeypat
         return {"id": number, "vendor": "EUCLID BEVERAGE", "vendor_key": dk("EUCLID BEVERAGE"), "entry_key": f"inv|{number}",
                 "entry_kind": "invoice", "invoice_number": number, "date": "2026-05-06", "amount": amount,
                 "category": "beer", "gl": "4320"}
-    out = bo.outside_fintech(1, es=[entry("W-4638130", 208.0)])
+    out = bo.outside_fintech(1, es=[entry("W-3182296", 208.0)])
     assert out["matched"] == 1 and not out["to_confirm"] and not out["entries"]
     # The number alone at another house is not enough: a different amount is held.
-    out = bo.outside_fintech(1, es=[entry("W-4638130", 210.0)])
+    out = bo.outside_fintech(1, es=[entry("W-3182296", 210.0)])
     assert out["matched"] == 0 and len(out["to_confirm"]) == 1

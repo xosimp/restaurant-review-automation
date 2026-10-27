@@ -25,6 +25,9 @@ import pos
 import rpower
 import toast
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _redirect(db_path, monkeypatch):

@@ -2,6 +2,10 @@
 client must never be able to approve or mutate another restaurant's rows by
 guessing IDs."""
 from models import approve_response, get_conn, create_restaurant, get_restaurant, update_restaurant, Restaurant
+import pytest
+
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
 
 
 def _status(db_path, review_id):

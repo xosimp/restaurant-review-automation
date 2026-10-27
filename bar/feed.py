@@ -22,8 +22,13 @@ FEED_LABEL = "Fintech"
 FEED_STALE_DAYS = 7
 
 
-def _today(today):
+def _today(today, restaurant_id=None):
+    """`today` as a date; with none, the restaurant's own date (audit #25
+    F4), the server's only when there is no restaurant to ask."""
     if today is None:
+        if restaurant_id is not None:
+            from bar.common import local_today
+            return local_today(restaurant_id)
         return date.today()
     return today if isinstance(today, date) else date.fromisoformat(str(today)[:10])
 
@@ -31,7 +36,7 @@ def _today(today):
 def invoices_through(restaurant_id, today=None, db_path=None, conn=None):
     """The newest invoice date on file (ISO), never one past tomorrow (a
     future date is a typo, not data); None with no dated invoice."""
-    latest_ok = (_today(today) + timedelta(days=1)).isoformat()
+    latest_ok = (_today(today, restaurant_id) + timedelta(days=1)).isoformat()
     own = conn is None
     conn = conn or get_conn(db_path)
     try:
@@ -51,7 +56,7 @@ def feed_status(restaurant_id, today=None, db_path=None) -> dict:
     day the newest Fintech file arrived, and — when the invoices are more
     than FEED_STALE_DAYS behind today — how many days behind (else None)."""
     from time_utils import local_iso
-    day = _today(today)
+    day = _today(today, restaurant_id)
     conn = get_conn(db_path)
     try:
         inv = invoices_through(restaurant_id, day, conn=conn)

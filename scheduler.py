@@ -240,6 +240,24 @@ def _remember_fetch_cursor(order, processed, key=_FETCH_CURSOR_KEY):
         log.warning(f"_remember_fetch_cursor failed: {e}")
 
 
+# The job run the current thread is inside (_PulsedOps.run_job / run_in_lane
+# set it in the job's own thread): {"only": frozenset of restaurant ids a
+# PARTIAL RETRY re-runs, or None; "swept": whether the run went through
+# resumable_sweep; "t0": when it began}. A partial retry re-runs only the
+# restaurants whose failures the first run captured — never the
+# model-spending or vendor-reading work that succeeded (re-audit B7 P3 /
+# B8 P3, 10/27/26: the retry re-ran the whole sweep).
+import contextvars as _cv_scope  # noqa: E402
+_RUN_SCOPE = _cv_scope.ContextVar("scheduler_run_scope", default=None)
+
+
+def retry_only():
+    """The restaurant ids the current run is a partial retry of (a
+    frozenset), or None for a full run."""
+    sc = _RUN_SCOPE.get()
+    return sc.get("only") if sc else None
+
+
 def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
     """Run `fn(rid)` over restaurant ids the run_daily_fetch way: rotated to
     start after job_cursors[key], a worker pool, a wall-clock bound — and the
@@ -259,8 +277,21 @@ def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
     a thread holding an older, shorter prefix could write last and leave
     the cursor behind restaurants already done — the next pass re-fetched
     them first. Seen as a flaky test on the six-worker review fetch.
+
+    Inside a partial retry (retry_only()) only the restaurants the first run
+    failed are run, and the cursor is left where the full pass put it; any
+    run through here marks itself as one a partial retry can narrow
+    (_PulsedOps._after retries only such runs).
     """
-    order = _fetch_order(list(ids), key=key)
+    sc = _RUN_SCOPE.get()
+    only = None
+    if sc is not None:
+        sc["swept"] = True
+        only = sc.get("only")
+    if only is not None:
+        order = [i for i in ids if i in only]
+    else:
+        order = _fetch_order(list(ids), key=key)
     if not order:
         return 0, False
     lock, write_lock = threading.Lock(), threading.Lock()
@@ -274,7 +305,7 @@ def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
                 p += 1
             advanced = p != state["prefix"]
             state["prefix"] = p
-        if advanced:
+        if advanced and only is None:
             # One writer at a time, and never backwards; the SQLite write
             # stays outside `lock` so workers finishing are not held up.
             with write_lock:
@@ -879,7 +910,10 @@ def run_daily_fetch(restaurant_ids=None):
         return {"restaurants": len(live), "processed": counts["ok"], "hit_time_bound": ran_out,
                 "attempted": counts["attempted"], "ok": counts["ok"], "failed": counts["failed"],
                 "skipped": counts["skipped"] + quiet_skipped, "hit_bound": bool(ran_out),
-                "quiet_skipped": quiet_skipped}
+                "quiet_skipped": quiet_skipped,
+                # What the pass was for (Audit #25 A07-03): ops.jobs_failing
+                # warns when it attempts and skips nothing of these.
+                "eligible": len(by_id)}
 
     except Exception as e:
         # Captured AND re-raised (DH2-1): logged only, a pass that never
@@ -1159,7 +1193,12 @@ def run_weekly_digests():
                     reached.add(key)
                 _send(key)
 
-        _done, hit_bound = resumable_sweep(WEEKLY_DIGEST_CURSOR_KEY, list(units), _unit, DIGEST_MAX_SECONDS,
+        # Each address's build and send in the owner's salary view (the
+        # digest goes to owner addresses alone — get_owner_emails): a pool
+        # worker carries no view of its own, and reads manager-safe.
+        import models as _models_wd
+        _done, hit_bound = resumable_sweep(WEEKLY_DIGEST_CURSOR_KEY, list(units),
+                                           _models_wd.in_salary_view(True, _unit), DIGEST_MAX_SECONDS,
                                            workers=DIGEST_WORKERS, job="weekly_digest")
         if hit_bound:
             counts["hit_bound"] = True
@@ -1435,6 +1474,11 @@ def run_pos_retry():
     from time_utils import restaurant_now
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
     lock = threading.Lock()
+    # The nightly sync's queue rows, as they ran (re-audit B7 P2): the 3am
+    # fan-out's run reads its stores' real outcomes, so its failure share,
+    # idle pass and SLA see a night the provider failed (ops.jobs_failing).
+    if pos.POS_SYNC_QUEUE:
+        _ops.settle_queue_fanout("pos_sync", "pos_sync")
     due = data_health.due_retries("pos")
     # The stores the 3am Chicago pass left for their own hour (blind
     # re-audit 10/20/26 R3-12: pos.sync_due_locally) — synced here once that
@@ -1583,7 +1627,12 @@ def run_labor_prewarm(now=None):
             log.error(f"labor prewarm failed for restaurant {rid}: {e}")
             _ops.capture(e, job="labor_prewarm", context=f"restaurant_id={rid}")
 
-    _done, ran_out = resumable_sweep(LABOR_PREWARM_CURSOR_KEY, labor_prewarm_restaurants(), _one,
+    # The owner's read, written under the owner's key (insight_store.
+    # salary_kind): a pool worker would otherwise read manager-safe and
+    # warm the hourly read nobody opened.
+    import models as _models_lp
+    _done, ran_out = resumable_sweep(LABOR_PREWARM_CURSOR_KEY, labor_prewarm_restaurants(),
+                                     _models_lp.in_salary_view(True, _one),
                                      LABOR_PREWARM_MAX_SECONDS, workers=LABOR_PREWARM_WORKERS, job="labor_prewarm")
     c["hit_bound"] = bool(ran_out)
     return c
@@ -2305,6 +2354,30 @@ def gunzip_snapshot(src_path, dest_path):
         _sh.copyfileobj(gz, out, _BACKUP_CHUNK)
 
 
+def _no_volume_backups() -> bool:
+    """No volume, on purpose (VOLUME_OPTIONAL — release-safety audit
+    10/26/26, P3): the snapshot is scratch on the container's disk and the
+    off-site copy is the backup."""
+    try:
+        import marker_store
+        return marker_store.backend() == "object"
+    except Exception as e:
+        log.warning(f"backup: marker backend unknown, using the volume path: {e}")
+        return False
+
+
+def backup_dir_path():
+    """Where backup_db writes and the drill reads: BACKUP_DIR, else beside the
+    database on the volume, else (no volume) a scratch directory."""
+    if os.getenv("BACKUP_DIR"):
+        return os.getenv("BACKUP_DIR")
+    if _no_volume_backups():
+        import tempfile
+        return os.path.join(tempfile.gettempdir(), "cavnar-backups")
+    from models import DB_PATH
+    return os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+
+
 def local_snapshots(backup_dir):
     """Every local snapshot in `backup_dir`, oldest first by the date in its
     name (a gzipped one after a plain one of the same date)."""
@@ -2581,7 +2654,7 @@ def backup_db():
 
     timestamp = _chi_now().strftime("%Y-%m-%d")
     filename = f"cavnar_ai_backup_{timestamp}.db"
-    backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+    backup_dir = backup_dir_path()
     # The uncompressed, checked copy the gzip is made from — kept just long
     # enough to be scrubbed for the off-site copy (no second copy, no
     # decompress), then deleted.
@@ -2762,6 +2835,13 @@ def backup_db():
                offsite_error="; ".join(errors)[:500] or None)
     if not targets:
         _backup_failed(run, "no off-site copy was made tonight — " + ("; ".join(errors) or "unknown"))
+    if _no_volume_backups():
+        # No volume (VOLUME_OPTIONAL): the snapshot was scratch on the
+        # container's disk, gone at the next deploy anyway — the off-site
+        # copy just made is the backup (Postgres's own point-in-time
+        # recovery is the first restore path).
+        _remove_quietly(local_path)
+        run["_detail"]["local"] = "not kept: no volume (VOLUME_OPTIONAL); the off-site copy is the backup"
     run["finished_at"] = _now_utc_stamp()
     _backup_too_slow(run)
     run["detail_json"] = _json.dumps(run.pop("_detail", {}), default=str)[:2000]
@@ -4385,6 +4465,20 @@ def _summary_outcome(job, rs, result, claim_key):
     return "failed"
 
 
+def _models_owner_view(fn):
+    """models.reads_as_owner, resolved when the job runs: the monthly and
+    quarterly summaries go to restaurants.owner_email alone, so they read
+    all-in labor (jobs_registry salary_view "owner")."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        import models
+        return models.reads_as_owner(fn)(*args, **kwargs)
+    return run
+
+
+@_models_owner_view
 def run_monthly_summaries():
     """1st of the month, 9am — the monthly summary email to active clients.
 
@@ -4468,6 +4562,7 @@ def run_monthly_summaries():
             "sent": sent}
 
 
+@_models_owner_view
 def run_quarterly_summaries():
     """1st of Jan / Apr / Jul / Oct, 9am local — the quarter that just
     ended. Same audience and the same switch as the monthly; counted as sent
@@ -4854,9 +4949,17 @@ def run_restore_drill():
     """
     import sqlite3, shutil
     from models import DB_PATH, init_db
-    backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+    backup_dir = backup_dir_path()
     # Gzipped since 10/7/26 (#8); a plain one from before still counts.
     snaps = local_snapshots(backup_dir)
+    if not snaps and _no_volume_backups():
+        # No volume (VOLUME_OPTIONAL): no snapshot is kept locally; the drill
+        # proves the off-site copy, the backup there is.
+        os.makedirs(backup_dir, exist_ok=True)
+        off = _drill_offsite(backup_dir)
+        if not (off.get("checked") and off.get("ok")):
+            raise RuntimeError(f"restore drill (off-site only, no volume): {off.get('summary')}")
+        return {"offsite": off, "ok": True, "attempted": 1, "failed": 0, "skipped": 0, "hit_bound": False}
     if not snaps:
         raise RuntimeError(f"restore drill: no snapshot in {backup_dir}")
     newest = snaps[-1]
@@ -5257,6 +5360,16 @@ def _pulse_interval():
     return max(0.05, min(float(SCHEDULER_TICK_SECONDS), _ops.SCHEDULER_LEASE_STALE_SECONDS / 3.0))
 
 
+def _scoped_result(res, scope):
+    """A partial retry's result: what it was FOR is the restaurants it
+    retried, not the fleet — its `eligible` is dropped, so a narrowed run
+    that found nothing left to do never reads as an idle pass."""
+    if scope and scope.get("only") is not None and isinstance(res, dict) and "eligible" in res:
+        res = dict(res)
+        res.pop("eligible", None)
+    return res
+
+
 class _PulsedOps:
     """scheduler_loop's view of ops: every attribute is ops' own, except
     run_job, which runs the job with a pulse beside it, and claim_period,
@@ -5334,9 +5447,13 @@ class _PulsedOps:
             pass
         try:
             now_m, now_w = time.monotonic(), time.time()
+            scopes = _ops.pending_retry_scopes()
             with self._retry_lock:
                 for claim, period, attempt, at in _ops.pending_retries():
-                    self._retries[(claim, period)] = {"attempt": attempt, "at": now_m + max(0.0, at - now_w)}
+                    entry = {"attempt": attempt, "at": now_m + max(0.0, at - now_w)}
+                    if (claim, period) in scopes:
+                        entry.update(partial=True, only=scopes[(claim, period)])
+                    self._retries[(claim, period)] = entry
         except Exception as e:
             log.warning(f"pending retries not restored: {e}")
 
@@ -5445,6 +5562,19 @@ class _PulsedOps:
             if within and self._keeping_up():
                 _ops.ping_healthcheck()
 
+    def _run_scope(self, claim, period):
+        """The run scope (_RUN_SCOPE) of a job about to run for `period`: a
+        partial retry's restaurants, else a full run."""
+        retry = None
+        if period is not None:
+            with self._retry_lock:
+                retry = self._retries.get((claim, period))
+        only = retry.get("only") if retry and retry.get("partial") else None
+        # On the database's clock, which stamps the failures it is compared
+        # with (job_failures.created_at) — never the app's.
+        return {"only": frozenset(only) if only is not None else None, "swept": False,
+                "t0": _ops.db_now_stamp() or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}
+
     def _already_running(self, name, claim):
         for n in {name, claim or name}:
             if _ops.is_running(n):
@@ -5468,16 +5598,20 @@ class _PulsedOps:
                 self._claimed.pop(claim, None)
             return None
         spec = jobs_registry.spec(name)
-        outcome = {}
+        outcome = {"scope": self._run_scope(claim, period)}
         started, stop = threading.Event(), threading.Event()
 
         def body(*a, **k):
             started.set()
+            token = _RUN_SCOPE.set(outcome["scope"])
             try:
                 res = fn(*a, **k)
             except Exception:
                 outcome["raised"] = True
                 raise
+            finally:
+                _RUN_SCOPE.reset(token)
+            res = _scoped_result(res, outcome["scope"])
             outcome["result"] = res
             return res
         try:
@@ -5502,18 +5636,63 @@ class _PulsedOps:
     def _after(self, name, claim, period, spec, outcome):
         """A failed retryable job gives its period back after a backoff —
         kept in the database too (ops.record_retry), so a deploy before the
-        retry no longer loses it (R1-10)."""
+        retry no longer loses it (R1-10).
+
+        A PARTIAL run of one (Audit #25 A07-12) that failed at least
+        jobs_registry.PARTIAL_RETRY_SHARE of what it attempted gives its
+        period back ONCE, after PARTIAL_RETRY_MINUTES: a provider blip that
+        failed 30% of the nightly learners left those restaurants a whole
+        period stale. Only on a first try — a retry that is partial again
+        keeps the period — and, like every retry, never for a job that
+        sends."""
         if period is None:
             return
         key = (claim, period)
-        failed = outcome.get("raised") or (
-            "result" in outcome and _ops.run_outcome(outcome["result"])[0] == _ops.RUN_FAILED)
+        state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else None
+        failed = outcome.get("raised") or state == _ops.RUN_FAILED
+        if (outcome.get("scope") or {}).get("only") is not None:
+            # This run WAS the one partial retry, narrowed to the restaurants
+            # that failed: however it ended, the period stays spent — a
+            # failed-retry backoff here would re-run the whole sweep, the
+            # restaurants that succeeded included (re-audit B7 P3).
+            with self._retry_lock:
+                self._retries.pop(key, None)
+            _ops.clear_retry(claim, period)
+            if failed or state == _ops.RUN_PARTIAL:
+                log.warning(f"{name}'s partial retry for {period} still failed; the period stays spent — the failures "
+                            "are in the job failures")
+            return
+        retryable = spec.get("retry") and not spec.get("sends") and len(jobs_registry.jobs_for_claim(claim)) <= 1
+        partial_retry, only = False, None
+        if not failed and state == _ops.RUN_PARTIAL and retryable:
+            counts = _ops.standard_counts(outcome["result"]) or {}
+            attempted, nfailed = int(counts.get("attempted") or 0), int(counts.get("failed") or 0)
+            partial_retry = attempted > 0 and nfailed / float(attempted) >= jobs_registry.PARTIAL_RETRY_SHARE
+            scope = outcome.get("scope") or {}
+            if partial_retry and scope.get("only") is None and key not in self._retries:
+                # Only the restaurants that failed, and only for a run whose
+                # restaurants go through resumable_sweep (it honours the
+                # narrowing) — never a whole sweep again (re-audit B7 P3).
+                only = _ops.failed_restaurants((name, claim), scope.get("t0"))
+                if not scope.get("swept") or not only:
+                    log.warning(f"{name} was partial for {period} ({nfailed} of {attempted} failed); not retried: "
+                                + ("its run does not sweep restaurants through resumable_sweep"
+                                   if not scope.get("swept") else "no failed restaurant was captured"))
+                    partial_retry = False
         with self._retry_lock:
+            if partial_retry and key not in self._retries:
+                wait = jobs_registry.PARTIAL_RETRY_MINUTES
+                self._retries[key] = {"attempt": 1, "at": time.monotonic() + wait * 60, "partial": True,
+                                      "only": sorted(only)}
+                _ops.record_retry(claim, period, 1, time.time() + wait * 60, only=sorted(only))
+                log.warning(f"{name} was partial for {period} ({nfailed} of {attempted} failed); one retry of the "
+                            f"{len(only)} restaurant(s) that failed in {wait} minutes")
+                return
             if not failed:
                 if self._retries.pop(key, None) is not None:
                     _ops.clear_retry(claim, period)
                 return
-            if not spec.get("retry") or spec.get("sends") or len(jobs_registry.jobs_for_claim(claim)) > 1:
+            if not retryable:
                 return
             attempt = self._retries.get(key, {}).get("attempt", 0)
             backoff = jobs_registry.RETRY_BACKOFF_MINUTES
@@ -5541,14 +5720,18 @@ class _PulsedOps:
         claim = kwargs.get("claim") or name
         period = self._claimed.get(claim)
         spec = jobs_registry.spec(name)
-        outcome = {}
+        outcome = {"scope": self._run_scope(claim, period)}
 
         def body(*a, **k):
+            token = _RUN_SCOPE.set(outcome["scope"])
             try:
                 res = fn(*a, **k)
             except Exception:
                 outcome["raised"] = True
                 raise
+            finally:
+                _RUN_SCOPE.reset(token)
+            res = _scoped_result(res, outcome["scope"])
             outcome["result"] = res
             return res
 
@@ -7076,6 +7259,17 @@ def scheduler_loop():
             if _due(now, 6) and now.weekday() == 0 and _ops.claim_period("ai_route_learning", str(today)):
                 from ai_learning import run_learning
                 _ops.run_job("ai_route_learning", run_learning)
+
+            # Monday 5am, on the AI lane — the weekly AI smoke eval
+            # (ai_eval.run_smoke_eval, Audit #25 A07-06): a few frozen inputs
+            # of each top surface replayed on its production model and
+            # scored against the baseline; the platform check warns on a
+            # deviation. Off (a run that attempts nothing) unless
+            # AI_SMOKE_EVAL=1. Sends nothing.
+            if _due(now, 5) and now.weekday() == 0 and _ops.claim_period("ai_smoke_eval", str(today)):
+                import ai_eval as _ai_eval
+                if not _ops.run_in_lane("ai", "ai_smoke_eval", _ai_eval.run_smoke_eval):
+                    _ops.release_period("ai_smoke_eval", str(today))
 
             # Hourly: the digest's narrative sent through Message Batches
             # from 2am local on each digest day, so the 9am send reads it

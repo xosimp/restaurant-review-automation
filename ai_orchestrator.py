@@ -805,7 +805,12 @@ def _shadow_review(run_id, result, review, db_path):
     with _SHADOW_LOCK:
         if _SHADOW_POOL is None:
             from concurrent.futures import ThreadPoolExecutor
-            _SHADOW_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-shadow")
+            # One thread per process — a bound of 1 cannot be split between
+            # gunicorn workers (pool_sizing: the sampling rate and the
+            # gateway bound what shadow reviews spend).
+            import pool_sizing
+            _SHADOW_POOL = ThreadPoolExecutor(max_workers=pool_sizing.sized("shadow_review", 1),
+                                              thread_name_prefix="ai-shadow")
 
     def _run():
         try:

@@ -26,6 +26,9 @@ import webhook_routes
 from auth import create_user, init_auth
 from models import Restaurant, Review, create_restaurant, save_reviews, update_restaurant
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 def _redirect_db(monkeypatch, db_path):
     real = models.get_conn
@@ -483,22 +486,11 @@ def test_a_conversation_is_still_refused_across_restaurants(db_path):
 
 
 # ══ P2-12 · an admin view-as session is labelled as one ═══════════════════
-
-def test_a_view_as_session_is_marked_and_not_mistaken_for_the_clients_own(db_path, monkeypatch):
-    from admin_routes import admin_bp, view_as_client
-    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will", "reauth_at": auth.sql_utc()})
-    rid = _loc(db_path, "Chicago")
-    create_user(rid, "client", "client@x.test", "pw", db_path=db_path)
-
-    app = Flask(__name__)
-    app.register_blueprint(admin_bp)
-    with app.test_request_context(f"/admin/view-as/{rid}", method="POST", data={"reason": "checking a ticket for them"}):   # a GET only asks (SEC-34)
-        view_as_client(rid)
-
-    conn = models.get_conn(db_path)
-    kinds = [r[0] for r in conn.execute("SELECT device_type FROM sessions")]
-    conn.close()
-    assert kinds == ["admin-view-as"]
+#
+# Moved to tests/test_real_app_permissions.py::
+# test_an_admin_view_as_session_is_labelled_as_one (audit #25 A01-15): a real
+# admin sign-in and the real view-as POST, instead of a patched
+# get_current_user inside a test_request_context.
 
 
 # ══ P2-13 · template use counts cannot be bumped unscoped ═════════════════

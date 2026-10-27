@@ -24,7 +24,7 @@ PRINTOUT = """Page: 1
 Store Number   : 000001  St. Charles, IL
 Distributor    : Chicago Beverage System, Inc dba Windy City
 Vendor ID      :
-Invoice Number : 101153056
+Invoice Number : 543113065
 Invoice Date   : 10/09/2026
 Invoice Total  : $439.00
 Due Date       : 10/09/2026
@@ -42,7 +42,7 @@ Page: 2
 Store Number   : 000001  St. Charles, IL
 Distributor    : Southern Glazer's Wine & Spirits of IL
 Vendor ID      :
-Invoice Number : 02508778
+Invoice Number : 09201792
 Invoice Date   : 10/13/2026
 Invoice Total  : $1,265.79
 Due Date       : 10/20/2026
@@ -61,10 +61,10 @@ EXPORT = (
     "Retailer Name,Vendor Name,Location ID,Customer ID,Invoice Number,Invoice Date,Invoice Total,"
     "Line Item Count,Received Date,Bank Account,Withdraw Date,Transaction ID,Trace Number,Batch ID,"
     "Product Number,Product Description,U.P.C,Unit Of Measure,Item Quantity,Item Cost,Item Adjustment\n"
-    "Simple EJs,\"Breakthru Beverage Illinois, LLC\",000001,700442049,0128850598,09/15/2026,$264.00,2,"
+    "Simple EJs,\"Breakthru Beverage Illinois, LLC\",000001,193351564,0233150629,09/15/2026,$264.00,2,"
     "09/15/2026,******8991,10/14/2026,239356661,091409000000001,A,9637400,HIGH NOON VODKA SELTZER,"
     "085000000000,CA,6,$42.00,$0.00\n"
-    "Simple EJs,\"Breakthru Beverage Illinois, LLC\",000001,700442049,0128850598,09/15/2026,$264.00,2,"
+    "Simple EJs,\"Breakthru Beverage Illinois, LLC\",000001,193351564,0233150629,09/15/2026,$264.00,2,"
     "09/15/2026,******8991,10/14/2026,239356661,091409000000001,A,9039158,Service Fee,9039158,BO,1,"
     "$12.00,$0.00\n"
 )
@@ -108,7 +108,7 @@ def _rows(db_path, sql, args=()):
 
 def test_the_printout_reads_every_invoice_and_balances():
     invs = fi.parse_printout(PRINTOUT)
-    assert [i["invoice_number"] for i in invs] == ["101153056", "02508778"]
+    assert [i["invoice_number"] for i in invs] == ["543113065", "09201792"]
     windy, sgws = invs
     assert windy["invoice_date"] == "2026-10-09" and windy["total"] == 439.0
     assert windy["lines"][0]["deposit"] == 60.0          # two kegs' $30 deposit inside the cost
@@ -162,7 +162,7 @@ EXPORT_AS_PRINTOUT = """Page: 1
 Store Number   : 000001  St. Charles, IL
 Distributor    : BREAKTHRU BEVERAGE ILLINOIS LLC
 Vendor ID      :
-Invoice Number : 128850598
+Invoice Number : 233150629
 Invoice Date   : 09/15/2026
 Invoice Total  : $264.00
 Due Date       : 10/15/2026
@@ -183,13 +183,13 @@ def test_the_export_replaces_the_printout_and_never_the_other_way(db):
     printout = EXPORT_AS_PRINTOUT
     fi.ingest_file(rid, "a.txt", printout.encode(), db_path=db)
     fi.ingest_file(rid, "b.csv", EXPORT.encode(), db_path=db)
-    inv = _rows(db, "SELECT * FROM fintech_invoices WHERE invoice_number='0128850598'")[0]
+    inv = _rows(db, "SELECT * FROM fintech_invoices WHERE invoice_number='0233150629'")[0]
     assert inv["source_format"] == "export"
     assert [r["uom"] for r in _rows(db, "SELECT uom FROM fintech_invoice_lines WHERE invoice_id=? ORDER BY line_no",
                                     (inv["id"],))] == ["CA", "BO"]
     res = fi.ingest_file(rid, "c.txt", (printout + "\n").encode(), db_path=db)   # a resend of the printout
     assert res["status"] == "unchanged" and res["invoices"] == 0 and res["kept"] == 1
-    again = _rows(db, "SELECT * FROM fintech_invoices WHERE invoice_number='0128850598'")[0]
+    again = _rows(db, "SELECT * FROM fintech_invoices WHERE invoice_number='0233150629'")[0]
     assert again["source_format"] == "export"
     assert len(_rows(db, "SELECT id FROM fintech_invoices")) == 1
 
@@ -297,7 +297,7 @@ def test_the_invoice_details_report_reads_its_own_column_names(db):
     rid = _rid(db)
     csv_ = ("Vendor Name,Retailer Name,Invoice Date,Invoice Due Date,Invoice Number,Invoice Total,Product Number,"
             "Quantity,Unit Cost,Unit of Measure,UPC Number,Product Description,Total Adjustments,Extended Price\n"
-            "Breakthru,EJs,09/22/2026,10/22/2026,0128949524,$84.00,9006996,2,$42.00,CA,611269991000,RED BULL 8.4Z,$0.00,$84.00\n")
+            "Breakthru,EJs,09/22/2026,10/22/2026,0822283001,$84.00,9006996,2,$42.00,CA,611269991000,RED BULL 8.4Z,$0.00,$84.00\n")
     res = fi.ingest_file(rid, "invoices-report.csv", csv_.encode(), db_path=db)
     assert res["status"] == "stored" and res["unbalanced"] == []
     ln = _rows(db, "SELECT upc, uom, qty, unit_price, cost FROM fintech_invoice_lines")[0]
@@ -355,17 +355,17 @@ def test_export_keg_deposit_and_empties_are_not_beer_cost(db):
     Superior's EMPTIES (KE) read as negative beer."""
     rid = _rid(db)
     csv_ = (BANK_HEAD
-            + _bank(WINDY, "101153056", "10/9/2026", "$428.00", "13682", "HALF ACRE DAISY CUTTER K 1/2BBL", "KE", 2,
+            + _bank(WINDY, "543113065", "10/9/2026", "$428.00", "13682", "HALF ACRE DAISY CUTTER K 1/2BBL", "KE", 2,
                     "$199.00", "$60.00", "$458.00")
-            + _bank(WINDY, "101153056", "10/9/2026", "$428.00", "00121", "POS EMPTY KEG $30 MISCELLANEOUS", "DS", -1,
+            + _bank(WINDY, "543113065", "10/9/2026", "$428.00", "00121", "POS EMPTY KEG $30 MISCELLANEOUS", "DS", -1,
                     "$0.00", "($30.00)", "($30.00)")
-            + _bank(EUCLID, "W-4791847", "10/7/2026", "$87.00", "1993", "EMPTY 1/2 BBL", "CA", -4, "$30.00", "$0.00",
+            + _bank(EUCLID, "W-5663252", "10/7/2026", "$87.00", "1993", "EMPTY 1/2 BBL", "CA", -4, "$30.00", "$0.00",
                     "($120.00)")
-            + _bank(EUCLID, "W-4791847", "10/7/2026", "$87.00", "1461154", "EAGLE PARK SLTZR SPEKTO KOOLER 1/2BBL",
+            + _bank(EUCLID, "W-5663252", "10/7/2026", "$87.00", "1461154", "EAGLE PARK SLTZR SPEKTO KOOLER 1/2BBL",
                     "KE", 1, "$177.00", "$30.00", "$207.00")
-            + _bank(SUPERIOR, "867148", "10/13/2026", "$110.00", "97094", "EMPTIES-AB BEER 1/2 BBL", "KE", -3,
+            + _bank(SUPERIOR, "230801", "10/13/2026", "$110.00", "97094", "EMPTIES-AB BEER 1/2 BBL", "KE", -3,
                     "$30.00", "$0.00", "($90.00)")
-            + _bank(SUPERIOR, "867148", "10/13/2026", "$110.00", "150094", "ULTRA 1/2 BARREL", "KE", 2, "$70.00",
+            + _bank(SUPERIOR, "230801", "10/13/2026", "$110.00", "150094", "ULTRA 1/2 BARREL", "KE", 2, "$70.00",
                     "$60.00", "$200.00"))
     res = fi.ingest_file(rid, "bankactivity_detail.csv", csv_.encode(), db_path=db)
     assert res["status"] == "stored" and res["invoices"] == 3 and res["unbalanced"] == []
@@ -511,8 +511,8 @@ def test_the_invoice_details_report_reads_total_discount_and_adjustments(db):
             "Invoice Date,Invoice Due Date,Invoice Number,Invoice Total,Item Count,PO Number,PO Date,"
             "Reference Invoice Number,Product Number,Quantity,Unit Cost,Unit of Measure,UPC Number,"
             "Product Description,Total Adjustments,Total Discount,Extended Price,PPC,Pack UPC,GL Code\n")
-    row = ('"Breakthru Beverage Illinois, LLC","HHB, LLC",V77,0700442049,000001,,10/13/2026 00:00:00,'
-           "10/13/2026 00:00:00,11/12/2026 00:00:00,0129271609,79,1,PO-5,10/12/2026,0129271609,9031406,2,42,CA,"
+    row = ('"Breakthru Beverage Illinois, LLC","HHB, LLC",V77,0193351564,000001,,10/13/2026 00:00:00,'
+           "10/13/2026 00:00:00,11/12/2026 00:00:00,0243864173,79,1,PO-5,10/12/2026,0243864173,9031406,2,42,CA,"
            "088004144678,FIREBALL CINN WHSKY 1L,0,5,79,12,088004144678,Spirit\n")
     res = fi.ingest_file(rid, "invoices.csv", (head + row).encode(), db_path=db)
     assert res["status"] == "stored" and res["unbalanced"] == []
@@ -528,16 +528,16 @@ def test_the_invoice_details_report_reads_total_discount_and_adjustments(db):
 
 def test_the_printout_reads_po_and_the_referenced_invoice(db):
     rid = _rid(db)
-    extra = "PO Number      : B-369188433\nPO Date        : 10/13/2026\nRef Inv Number : 1142280\n"
-    text = _printout("Elgin Beverage Company", "1142364", "10/08/2026", "($100.00)", [
+    extra = "PO Number      : B-369188433\nPO Date        : 10/13/2026\nRef Inv Number : 4670759\n"
+    text = _printout("Elgin Beverage Company", "5920154", "10/08/2026", "($100.00)", [
         ("12345", "MODELO ESP 1/2 BBL", "-5", "$180.00", "($900.00)"),
         ("12345", "MODELO ESP 1/2 BBL", "5", "$160.00", "$800.00")], extra=extra)
     inv = fi.parse_printout(text)[0]
-    assert (inv["po_number"], inv["po_date"], inv["ref_invoice_number"]) == ("B-369188433", "2026-10-13", "1142280")
+    assert (inv["po_number"], inv["po_date"], inv["ref_invoice_number"]) == ("B-369188433", "2026-10-13", "4670759")
     fi.ingest_file(rid, "p.txt", text.encode(), db_path=db)
     assert _rows(db, "SELECT po_number, po_date, ref_invoice_number FROM fintech_invoices") == [
-        {"po_number": "B-369188433", "po_date": "2026-10-13", "ref_invoice_number": "1142280"}]
-    assert {l["ref_invoice_number"] for l in _lines(db, rid)} == {"1142280"}
+        {"po_number": "B-369188433", "po_date": "2026-10-13", "ref_invoice_number": "4670759"}]
+    assert {l["ref_invoice_number"] for l in _lines(db, rid)} == {"4670759"}
 
 
 # ── V36: encodings ─────────────────────────────────────────────────────────
@@ -556,7 +556,7 @@ def test_a_cp1252_file_and_a_utf8_file_name_one_distributor(db):
     """EDG-5 S15b: 'Southern Glazer\\x92s' (Windows-1252) and 'Southern
     Glazer’s' were two invoices."""
     rid = _rid(db)
-    text = _printout("Southern Glazer’s Wine & Spirits of IL", "02508778", "10/13/2026", "$252.00",
+    text = _printout("Southern Glazer’s Wine & Spirits of IL", "09201792", "10/13/2026", "$252.00",
                      [("28728", "TITOS VDK 1L", "12", "$21.00", "$252.00")])
     fi.ingest_file(rid, "a.txt", text.encode("utf-8"), db_path=db)
     fi.ingest_file(rid, "b.txt", (text + "\n").encode("cp1252"), db_path=db)
@@ -573,13 +573,13 @@ def test_the_same_invoice_under_two_spellings_is_one_invoice(db):
     rid = _rid(db)
     head = "Vendor Name,Invoice Number,Invoice Date,Invoice Total,Product Number,Product Description,Unit Of Measure," \
            "Item Quantity,Item Cost\n"
-    fi.ingest_file(rid, "a.csv", (head + '"Breakthru Beverage Illinois, LLC",0128850598,10/01/2026,$1200.00,'
+    fi.ingest_file(rid, "a.csv", (head + '"Breakthru Beverage Illinois, LLC",0233150629,10/01/2026,$1200.00,'
                                   "9008508,TITOS VDK 1L,CA,4,$300.00\n").encode(), db_path=db)
-    fi.ingest_file(rid, "b.csv", (head + "Breakthru Beverage Illinois LLC,128850598,10/01/2026,$1200.00,"
+    fi.ingest_file(rid, "b.csv", (head + "Breakthru Beverage Illinois LLC,233150629,10/01/2026,$1200.00,"
                                   "9008508,TITOS VDK 1L,CA,4,$300.00\n").encode(), db_path=db)
-    fi.ingest_file(rid, "c.csv", (head + "BREAKTHRU BEVERAGE ILLINOIS,000128850598,10/01/2026,$1200.00,"
+    fi.ingest_file(rid, "c.csv", (head + "BREAKTHRU BEVERAGE ILLINOIS,000233150629,10/01/2026,$1200.00,"
                                   "9008508,TITOS VDK 1L,CA,4,$300.00\n"
-                                  + '"Breakthru Beverage Illinois, LLC",0128850599,10/02/2026,$3000.00,'
+                                  + '"Breakthru Beverage Illinois, LLC",0233150630,10/02/2026,$3000.00,'
                                   "9008508,TITOS VDK 1L,CA,10,$300.00\n").encode(), db_path=db)
     assert len(_rows(db, "SELECT id FROM fintech_invoices")) == 2
     assert round(sum(l["net"] for l in _lines(db, rid) if l["category"] == "liquor"), 2) == 4200.0
@@ -587,15 +587,15 @@ def test_the_same_invoice_under_two_spellings_is_one_invoice(db):
 
 def test_a_spelling_the_key_misses_is_caught_by_date_and_total(db):
     """EDG-5 S10c: "Southern Glazers of IL" on one file, "Southern Glazer's
-    Wine & Spirits of IL" on the other, invoice 02508778 on both."""
+    Wine & Spirits of IL" on the other, invoice 09201792 on both."""
     rid = _rid(db)
-    a = _printout("Southern Glazers of IL", "02508778", "10/13/2026", "$252.00",
+    a = _printout("Southern Glazers of IL", "09201792", "10/13/2026", "$252.00",
                   [("28728", "TITOS VDK 1L", "12", "$21.00", "$252.00")])
-    b = _printout("Southern Glazer's Wine & Spirits of IL", "02508778", "10/13/2026", "$252.00",
+    b = _printout("Southern Glazer's Wine & Spirits of IL", "09201792", "10/13/2026", "$252.00",
                   [("28728", "TITOS VDK 1L", "12", "$21.00", "$252.00")])
     fi.ingest_file(rid, "a.txt", a.encode(), db_path=db)
     res = fi.ingest_file(rid, "b.txt", b.encode(), db_path=db)
-    assert res["near_duplicates"] == ["02508778"]
+    assert res["near_duplicates"] == ["09201792"]
     assert len(_rows(db, "SELECT id FROM fintech_invoices")) == 1
 
 
@@ -614,11 +614,11 @@ def test_an_older_file_never_replaces_a_newer_copy(db):
 
 # ── V12 (storage half): versions, never a silent overwrite, purge ─────────
 
-GENUINE = _printout("Southern Glazer's Wine & Spirits of IL", "02508778", "10/13/2026", "$252.00",
+GENUINE = _printout("Southern Glazer's Wine & Spirits of IL", "09201792", "10/13/2026", "$252.00",
                     [("000028728", "TITOS VDK 1L", "12", "$21.00", "$252.00")])
 FORGED = ("Vendor Name,Invoice Number,Invoice Date,Invoice Total,Product Number,Product Description,Unit Of Measure,"
           "Item Quantity,Item Cost\n"
-          "Southern Glazer's Wine & Spirits of IL,02508778,10/13/2026,$9999.00,000028728,TITOS VDK 1L,CA,12,$833.25\n")
+          "Southern Glazer's Wine & Spirits of IL,09201792,10/13/2026,$9999.00,000028728,TITOS VDK 1L,CA,12,$833.25\n")
 
 
 def test_later_file_never_overwrites_balanced_invoice(db):
@@ -628,7 +628,7 @@ def test_later_file_never_overwrites_balanced_invoice(db):
     assert fi.ingest_file(rid, "a.txt", GENUINE.encode(), db_path=db)["status"] == "stored"
     res = fi.ingest_file(rid, "x.csv", FORGED.encode(), db_path=db)
     assert res["status"] == "conflict" and res["invoices"] == 0
-    assert res["conflicts"] == [{"distributor": "Southern Glazer's Wine & Spirits of IL", "invoice_number": "02508778",
+    assert res["conflicts"] == [{"distributor": "Southern Glazer's Wine & Spirits of IL", "invoice_number": "09201792",
                                  "kept_total": 252.0, "file_total": 9999.0}]
     assert _rows(db, "SELECT unit_price, cost FROM fintech_invoice_lines") == [{"unit_price": 21.0, "cost": 252.0}]
     states = {r["state"] for r in _rows(db, "SELECT state FROM fintech_invoice_versions")}
@@ -683,7 +683,7 @@ FIREBALL_EXPORT = (BANK_HEAD
 def test_a_printout_line_takes_unit_and_upc_from_the_same_codes_export_history(db):
     rid = _rid(db)
     fi.ingest_file(rid, "hist.csv", FIREBALL_EXPORT.encode(), db_path=db)
-    text = _printout("BREAKTHRU BEVERAGE ILLINOIS LLC", "129271609", "10/13/2026", "$298.87", [
+    text = _printout("BREAKTHRU BEVERAGE ILLINOIS LLC", "243864173", "10/13/2026", "$298.87", [
         ("000009031406", "FIREBALL CINN WHSKY 1L", "1", "$232.00", "$232.00"),
         ("000009031406", "FIREBALL CINN WHSKY 1L", "3", "$22.29", "$66.87")])
     fi.ingest_file(rid, "daily.txt", text.encode(), db_path=db)
@@ -704,12 +704,12 @@ def test_a_printout_keg_without_a_keg_word_takes_its_deposit_from_the_export_uni
     fi.ingest_file(rid, "hist.csv", (BANK_HEAD + _bank(EUCLID, "W-1", "9/1/2026", "$159.00", "1461154",
                                                        "EAGLE PARK SLTZR SPEKTO KOOLER 1/2BBL", "KE", 1, "$129.00",
                                                        "$30.00", "$159.00")).encode(), db_path=db)
-    text = _printout(EUCLID, "W-4798602", "10/13/2026", "($70.00)", [
+    text = _printout(EUCLID, "W-7265440", "10/13/2026", "($70.00)", [
         ("1461154", "EAGLE PARK SLTZR SPEKTO KOOLER", "-1", "$129.00", "($159.00)"),
         ("1461154", "EAGLE PARK SLTZR SPEKTO KOOLER", "1", "$59.00", "$89.00")])
     fi.ingest_file(rid, "daily.txt", text.encode(), db_path=db)
     got = _rows(db, "SELECT l.uom, l.deposit FROM fintech_invoice_lines l JOIN fintech_invoices i "
-                    "ON i.id=l.invoice_id WHERE i.invoice_number='W-4798602' ORDER BY l.line_no")
+                    "ON i.id=l.invoice_id WHERE i.invoice_number='W-7265440' ORDER BY l.line_no")
     assert got == [{"uom": "KE", "deposit": -30.0}, {"uom": "KE", "deposit": 30.0}]
 
 
@@ -758,7 +758,7 @@ def test_a_charge_line_alone_on_an_invoice_is_still_a_charge(db):
     $2.29 bottle price (a later real buy would read +1,406%)."""
     rid = _rid(db)
     sg = "Southern Glazer's Wine & Spirits of IL"
-    alone = BANK_HEAD + _bank(sg, "02318193", "5/22/2026", "$4.58", "1234", "JAMESON IRISH BLACK BRL 80 1.0L", "BO",
+    alone = BANK_HEAD + _bank(sg, "02803322", "5/22/2026", "$4.58", "1234", "JAMESON IRISH BLACK BRL 80 1.0L", "BO",
                               2, "$2.29", "$0.00", "$4.58")
     fi.ingest_file(rid, "a.csv", alone.encode(), db_path=db)
     assert _rows(db, "SELECT kind FROM fintech_invoice_lines") == [{"kind": "item"}]
@@ -793,7 +793,7 @@ def test_other_store_invoices_not_written_to_route_restaurant(db):
     res = fi.ingest_file(rid, "two.txt", two.encode(), db_path=db)
     assert res["status"] == "stored" and res["invoices"] == 1
     assert res["skipped_locations"] == [{"location_id": "000002", "invoices": 1}]
-    assert {r["invoice_number"] for r in _rows(db, "SELECT invoice_number FROM fintech_invoices")} == {"02508778", "A1"}
+    assert {r["invoice_number"] for r in _rows(db, "SELECT invoice_number FROM fintech_invoices")} == {"09201792", "A1"}
     # mapped to the group's second restaurant, the store's invoices go there
     rid2 = models.create_restaurant(models.Restaurant(name="EJ's Two", owner_email="o2@x.test"), db_path=db)
     fi.set_location(rid, "000002", rid2, db_path=db)
@@ -886,8 +886,8 @@ def test_boot_backfills_the_keys_and_line_restaurant_once(db):
     fi.init_fintech_invoices(db)
     fi.init_fintech_invoices(db)
     assert {r["restaurant_id"] for r in _rows(db, "SELECT restaurant_id FROM fintech_invoice_lines")} == {rid}
-    assert _rows(db, "SELECT number_key FROM fintech_invoices ORDER BY id") == [{"number_key": "101153056"},
-                                                                                {"number_key": "2508778"}]
+    assert _rows(db, "SELECT number_key FROM fintech_invoices ORDER BY id") == [{"number_key": "543113065"},
+                                                                                {"number_key": "9201792"}]
 
 
 # ── the re-read every stored file (scripts/bar_reread_fintech.py) ────────

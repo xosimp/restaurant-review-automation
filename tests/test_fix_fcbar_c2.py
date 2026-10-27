@@ -48,7 +48,7 @@ def _row(dist, num, day, total, code, desc, uom, qty, price, ext, loc="000001"):
 
 
 def _real(db, rid):
-    body = HEAD + _row("Breakthru Beverage Illinois LLC", "128850598", "10/01/2026", "420.00", "9031",
+    body = HEAD + _row("Breakthru Beverage Illinois LLC", "233150629", "10/01/2026", "420.00", "9031",
                        "TITOS VDK 1L", "CA", 2, "210.00", "420.00")
     assert fi.ingest_file(rid, "real.csv", body.encode(), db_path=db)["status"] == "stored"
 
@@ -115,7 +115,7 @@ def test_a_vouched_file_outside_the_distributors_history_is_held(db, qty, price,
 def test_a_vouched_file_never_changes_an_invoice_on_file(db):
     rid = _rid(db)
     _real(db, rid)
-    body = HEAD + _row("Breakthru Beverage Illinois LLC", "128850598", "10/01/2026", "440.00", "9031",
+    body = HEAD + _row("Breakthru Beverage Illinois LLC", "233150629", "10/01/2026", "440.00", "9031",
                        "TITOS VDK 1L", "CA", 2, "220.00", "440.00")
     ok, why = fi.vouch(rid, "again.csv", body.encode(), db_path=db)
     assert ok is False and "already on file" in why
@@ -224,7 +224,7 @@ def test_a_letter_prefix_variant_is_kept_and_flagged_never_replaced(db):
 def test_the_invoice_key_keeps_separators():
     assert fi.invoice_key("1-2") != fi.invoice_key("12")
     assert fi.invoice_key("0012") == fi.invoice_key("12") == "12"
-    assert fi.invoice_key(" 0128850598 ") == fi.invoice_key("128850598")
+    assert fi.invoice_key(" 0233150629 ") == fi.invoice_key("233150629")
     assert fi.loose_invoice_key("1-2") == fi.loose_invoice_key("12")
 
 

@@ -489,6 +489,8 @@ SCRUB_TABLES = {
                  "second factor, never needed off the server (R10)",
     "async_jobs": "transient job results (6-hour TTL); one can hold a one-time password (the review-account "
                   "seed's password_once) until it is read",
+    "ai_lane_events": "a polled Ask turn's events shared between web workers (minutes of rows, written only with "
+                      "more than one gunicorn worker); an answer can carry what a model returned",
 }
 
 # Columns nulled in the off-site copy, beyond every credentials.FIELDS

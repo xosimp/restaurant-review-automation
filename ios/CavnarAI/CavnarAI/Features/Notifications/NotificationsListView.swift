@@ -20,7 +20,8 @@ final class NotificationsListViewModel {
         self.client = client
     }
 
-    private struct Response: Decodable {
+    /// Internal for ResponseShapeContractTests (Fixtures/notifications.json).
+    struct Response: Decodable {
         let ok: Bool
         let notifications: [NotificationItem]
         let error: String?
@@ -295,7 +296,8 @@ final class NotificationsBadgeViewModel {
         self.client = client
     }
 
-    private struct CountResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (the captured unread count).
+    struct CountResponse: Decodable {
         let ok: Bool
         let count: Int
         let urgent: Int?

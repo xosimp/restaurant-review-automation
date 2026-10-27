@@ -1,0 +1,30 @@
+# Skip reasons CI accepts (audit #25 A01-18). One Python regex per line,
+# searched in the reason pytest reports. With CAVNAR_ENFORCE_SKIPS=1 (CI's
+# jobs) a skip whose reason matches no line fails the run — a skip that
+# hides a regression (a permission that opened, a table that changed shape,
+# a tool that went missing) must not report itself as SKIPPED.
+#
+# Add a line only for a skip that is right in CI, with why. Never for "node
+# is not installed", OR-Tools, resend or pyflakes: CI has all four, and a
+# skip there means the gate checked nothing.
+
+# The SQLite jobs: the live Postgres halves wait for CAVNAR_TEST_PG_URL.
+CAVNAR_TEST_PG_URL names no scratch Postgres
+needs CAVNAR_TEST_PG_URL \(a scratch Postgres\)
+# The Postgres jobs: what reads the SQLite file itself (conftest
+# PG_MODE_SKIP_FILES and the sqlite_only marker).
+^Postgres mode:
+reads the SQLite file itself
+SQLite's planner; Postgres plans its own
+the off-site scrub runs on the SQLite snapshot
+# A solve the wall clock really cut, reported in its stats (WS5 makes the
+# determinism tests strict when nothing was cut; the nightly serial run
+# fails when more than one case skips).
+a solve was cut by the .* cap
+# Calendar-conditional: right on the first two days of a month (the AI spend
+# rollup reads SQLite's own clock, so the test cannot freeze it). The
+# local-midnight alert-cap skip is gone: that test runs at a fixed instant
+# (blind re-audit 10/27/26 B1 F13).
+needs two complete days of this month before today
+# The default database path is absolute in some environments.
+default DB_PATH is absolute in this environment

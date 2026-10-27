@@ -8,7 +8,16 @@ import config
 import emails as _emails
 from datetime import datetime
 
-from models import get_conn, get_restaurant, update_restaurant, log_email
+from models import get_restaurant, update_restaurant, log_email
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # Exception text handed to a client, with credentials stripped — a requests
 # error carries the failing URL, and a Places URL carries key= in its query

@@ -15,7 +15,16 @@ data has no stable id.
 import json
 import re
 
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 EMPLOYMENT_TYPES = ("full", "part")
 DAYPART_CHOICES = ("any", "morning", "night", "off")
@@ -415,6 +424,86 @@ def _clean_closes_for(raw) -> list:
     return out
 
 
+def _clean_dayparts(raw) -> dict:
+    """{weekday: any|morning|night|off} for what a client sent; raises when
+    it isn't a map or every day is off."""
+    if not isinstance(raw, dict):
+        raise StaffSettingsError("daypart availability is a map of weekday to any/morning/night/off")
+    cleaned = {}
+    for d, v in raw.items():
+        d = str(d).strip().capitalize()
+        v = str(v or "any").strip().lower()
+        if d in DAYS and v in DAYPART_CHOICES:
+            cleaned[d] = v
+    if len([d for d, v in cleaned.items() if v == "off"]) == 7:
+        raise StaffSettingsError("every day is off — leave at least one day they can work")
+    return cleaned
+
+
+# The settings that change who counts as the manager on a shift already
+# published (schedule_rules.counts_as_manager: a manager, or acting that
+# date, not training to manage, able to work that weekday) — what a save is
+# judged against the live weeks for before it is written (blind re-audit
+# 10/26/26 B2).
+MANAGER_RULE_FIELDS = ("active", "floor_manager", "acting_manager", "trainee", "daypart_availability")
+
+
+def planned_change(restaurant_id, fields) -> dict:
+    """{"active": bool | None, "settings": {...}} — the manager-rule fields
+    of a settings save (`fields`, as upsert takes them) cleaned exactly as
+    upsert cleans them, in the shape roster() hands out, for
+    schedule_rules.build_constraints(roster_change=) to read the week as it
+    would be after the save. {} when the save touches none of them. Raises
+    StaffSettingsError on a value upsert would refuse."""
+    out, st = {}, {}
+    if fields.get("active") is not None:
+        out["active"] = bool(_flag(fields["active"]))
+    if fields.get("floor_manager") is not None:
+        fm = _clean_floor_manager(fields["floor_manager"])
+        st["floor_manager"] = None if fm == AUTO else bool(fm)
+    if fields.get("acting_manager") is not None:
+        st["acting_manager"] = _clean_acting(fields["acting_manager"])
+    if fields.get("trainee") is not None:
+        st["trainee"] = _clean_trainee(fields["trainee"], today=_today(restaurant_id)) or None
+    if fields.get("daypart_availability") is not None:
+        st["daypart_availability"] = _clean_dayparts(fields["daypart_availability"])
+    if st:
+        out["settings"] = st
+    return out
+
+
+def live_shifts_on_days(restaurant_id, employee_name, days, today=None, db_path=None) -> list:
+    """`employee_name`'s shifts on live published weeks from today that fall
+    on the weekdays `days` ([{date, shift_start, ...}]) — the shifts a
+    manager's save marking those weekdays unavailable takes them off.
+    Raises when the weeks can't be read."""
+    from datetime import date as _d, timedelta as _td
+    import time_off as _to
+    want = {str(d).strip().capitalize() for d in days or ()}
+    if not want:
+        return []
+    today = today or _today(restaurant_id)
+    shifts = _to.published_conflicts(restaurant_id, employee_name, today, today + _td(days=70),
+                                     db_path=None if db_path in (None, DB_PATH) else db_path)
+    return [s for s in shifts if _d.fromisoformat(str(s["date"])[:10]).strftime("%A") in want]
+
+
+def roster_after(people, employee_name, change) -> list:
+    """`people` (roster()) with `employee_name` as `change` (planned_change)
+    would leave them — a copy; nothing stored is touched."""
+    key = name_key(employee_name)
+    out = []
+    for e in people or []:
+        if name_key(e.get("name")) == key and change:
+            e = dict(e)
+            if change.get("active") is not None:
+                e["active"] = bool(change["active"])
+            if change.get("settings"):
+                e["settings"] = dict(e.get("settings") or {}, **change["settings"])
+        out.append(e)
+    return out
+
+
 def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_hours=None,
            max_hours=None, daypart_availability=None, is_minor=None, updated_by=None,
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
@@ -448,17 +537,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             if v < 0 or v > 80:
                 raise StaffSettingsError(f"{label.replace('_', ' ')} must be between 0 and 80")
     if daypart_availability is not None:
-        if not isinstance(daypart_availability, dict):
-            raise StaffSettingsError("daypart availability is a map of weekday to any/morning/night/off")
-        cleaned = {}
-        for d, v in daypart_availability.items():
-            d = str(d).strip().capitalize()
-            v = str(v or "any").strip().lower()
-            if d in DAYS and v in DAYPART_CHOICES:
-                cleaned[d] = v
-        if len([d for d, v in cleaned.items() if v == "off"]) == 7:
-            raise StaffSettingsError("every day is off — leave at least one day they can work")
-        daypart_availability = cleaned
+        daypart_availability = _clean_dayparts(daypart_availability)
 
     if minor_age_band is not None:
         from schedule_rules import MINOR_BANDS
@@ -1900,6 +1979,11 @@ def save_own_availability(restaurant_id, employee_name, expected_updated_at, wee
             import request_autonomy as _ra
             approval = _ra.policy_for(restaurant_id, db_path)["availability_approval"]
         except Exception:
+            approval = True
+        if not approval and _avc.leaves_no_manager(restaurant_id, name, cuts, target["off"], target["bounds"],
+                                                   target["windows"], today=today, db_path=db_path):
+            # A cut that leaves a published shift with no manager on goes to
+            # a manager even where cuts need no approval (re-audit B2).
             approval = True
         try:
             from time_utils import mdy

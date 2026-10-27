@@ -1,0 +1,26 @@
+{
+ "ok": true,
+ "teammates": [
+  {
+   "last_at": null,
+   "last_from_me": false,
+   "last_message": null,
+   "name": "halstedkitchenmgr",
+   "role": "manager",
+   "unread": 0,
+   "user_id": 3,
+   "username": "halstedkitchenmgr"
+  },
+  {
+   "last_at": null,
+   "last_from_me": false,
+   "last_message": null,
+   "name": "halstedmanager",
+   "role": "manager",
+   "unread": 0,
+   "user_id": 2,
+   "username": "halstedmanager"
+  }
+ ],
+ "unread_total": 0
+}

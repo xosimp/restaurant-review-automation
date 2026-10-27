@@ -53,6 +53,8 @@ def is_waste_reason(reason) -> bool:
 
 # {(restaurant_id, db_path): (inputs stamp, {name: cost})}, bounded.
 _PLATE_CACHE = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("pos_food_waste._PLATE_CACHE", _PLATE_CACHE)
 _PLATE_CACHE_MAX = 256
 _plate_lock = threading.Lock()
 

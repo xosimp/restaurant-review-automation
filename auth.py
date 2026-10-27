@@ -13,7 +13,16 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import DB_PATH, get_conn, boot_conn, add_missing_columns
+from models import DB_PATH, boot_conn, add_missing_columns
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # ── Schema extension ──────────────────────────────────────────────────────────
 
@@ -405,8 +414,8 @@ CREATE INDEX IF NOT EXISTS idx_users_restaurant
 """
 # idx_login_history_created serves the retention prune (created_at < cutoff):
 # idx_login_history_user leads with user_id, so that DELETE scanned the whole
-# table under the write lock — at boot here (prune_login_history) and nightly
-# once ops' retention registry carries login_history (fix round D #72).
+# table under the write lock — nightly, ops' retention registry (fix round D
+# #72; the boot's own prune is gone — blind re-audit 10/27/26).
 
 # login_history is the only append-only table in the schema, so it is also the
 # only one with no natural ceiling: 250k employees × one sign-in per shift is
@@ -610,37 +619,64 @@ def init_auth(db_path: str = DB_PATH):
         # Re-audit 10/20/26 R7-01: wrong codes typed against one challenge.
         # It dies at TWO_FA_CHALLENGE_MAX_WRONG; a resend keeps the count.
         "ALTER TABLE two_fa_challenges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+        # The app build a sign-in came from and a session last ran ("ios 1.0
+        # (4210)", the X-Cavnar-App header — client_compat, audit #25 A06-02):
+        # written at sign-in, refreshed by the last_active touch. NULL: a
+        # browser, or a build from before the header.
+        "ALTER TABLE sessions ADD COLUMN client_app TEXT",
+        "ALTER TABLE login_history ADD COLUMN client_app TEXT",
     ]
     # Only the columns a table is missing are added (models.add_missing_columns):
     # a refused duplicate costs SQLite a full schema parse.
     add_missing_columns(db_path, _alters)
 
-    # A PIN identity is an employee, never a console login. They were created
-    # with users.role's column default 'client', which is what the session
-    # fell back to whenever no active membership resolved (SEC-1, SEC-29).
-    try:
-        conn_bf = boot_conn(db_path)
-        conn_bf.execute("UPDATE users SET role='employee' WHERE email LIKE '%@staff.invalid' "
-                        "AND (role IS NULL OR role='client')")
-        conn_bf.commit()
-        conn_bf.close()
-    except Exception:
-        pass
+    # Every boot, on purpose (kept off the run-once ledger — blind re-audit
+    # 10/27/26 RF6): both are guards against a users row written OUTSIDE
+    # create_user (a seed script, a by-hand fix in a railway ssh session),
+    # and users is small enough that the scan costs milliseconds.
+    #  - A PIN identity is an employee, never a console login. They were
+    #    created with users.role's column default 'client', which is what the
+    #    session fell back to whenever no active membership resolved (SEC-1,
+    #    SEC-29).
+    #  - Mixed-case usernames (raw SQL, as _ensure_gia_mia_vibe() in
+    #    hosted_dashboard.py used to write) can never log in: get_user_by_
+    #    username lower-cases its input and the column has no COLLATE NOCASE.
+    #    Repaired on the next deploy, with no manual fix.
+    for _sql in ("UPDATE users SET role='employee' WHERE email LIKE '%@staff.invalid' "
+                 "AND (role IS NULL OR role='client')",
+                 "UPDATE users SET username = LOWER(username) WHERE username != LOWER(username)"):
+        try:
+            _c_users = boot_conn(db_path)
+            try:
+                _c_users.execute(_sql)
+                _c_users.commit()
+            finally:
+                _c_users.close()
+        except Exception as _e_users:
+            import logging as _lg_users
+            _lg_users.getLogger(__name__).warning("[auth] boot users repair not applied: %s", _e_users)
 
-    # Normalize any mixed-case usernames written outside create_user() (e.g.
-    # raw SQL in a seed/"ensure" script, as _ensure_gia_mia_vibe() in
-    # hosted_dashboard.py used to). get_user_by_username() always lowercases
-    # its input before querying, but the username column has no COLLATE
-    # NOCASE, so a stored mixed-case value can never match and that account
-    # can never log in again, regardless of what's typed. Idempotent — a
-    # no-op once every username is already lowercase, safe to run every boot.
+    # The 2FA code and pending secret used to live in plaintext on the
+    # restaurants row (SEC-20/SEC-39); two_fa_challenges replaced them and
+    # update_restaurant refuses to write them (RETIRED_SECRET_FIELDS). Blanked
+    # ONCE per database (data_migrations — it ran on every boot until blind
+    # re-audit 10/27/26).
+    import models as _models_once
     try:
-        conn_n = boot_conn(db_path)
-        conn_n.execute("UPDATE users SET username = LOWER(username) WHERE username != LOWER(username)")
-        conn_n.commit()
-        conn_n.close()
-    except Exception:
-        pass
+        _c_once = boot_conn(db_path)
+        try:
+            _models_once.run_once_sql(
+                _c_once, "legacy_two_fa_scrub",
+                "UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, two_fa_pending=NULL "
+                "WHERE COALESCE(two_fa_code,'')!='' OR COALESCE(two_fa_pending,'')!=''")
+        finally:
+            _c_once.close()
+    except Exception as _e_once:
+        # restaurants not created yet on a bare file (init_db runs first at
+        # boot); anything else is retried by the next boot.
+        import logging as _lg_once
+        _lg_once.getLogger(__name__).warning("[auth] legacy_two_fa_scrub not applied (retried next boot): %s",
+                                             _e_once)
 
     # Indexes last: they name columns the ALTERs above add.
     try:
@@ -656,24 +692,20 @@ def init_auth(db_path: str = DB_PATH):
 
     ensure_active_name_index(db_path=db_path)
 
-    # The 2FA code and pending secret used to live in plaintext on the
-    # restaurants row (SEC-20/SEC-39). Nothing reads those columns any more
-    # (two_fa_challenges replaced them); blank any value left from before so
-    # no live code sits in the file or in a backup of it.
-    try:
-        conn_2fa = boot_conn(db_path)
-        conn_2fa.execute("UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, two_fa_pending=NULL "
-                         "WHERE COALESCE(two_fa_code,'')!='' OR COALESCE(two_fa_pending,'')!=''")
-        conn_2fa.commit()
-        conn_2fa.close()
-    except Exception:
-        pass  # restaurants not created yet (init_db runs first at boot)
-
-    normalize_session_rows(db_path=db_path)
+    # Session rows written under the old rules, and lockout counters left by
+    # memberships deleted before ON DELETE CASCADE: once per database (both
+    # were every boot — sessions is the hottest table there is). Nothing
+    # writes either shape now (sql_utc stamps, acting_admin_id on every
+    # view-as, the admin cap at creation; memberships are never deleted).
+    for _name, _fn in (("session_rows_normalised_v1", normalize_session_rows),
+                       ("pin_attempt_orphans_swept_v1", sweep_orphan_pin_attempts)):
+        _models_once.run_once(_name, lambda _f=_fn: _f(db_path=db_path, strict=True), db_path=db_path)
     backfill_memberships(db_path=db_path)
     grandfather_staff_pos_pay(db_path=db_path)
-    prune_login_history(db_path=db_path)
-    sweep_orphan_pin_attempts(db_path=db_path)
+    # login_history's retention is the nightly registry prune alone
+    # (ops._RETENTION_DAYS, after history_rollups.roll_engagement): the boot
+    # prune ran the same window again, rollup included, inside every deploy's
+    # outage (blind re-audit 10/27/26 B5 P3).
 
     # A missing pepper silently downgrades every staff PIN to something a
     # leaked database makes trivially brute-forceable. It must not be a
@@ -693,7 +725,7 @@ def init_auth(db_path: str = DB_PATH):
         print(f"[auth] person_id columns not added: {e}")
 
 
-def normalize_session_rows(db_path: str = DB_PATH) -> dict:
+def normalize_session_rows(db_path: str = DB_PATH, strict: bool = False) -> dict:
     """Boot-time repair of session rows written under the old rules.
     Idempotent, and a no-op once every row is in the current shape.
 
@@ -735,6 +767,9 @@ def normalize_session_rows(db_path: str = DB_PATH) -> dict:
     except Exception as exc:
         # Not fatal (the session lookup enforces all three on its own), but
         # visible: a boot that could not repair these should be known.
+        # `strict` (the boot's run-once): raised, so it is not recorded done.
+        if strict:
+            raise
         print(f"[auth] session normalization skipped: {exc}")
     return out
 
@@ -785,8 +820,11 @@ def prune_login_history(days: int = None, db_path: str = DB_PATH) -> int:
     being expired, revoked or deduped, which is the whole reason it exists
     separately from `sessions`. "Append-only" was never meant to mean
     "unbounded"; a staff tier writes a row per employee per shift, so the
-    table outgrows everything else in the file. Runs at boot; returns how many
-    rows it removed so a test can assert the window is actually applied.
+    table outgrows everything else in the file. The nightly retention
+    registry is the prune that runs (the boot's call was dropped, blind
+    re-audit 10/27/26); this stays for a by-hand run on the same window.
+    Returns how many rows it removed so a test can assert the window is
+    actually applied.
     """
     if days is None:
         # The one registry's window (ops, RETAIN_LOGIN_HISTORY_DAYS) — never
@@ -821,7 +859,7 @@ def prune_login_history(days: int = None, db_path: str = DB_PATH) -> int:
         return 0
 
 
-def sweep_orphan_pin_attempts(db_path: str = DB_PATH) -> int:
+def sweep_orphan_pin_attempts(db_path: str = DB_PATH, strict: bool = False) -> int:
     """Delete lockout counters whose membership no longer exists.
 
     The table gained ON DELETE CASCADE, but only for databases created after
@@ -840,6 +878,8 @@ def sweep_orphan_pin_attempts(db_path: str = DB_PATH) -> int:
         finally:
             conn.close()
     except Exception:
+        if strict:
+            raise
         return 0
 
 
@@ -924,6 +964,10 @@ def ensure_active_name_index(db_path: str = DB_PATH) -> bool:
             _ops_ix.capture(exc, job="memberships_name_index", context=f"duplicates: {dupes}"[:500])
         except Exception:
             pass
+        if dupes:
+            # /health says so too (release-safety audit 10/26/26 A05-15).
+            import models as _models_ix
+            _models_ix.BOOT_MISSING_INDEXES.setdefault(ACTIVE_NAME_INDEX, {"unique": True, "error": str(exc)[:300]})
         return False
 
 
@@ -3220,6 +3264,8 @@ def otp_country_allowed(phone: str) -> bool:
 STAFF_OTP_PER_RESTAURANT_PLATFORM_DEFAULT = 4
 STAFF_OTP_SHARE_PER_STAFF_PCT_DEFAULT = 125
 _otp_platform_memo = {"at": 0.0, "n": 0}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("auth._otp_platform_memo", _otp_platform_memo)
 
 
 def _otp_join_restaurants(conn) -> int:
@@ -5074,12 +5120,15 @@ def create_session(user_id: int, days: int = 30,
     conn.execute("DELETE FROM sessions WHERE user_id=? AND datetime(expires_at) <= datetime('now')", (user_id,))
     if device_id:
         conn.execute("DELETE FROM sessions WHERE user_id=? AND device_id=?", (user_id, device_id))
+    # The app build this sign-in came from (client_compat; None for a browser).
+    import client_compat as _cc_login
+    client_app = _cc_login.request_client_app()
     conn.execute(
         "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id, "
-        "staff_restaurant_id, two_factor_at, reauth_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "staff_restaurant_id, two_factor_at, reauth_at, client_app) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (hash_session_token(token), user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "",
          restaurant_id if device_type == "staff_pin" else None,
-         now_sql if second_factor else None, reauth_at)
+         now_sql if second_factor else None, reauth_at, client_app)
     )
     # The event names the KIND of sign-in, not just that one happened. A staff
     # PIN sign-in and an owner console sign-in are different security events
@@ -5087,9 +5136,10 @@ def create_session(user_id: int, days: int = 30,
     # them apart works only while that column happens to be populated — it is
     # nullable and defaulted, so an audit query would silently lump them.
     conn.execute(
-        "INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, device_type) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, device_type, client_app) "
+        "VALUES (?,?,?,?,?,?,?)",
         (user_id, restaurant_id, "staff_login" if device_type == "staff_pin" else "login",
-         ip_address or "", user_agent or "", device_type)
+         ip_address or "", user_agent or "", device_type, client_app)
     )
     conn.commit()
     conn.close()
@@ -5554,7 +5604,16 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     if _touch_due:
         try:
             conn.execute("PRAGMA busy_timeout=1500")
-            conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
+            # The app build the session runs now rides on the same touch, so
+            # an upgrade without a new sign-in is seen (client_compat).
+            import client_compat as _cc_touch
+            app_label = _cc_touch.request_client_app()
+            if app_label:
+                conn.execute("UPDATE sessions SET last_active=datetime('now'), client_app=? WHERE token=?",
+                             (app_label, hash_session_token(token)))
+            else:
+                conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?",
+                             (hash_session_token(token),))
             conn.commit()
         except Exception as e:
             try:
@@ -5840,9 +5899,22 @@ def _billing_blocked(user) -> bool:
             return False
         from models import subscription_allows_access
         return not subscription_allows_access(user["restaurant_id"])
-    except Exception:
-        # Fail open — see models.subscription_allows_access.
+    except Exception as e:
+        # Fail open — see models.subscription_allows_access — but counted, so
+        # a broken read is seen in the console, not only by the revenue it
+        # leaks (audit #25 A03-12).
+        _gate_failed_open("billing", e, user)
         return False
+
+
+def _gate_failed_open(gate, exc, user=None):
+    """A revenue gate (billing, module, the POS owner hold) that failed open:
+    logged and ops.capture-d, at most once a minute per (gate, exception
+    type) — models.report_gate_open (audit #25 A03-12). Never raises."""
+    from flask import has_request_context
+    rid = user.get("restaurant_id") if isinstance(user, dict) else None
+    path = (request.path or "") if has_request_context() else ""
+    return _models_mod.report_gate_open(gate, exc, restaurant_id=rid, path=path)
 
 
 _BILLING_BLOCKED_MESSAGE = (
@@ -5882,7 +5954,8 @@ def _pos_owner_hold(user) -> bool:
         from models import get_restaurant
         r = get_restaurant(user["restaurant_id"])
         return bool(r is not None and getattr(r, "pos_owner_hold", None))
-    except Exception:
+    except Exception as e:
+        _gate_failed_open("pos_hold", e, user)
         return False
 
 
@@ -5960,6 +6033,18 @@ _MODULE_PREFIXES = (
     # phone's Live Activity (iOS parity audit 10/7/26 #94).
     ("/api/intraday",               "labor"),
     ("/mobile/api/intraday",        "labor"),
+    # The team's side of Labor (staff_knowledge_routes): tonight's lineup
+    # brief (its draft is a model call), the house rules, staff docs and
+    # certifications the staff portal shows. They checked the role inside
+    # but not the plan, and sat outside the sweep (audit #25 A04-06).
+    ("/api/staff-brief",            "labor"),
+    ("/api/house-rules",            "labor"),
+    ("/api/staff-docs",             "labor"),
+    ("/api/staff-certs",            "labor"),
+    ("/mobile/api/staff-brief",     "labor"),
+    ("/mobile/api/house-rules",     "labor"),
+    ("/mobile/api/staff-docs",      "labor"),
+    ("/mobile/api/staff-certs",     "labor"),
     # Food Cost
     ("/api/food-cost",              "inventory"),
     ("/api/inv-insight",            "inventory"),
@@ -6007,6 +6092,9 @@ _UNGATED_PREFIXES = (
     "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions", "/api/passkeys",
     # The app's passkey sign-in and its own passkeys (iOS parity #57).
     "/mobile/api/passkey",
+    # A phone's report that it could not read an answer (client_compat,
+    # audit #25 A06-04): no module, and it may come before any sign-in.
+    "/mobile/api/client-errors",
     # A phone's Live Activity push tokens, filed under its session; who may
     # hold a push-to-start token is checked in live_activities.register_token.
     "/mobile/api/live-activity-tokens",
@@ -6079,11 +6167,37 @@ _UNGATED_PREFIXES = (
     "/api/post-to-facebook", "/api/post-to-instagram", "/api/post-insights", "/api/meta-review-test",
     # Public pages whose token is the credential.
     "/api/public/",
+    # The public status page's JSON (status_routes): no login, no restaurant
+    # data — the platform's own service states and incidents (A04-06).
+    "/api/status",
     # One-off admin tools (admin_required), and two login_required debug
     # endpoints (debug-insights, gbp-debug) that are candidates for removal
     # after verification — listed so they stay visible, not endorsed.
     "/api/debug-insights", "/api/gbp-debug", "/api/admin/",
 )
+
+
+# The team's side of Labor (staff brief, house rules, staff docs, certs) was
+# put behind the Labor plan and role gates by the release-safety round with
+# no data on who it would take a screen from (blind re-audit 10/26/26 B3).
+# The gate is a cohort: on everywhere by default, and turned off for a
+# restaurant — or everyone — without a deploy (rollout feature
+# STAFF_KNOWLEDGE_GATE_FEATURE: the console's rollout flags, or the env
+# ROLLOUT_STAFF_DOCS_PLAN_GATE=off). Off, those paths are gated only by the
+# role checks inside their own routes, as before the round.
+STAFF_KNOWLEDGE_GATE_FEATURE = "staff_docs_plan_gate"
+STAFF_KNOWLEDGE_PREFIXES = ("/api/staff-brief", "/api/house-rules", "/api/staff-docs", "/api/staff-certs",
+                            "/mobile/api/staff-brief", "/mobile/api/house-rules", "/mobile/api/staff-docs",
+                            "/mobile/api/staff-certs")
+
+
+def _staff_knowledge_gate_off(user, path) -> bool:
+    """Whether the module gates stand down for this staff-knowledge path at
+    this login's restaurant (STAFF_KNOWLEDGE_GATE_FEATURE's cohort)."""
+    if not str(path or "").startswith(STAFF_KNOWLEDGE_PREFIXES):
+        return False
+    import rollout
+    return not rollout.enabled(STAFF_KNOWLEDGE_GATE_FEATURE, (user or {}).get("restaurant_id"), default=True)
 
 
 def _required_module(path: str):
@@ -6102,16 +6216,18 @@ def _module_blocked(user, path=None):
     try:
         if not user or user.get("is_admin"):
             return None
-        key = _required_module(path if path is not None else (request.path or ""))
-        if not key:
+        _p = path if path is not None else (request.path or "")
+        key = _required_module(_p)
+        if not key or _staff_knowledge_gate_off(user, _p):
             return None
         from models import module_label, restaurant_has_module
         if restaurant_has_module(user["restaurant_id"], key):
             return None
         return module_label(key)
-    except Exception:
+    except Exception as e:
         # Fail open — a lookup failure must not take a paying client's tab
-        # away. See models.restaurant_has_module.
+        # away. See models.restaurant_has_module. Counted (A03-12).
+        _gate_failed_open("module", e, user)
         return None
 
 
@@ -6136,7 +6252,7 @@ def _module_permission_denied(user, path=None):
             return None
         path = path if path is not None else (request.path or "")
         key = _required_module(path)
-        if not key:
+        if not key or _staff_knowledge_gate_off(user, path):
             return None
         from permissions import MODULE_VIEW_PERMISSIONS, has_permission, enter_path_allowed
         needed = MODULE_VIEW_PERMISSIONS.get(key)

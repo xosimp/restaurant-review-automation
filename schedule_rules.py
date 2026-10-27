@@ -19,7 +19,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-from models import get_conn, DB_PATH
+from models import DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard (audit #25 A04-07). `from models import get_conn` bound the
+    function object at import, so a test's monkeypatch of models.get_conn
+    never reached the bare get_conn() calls in this module."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from models import live_where as _models_live_where, live_csv_sql as _models_live_csv
 import logging
 
@@ -1327,12 +1336,15 @@ def tz_of(c) -> str:
 _OVERNIGHT_LATEST_BEFORE = _stime.SMALL_HOURS_BEFORE
 
 
-def window_holds(window, day, week_dates=None, today=None) -> bool:
+def window_holds(window, day, week_dates=None, today=None, tz=None) -> bool:
     """Whether a time window ({earliest, latest, from?, until?}, one
     weekday's entry in staff_settings.time_windows) applies this week: one
     with dates ("not before 5pm on Tuesdays until 12/15/26" — employee
     audit M5) holds on this week's `day` inside them; with no week, while
-    it has not ended. A window with no dates always holds."""
+    it has not ended — by the restaurant's own date (`tz`, its IANA zone;
+    `today` to fix it), never the server's: on a UTC box a window ending
+    today read as ended from 7pm Chicago time (release-safety audit
+    10/26/26). A window with no dates always holds."""
     f, u = (window or {}).get("from"), (window or {}).get("until")
     if not (f or u):
         return True
@@ -1342,8 +1354,12 @@ def window_holds(window, day, week_dates=None, today=None) -> bool:
         return any(bounds_apply({"from": f, "until": u}, d) for d in dates)
     if week_dates:
         return False
-    from datetime import date as _date
-    return not u or u >= (today or _date.today()).isoformat()
+    if not u:
+        return True
+    if today is None:
+        from time_utils import restaurant_now
+        today = restaurant_now(tz).date()
+    return u >= today.isoformat()
 
 
 def hours_on_file(day, open_times=None, close_times=None) -> bool:
@@ -2588,10 +2604,14 @@ def _in_read_scope(fn):
 
 
 @_in_read_scope
-def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_path=DB_PATH) -> Constraints:
+def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_path=DB_PATH,
+                      roster_change=None) -> Constraints:
     """Everything the pipeline needs to know about who can work when,
     gathered once. Every source is optional; a missing one costs a rule,
-    never the generation."""
+    never the generation. `roster_change` ({"name", "active"?, "settings"?},
+    staff_settings.planned_change) reads one person as a settings save not
+    yet written would leave them — the manager rule judges such a save
+    against the live weeks before it is made (blind re-audit 10/26/26 B2)."""
     from models import get_restaurant, get_staff_availability, get_close_times, get_role_close_buffers, get_staff_notes
     restaurant = restaurant or get_restaurant(restaurant_id, db_path)
     c = Constraints(restaurant_id=restaurant_id, week_dates=list(week_dates or []), week_days=list(week_days or []))
@@ -2668,6 +2688,8 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     try:
         import staff_settings as _ss
         _people = list(_ss.roster(restaurant_id, db_path=db_path, include_inactive=True))
+        if roster_change:
+            _people = _ss.roster_after(_people, roster_change.get("name"), roster_change)
     except Exception as exc:
         _people = []
         _input_problem(c, "roster", exc)
@@ -3495,7 +3517,7 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
         win = {}
         for day, w in st["time_windows"].items():
             lo, hi = parse_minutes((w or {}).get("earliest") or ""), parse_minutes((w or {}).get("latest") or "")
-            if (lo is not None or hi is not None) and window_holds(w, day, c.week_dates):
+            if (lo is not None or hi is not None) and window_holds(w, day, c.week_dates, tz=tz_of(c)):
                 win[day] = (lo, hi)
         if win:
             c.time_windows[key] = win

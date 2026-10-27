@@ -43,6 +43,10 @@ def _rid(name="Forecast Co"):
 
 
 def _scored(rid, kind, predicted, actual, n=5):
+    # A salary-sensitive kind's record is read on the reader's pay basis
+    # (forecast_log.SALARY_KINDS): the rows carry the basis of the view the
+    # test reads in.
+    pay = forecast_log.current_pay_basis() if kind in forecast_log.SALARY_KINDS else None
     conn = models.get_conn()
     try:
         last_sunday = date.today() - timedelta(days=date.today().weekday() + 1)
@@ -53,9 +57,9 @@ def _scored(rid, kind, predicted, actual, n=5):
                 end = forecast_log.month_bounds(end)[1]
             err, signed = forecast_log.errors(predicted, actual)
             conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, "
-                         "signed_error_pct, scored_at, created_at) VALUES (?,?,?,?,?,?,?,datetime('now'),?)",
+                         "signed_error_pct, scored_at, created_at, pay_basis) VALUES (?,?,?,?,?,?,?,datetime('now'),?,?)",
                          (rid, kind, end.isoformat(), predicted, actual, err, signed,
-                          f"{(end - timedelta(days=10)).isoformat()} 09:00:00"))
+                          f"{(end - timedelta(days=10)).isoformat()} 09:00:00", pay))
         conn.commit()
     finally:
         conn.close()
@@ -168,14 +172,18 @@ def test_the_prime_cost_projection_carries_its_corrected_month_end(monkeypatch):
                         lambda r: {"is_live": True, "total_sales": 20000.0, "overall_labor_pct": 30.0,
                                    "date_range": {"start": "2026-09-01", "end": "2026-09-19"}})
     monkeypatch.setattr(fci, "_labor_stale_why", lambda *a, **k: None)
-    out = fci.profitability_projection(rid)
-    assert out["available"] and out["prime_cost_pct"] == 60.0 and out["projection_correction"] is None
-    _scored(rid, "profitability_month", 66.0, 60.0)                           # ran 10% high
-    out = fci.profitability_projection(rid)
-    corr = out["projection_correction"]
-    assert out["prime_cost_pct"] == 60.0, "the month to date stays as measured"
-    assert corr and corr["prime_cost_pct"] == pytest.approx(54.5, abs=0.1) and "ran 10% high" in corr["note"]
-    assert fci.profitability_projection(rid, withhold=False)["projection_correction"] is None
+    with models.salary_view(True):                 # the owner's projection, and its all-in record
+        out = fci.profitability_projection(rid)
+        assert out["available"] and out["prime_cost_pct"] == 60.0 and out["projection_correction"] is None
+        _scored(rid, "profitability_month", 66.0, 60.0)                       # ran 10% high
+        out = fci.profitability_projection(rid)
+        corr = out["projection_correction"]
+        assert out["prime_cost_pct"] == 60.0, "the month to date stays as measured"
+        assert corr and corr["prime_cost_pct"] == pytest.approx(54.5, abs=0.1) and "ran 10% high" in corr["note"]
+        assert fci.profitability_projection(rid, withhold=False)["projection_correction"] is None
+    # A reader who may not see salaries is never corrected by the owner's record.
+    with models.salary_view(False):
+        assert fci.profitability_projection(rid)["projection_correction"] is None
 
 
 # ── an event week is not the forecast's lean (event_memory, M5's contract) ──

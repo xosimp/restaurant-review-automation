@@ -373,7 +373,8 @@ final class MarketingViewModel {
 
     // MARK: - Load
 
-    private struct MarketingResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (Fixtures/marketing.json).
+    struct MarketingResponse: Decodable {
         let ok: Bool
         let stats: MarketingStats
         let calendar: [ContentCalendarIdea]

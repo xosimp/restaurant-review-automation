@@ -44,6 +44,7 @@ actually there:
 Read-only against the database except `weekly_snapshot`, `diagnose` and the
 forecast functions, which say so in their names.
 """
+import logging
 import json
 from datetime import date, datetime, timedelta
 
@@ -1074,12 +1075,40 @@ def _labor_stale_why(restaurant_id, analysis, period_end, today, db_path=DB_PATH
     return None
 
 
-def _dsr_measured_labor(restaurant_id, start, end, db_path=DB_PATH) -> dict:
-    """{iso: {"labor": $, "archive_sales": $|None}} for the nights in
-    [start, end] the nightly report MEASURED labor dollars on (dsr_metrics
-    labor.cost, from a ready Labor block), with the POS archive's own sales
-    for the same night (labor_daily_history, final) — the figure the
-    projection's sales denominator already counts that night at."""
+def _dsr_measured_labor(restaurant_id, start, end, db_path=DB_PATH, view=None) -> dict:
+    """{iso: {"labor": $, "hourly": $, "salaried": $|None, "archive_sales":
+    $|None}} for the nights in [start, end] the nightly report MEASURED
+    labor dollars on (dsr_metrics labor.cost, from a ready Labor block),
+    with the POS archive's own sales for the same night (labor_daily_history,
+    final) — the figure the projection's sales denominator already counts
+    that night at.
+
+    `labor` is on the viewer's basis (metrics.labor_figures, audit #25
+    F1/R3): the report's labor.cost is HOURLY (dsr.block_labor keeps the
+    salaries apart), so for a viewer who sees salaries each measured night
+    carries a trading day's share of them, as the report's own all-in
+    labor and prime cost do (dsr.kpis ALL_IN_KEYS) — Simple EJ's
+    month-to-date prime cost read hourly while every other labor surface
+    read all-in. `view` as labor_figures' (None: the current viewer)."""
+    measured = _dsr_measured_hourly(restaurant_id, start, end, db_path=db_path)
+    if not measured:
+        return {}
+    import metrics
+    fig = metrics.labor_figures(restaurant_id, start, end, view=view, db_path=db_path,
+                                nights={d: {"labor": x["labor"], "sales": x["archive_sales"], "trading": True}
+                                        for d, x in measured.items()})
+    out = {}
+    for d, x in measured.items():
+        day = fig["by_day"].get(d) or {}
+        out[d] = {"labor": day.get("cost", x["labor"]), "hourly": x["labor"],
+                  "salaried": day.get("salaried_cost") if day.get("includes_salaries") else None,
+                  "archive_sales": x["archive_sales"]}
+    return out
+
+
+def _dsr_measured_hourly(restaurant_id, start, end, db_path=DB_PATH) -> dict:
+    """{iso: {"labor": hourly $, "archive_sales": $|None}} — the nights the
+    nightly report measured, as stored (_dsr_measured_labor's input)."""
     from canonical_facts import FINAL_SQL
     conn = get_conn(db_path)
     try:
@@ -1088,7 +1117,8 @@ def _dsr_measured_labor(restaurant_id, start, end, db_path=DB_PATH) -> dict:
                 "SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? AND metric='labor.cost' "
                 "AND value IS NOT NULL AND business_date BETWEEN ? AND ?",
                 (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()}
-        except Exception:
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[food_cost_intelligence] nightly labor unreadable for {restaurant_id}: {e!r}")
             labor = {}
         archive = {}
         if labor:
@@ -1160,6 +1190,13 @@ def _month_scale(restaurant_id, month_start, end, days_in_month, db_path=DB_PATH
     if have <= 0 or total <= 0:
         return flat
     return total / have, "this restaurant's own weekday pattern (its average sales by day of week)"
+
+
+# The profitability payload's figures version (profitability_projection
+# "figures_version"): 1 — labor_pct was the shift analysis's share and food
+# was over food sales only; 2 — labor_pct is the labor in the prime cost over
+# net sales, on labor_salary_basis, with food_share_pct over net beside it.
+PROFITABILITY_FIGURES_VERSION = 2
 
 
 def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhold: bool = True) -> dict:
@@ -1235,10 +1272,14 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     labor_cost, labor_pct, labor_why, labor_period = None, None, None, None
     labor_period_start = labor_period_end = None
     labor_from = None
+    la_includes_salaries = False
     try:
         from labor import analyse_shifts_for_restaurant
         la = analyse_shifts_for_restaurant(restaurant_id)
         if la and la.get("is_live") and _f(la.get("total_sales")) > 0:
+            # The share is on the viewer's basis already (all-in for the
+            # owner, hourly for a manager: labor._analyse_for_restaurant).
+            la_includes_salaries = bool(la.get("includes_salaries"))
             rng = la.get("date_range") or {}
             # M/D/YY, never ISO, in owner-facing text (T7, B6#13); the
             # ISO bounds travel apart as labor_period_start / _end.
@@ -1312,6 +1353,14 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     else:
         labor_basis = "analysis_share"
         labor_basis_text = labor_from
+    # Salaries in or out, the same for every part of the figure (audit #25
+    # F1/R3): the measured nights carry a day's share of the salaries
+    # exactly when the analysis share includes them — both for the viewer.
+    import metrics as _metrics_pp
+    salaries_in = any(x.get("salaried") for x in measured.values()) or bool(share_sales and la_includes_salaries)
+    salary_basis = "all_in" if salaries_in else ("no_salaries" if _metrics_pp._sees_salaries(None) else "hourly")
+    if labor_basis_text and salary_basis != "no_salaries":
+        labor_basis_text += ", salaries included" if salaries_in else ", hourly staff only"
     if n_measured:
         basis = ("Prime cost = COGS + labor, month to date, projected to month end at the current daily run rate. "
                  "This is prime cost, not net profit — rent, utilities and overheads are not in this system. "
@@ -1321,6 +1370,7 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
                     else ", every night of the month so far.")
                  + " The nightly report's own prime cost is one night's labor plus the estimated recipe cost of "
                    "what sold, over that night's net; this one uses the food cost ledger (COGS) for the month.")
+    basis += f" Labor: {_metrics_pp.LABOR_BASIS_TEXT[salary_basis]}."
     prime_mtd = cogs_mtd + labor_cost
     prime_pct = round(prime_mtd / net_sales * 100, 1)
     # The beverage basis (Bar audit R7 / AIX-12): the food ledger's COGS has
@@ -1404,8 +1454,28 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
         "net_sales_mtd": round(net_sales, 2),
         "cogs_mtd": round(cogs_mtd, 2),
         "labor_cost_mtd": round(labor_cost, 2),
+        # The food cost % proper — COGS over FOOD sales (cogs.build_food_cost_pct)
+        # — against its target. NOT a part of the prime cost: drink sales are
+        # in net and not in food sales, so beside the labor % it never adds.
         "food_cost_pct": fc.get("pct"), "food_cost_target": fc.get("target"),
-        "labor_pct": labor_pct,
+        # The food part OF the prime cost: COGS over the month's NET sales,
+        # the denominator labor_pct and prime_cost_pct share (pct_denominator),
+        # so food_share_pct + labor_pct = prime_cost_pct (blind re-audit
+        # 10/26/26 B3: "food 42.9% + labor 26.0%" stood beside a prime of 56.0%
+        # at a bar-serving restaurant).
+        "food_share_pct": round(cogs_mtd / net_sales * 100, 1) if net_sales else None,
+        "pct_denominator": "net_sales",
+        # What the keys mean (B4: payload semantics changed under the same
+        # names): 2 = labor_pct is the labor IN the prime cost over net, on
+        # labor_salary_basis, and food_share_pct is over net too.
+        "figures_version": PROFITABILITY_FIGURES_VERSION,
+        # The labor % IN the prime cost (labor_pct_mtd), so "food X% + labor
+        # Y%" reads the figure it adds up from; the shift analysis's share,
+        # where it stood in for unmeasured nights, is labor_share_pct. Both
+        # on one viewer's basis (salary_basis, audit #25 F1).
+        "labor_pct": round(labor_cost / net_sales * 100, 1) if net_sales else None,
+        "labor_share_pct": labor_pct,
+        "labor_includes_salaries": salaries_in, "labor_salary_basis": salary_basis,
         "prime_cost_pct": prime_pct,
         # "excluded": drink sales are in net, beverage cost is not (R7).
         "beverage_basis": beverage_basis,
@@ -1629,12 +1699,18 @@ def record_profitability_forecast(restaurant_id: int, db_path: str = DB_PATH, to
         return {"recorded": False, "reason": "before the 15th"}
     if forecast_log.frozen(restaurant_id, "profitability_month", today, db_path=db_path):
         return {"recorded": False, "reason": "already frozen this month"}
-    proj = profitability_projection(restaurant_id, db_path=db_path, withhold=False)
+    # On the owner's basis (all-in labor), recorded with it: the projection
+    # owners read is all-in, and its record is calibrated only against rows
+    # of the same basis (forecast_log.SALARY_KINDS). The nightly job reads
+    # manager-safe by default, which would freeze an hourly projection.
+    import models as _models_rp
+    with _models_rp.salary_view(True):
+        proj = profitability_projection(restaurant_id, db_path=db_path, withhold=False)
     if not proj.get("available") or proj.get("prime_cost_pct") is None:
         return {"recorded": False, "reason": proj.get("reason") or "no projection"}
     out = forecast_log.record(restaurant_id, "profitability_month", proj["prime_cost_pct"], period_of=today,
                               basis=f"{proj.get('days_elapsed')} days of the month, prime cost run rate",
-                              db_path=db_path)
+                              db_path=db_path, pay_basis=forecast_log.ALL_IN)
     if not out.get("recorded"):
         return {"recorded": False, "reason": "already frozen this month"}
     return {"recorded": True, "horizon_end": out["horizon_end"], "predicted": proj["prime_cost_pct"]}
@@ -1867,9 +1943,19 @@ def _profit_block(pp) -> str:
     # block above it is the trailing 28-day one, so the two legitimately
     # differ. Adjacent and unlabelled they read as a contradiction, which is
     # worse than either number alone — name the window on both.
-    line = (f"Prime cost is {pp['prime_cost_pct']}% of sales month to date "
-            f"(month-to-date food {pp['food_cost_pct']}% + labor {pp['labor_pct']}%), on "
-            f"${pp['net_sales_mtd']:,.0f} of sales over {pp['days_elapsed']} days. "
+    # The labor % is the one IN the prime cost, named for its basis (audit
+    # #25 F1): salaries in for the owner, hourly staff only otherwise.
+    sal = {"all_in": ", salaries included", "hourly": ", hourly staff only"}.get(pp.get("labor_salary_basis"), "")
+    # Both parts over the same net sales, so they add up to the prime cost;
+    # the food cost % over FOOD sales is said apart and never added (B3).
+    _food_share = pp.get("food_share_pct")
+    parts = (f" (month-to-date food {_food_share}% + labor {pp['labor_pct']}%{sal} of sales)"
+             if _food_share is not None else "")
+    own = (f" The month-to-date food cost on food sales alone is {pp['food_cost_pct']}% — a different "
+           f"denominator (no drink sales), so it is not a part of the prime cost."
+           if pp.get("food_cost_pct") is not None else "")
+    line = (f"Prime cost is {pp['prime_cost_pct']}% of sales month to date{parts}, on "
+            f"${pp['net_sales_mtd']:,.0f} of sales over {pp['days_elapsed']} days.{own} "
             f"Note this month-to-date food cost figure covers a different window from the "
             f"trailing-28-day one above, so the two will not match. "
             f"At this run rate the month lands near ${pp['projected_sales']:,.0f} of sales "
@@ -1978,6 +2064,8 @@ def typed_facts(drivers=None, food_cost=None, profitability=None) -> list:
         out += [F("food.profit.prime_cost_pct", pp.get("prime_cost_pct"), "%", lk),
                 F("food.profit.labor_pct", pp.get("labor_pct"), "%", lk),
                 F("food.profit.food_cost_pct", pp.get("food_cost_pct"), "%", "measured"),
+                # The food part of the prime cost, over net (food_share_pct).
+                F("food.profit.food_share_pct", pp.get("food_share_pct"), "%", "measured"),
                 F("food.profit.prev_month_prime_pct", pp.get("prev_month_prime_pct"), "%", lk)]
         out += [F("food.profit.net_sales_mtd", pp.get("net_sales_mtd"), "$", "measured"),
                 F("food.profit.projected_sales", pp.get("projected_sales"), "$", "projection", "month"),
@@ -2143,7 +2231,14 @@ def diagnosis_plan(restaurant_id: int, db_path: str = DB_PATH, force: bool = Fal
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return {"kind": "done", "result": {}}
-    ev = build_evidence(restaurant_id, db_path=db_path)
+    # One diagnosis per restaurant, shown to every login with the Food Cost
+    # view: its evidence is read as the team reads it (no salaries), so its
+    # prime cost and labor lines never carry the owner's salaries to a
+    # manager (audit #25 F1 — the measured nights' labor is now all-in for
+    # the owner). The prime cost line names its basis ("hourly staff only").
+    from models import salary_view as _salary_view_dx
+    with _salary_view_dx(False):
+        ev = build_evidence(restaurant_id, db_path=db_path)
     drv = ev["drivers"]
     if not drv.get("drivers"):
         # Nothing clears the floor any more: the stored cause is history,

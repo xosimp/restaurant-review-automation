@@ -15,6 +15,10 @@ import ai_utils
 import client_api
 import good_news
 import models
+import pytest
+
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
 
 
 def test_a_request_with_no_login_does_not_see_salaries():
@@ -23,8 +27,10 @@ def test_a_request_with_no_login_does_not_see_salaries():
         assert models.viewer_sees_salaries() is False
         g.cavnar_current_user = {"id": 1, "role": "manager", "restaurant_id": 5}
         assert models.viewer_sees_salaries() is False
-    # A job reporting to the owner, off any request: yes.
-    assert models.viewer_sees_salaries() is True
+    # Off any request with no view carried: NO — a job is manager-safe
+    # unless it reports to the owner alone and says so (blind re-audit
+    # 10/26/26 B3 P0; tests/test_rf3_salary_view.py).
+    assert models.viewer_sees_salaries() is False
 
 
 def test_a_carried_view_wins_wherever_the_work_runs():
@@ -77,7 +83,7 @@ def test_each_morning_brief_is_built_in_its_recipients_salary_view(monkeypatch):
     # R6-F3b: deliver() builds off a request, where every read was the owner's.
     import morning_brief
     src = inspect.getsource(morning_brief.deliver)
-    assert "salary_view(sees)" in src and "_is_principal_mb(u)" in src
+    assert "salary_view(sees)" in src and "_sees_salaries_mb(u)" in src
     assert "frozenset(), sees)" in src, "a manager never shares the owner's built brief"
 
 

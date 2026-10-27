@@ -196,7 +196,10 @@ def drink_specs(restaurant_id, db_path=None, status=None) -> list:
 # Bourbon" both matched Barmen 1873 Bourbon on the word "bourbon").
 _GENERIC = {"bourbon", "bbn", "whiskey", "whisky", "rye", "scotch", "vodka", "vdk", "gin", "rum", "tequila", "teq",
             "mezcal", "liqueur", "liq", "brandy", "cognac", "wine", "blanco", "reposado", "anejo", "white", "dark",
-            "spiced", "dry", "sweet", "red"}
+            "spiced", "dry", "sweet", "red",
+            # A sparkling wine's style, not its house (owner, 10/27/26: "Gl Moet
+            # Brut" was offered Zardetto Prosecco Brut on the word "brut").
+            "brut", "sec", "demi", "extra", "prosecco", "champagne", "cava", "sparkling", "rose"}
 
 
 def _words(s) -> set:
@@ -781,7 +784,8 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     `bar_ops.keg_yield`, and the internals the waste block reads. `canon`
     is the price watch's canonical-product map when the caller has it
     (bar.build: the same lines and the owner's links), else read here."""
-    today = today or date.today()
+    from bar.common import local_today
+    today = today or local_today(restaurant_id)        # the restaurant's date (audit #25 F4)
     if lines is None:
         from bar.purchases import _lines
         lines = _lines(restaurant_id, db_path)
@@ -979,12 +983,14 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     for k in list(targets):
         if k in carded:
             del targets[k]
+    confirmed_specs = []
     for s in specs:
         if not s["item_id"]:
             s["item_id"] = by_name.get((s["provider"], " ".join(str(s["item_name"] or "").lower().split())))
         if s["status"] != "confirmed":
             suggested.append(s)
             continue
+        confirmed_specs.append(s)
         if not s["item_id"] or not s["product_key"]:
             continue
         ck = canon.get(s["product_key"], s["product_key"])
@@ -1168,11 +1174,14 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         u["sales_usd"] = round(u["sales_usd"], 2)
     for u in unmapped_rows[:MAX_UNMAPPED]:
         u["suggest"] = suggest_pour(u["item"], u["category"], _cands) or None
+        u["serve"] = serve_kind(u["item"], u["category"])
+        u["on_invoices"] = named_on_invoices(u["item"], u["category"], _cands)
     aside_rows = sorted(aside.values(), key=lambda a: -a["sales_usd"])
     for a in aside_rows:
         a["rung_units"] = _r(a["rung_units"])
         a["sales_usd"] = round(a["sales_usd"], 2)
     totals = _totals(items, cat_sales, mapped_sales)
+    open_cards = {_card_key(o) for o in suggested[:MAX_SUGGESTIONS]}
     out = {"set_aside": aside_rows[:MAX_UNMAPPED], "set_aside_total": len(aside_rows),
            "set_aside_sales_usd": round(sum(a["sales_usd"] for a in aside_rows), 2),
            "available": bool(items), "basis": "bought_vs_rung", "label": LABELS["bought_vs_rung"],
@@ -1183,6 +1192,10 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
            "totals": totals, "incomplete_distributors": sorted(gapped),
            "suggestions": [_spec_public(s, _names) for s in suggested[:MAX_SUGGESTIONS]],
            "suggestions_total": len(suggested),
+           # A card still open shows its whole recipe (owner, 10/27/26: the
+           # Chocolate Martini read "0 of 2" with its confirmed Baileys left
+           # off, so Baileys looked missing from the bar).
+           "card_confirmed": [_spec_public(s, _names) for s in confirmed_specs if _card_key(s) in open_cards],
            "note": ("Comps are poured, not paid: shown apart, never counted as sold. A POS drink not matched to a "
                     "product — or set aside — is left out of the matched share and named, never counted as zero.")}
     if not items:
@@ -1308,6 +1321,43 @@ def form_fits(item_name, category, keg, container_oz=None) -> bool:
     return True
 
 
+# What a POS drink button is (owner, 10/27/26: "no one is ordering a Malibu
+# shot"). A button named for a spirit is a POUR of that bottle - neat, on
+# the rocks or with a mixer the POS rings on its own line (EJ's, Sep-Oct:
+# Malibu on the rocks 4, with pineapple 2, with OJ 2; Bombay with tonic 6;
+# Knob Creek with Coke 2) - so one bottle at one pour counts it right
+# whatever the glass, and a Double already counts twice (resolve_lines). A
+# made drink - a shot, a martini, a mule - pours from more than one bottle
+# and needs its recipe card.
+_MADE_DRINK_RE = re.compile(
+    r"\b(?:shots?|bombs?|martinis?|tinis?|mules?|margaritas?|ritas?|mojitos?|spritz\w*|spiritz|old\s*fash\w*|fash|"
+    r"sours?|punch|lemonades?|teas?|refresh\w*|smash|crusher|wrecker|coladas?|daiquiris?|cosmos?|sangrias?|"
+    r"bloody|mimosas?|fros[e\u00e9]|bucks?|bck|highballs?|juleps?|negronis?|manhattans?|palomas?|sidecars?|collins|"
+    r"toddy|slush\w*|lemon\s+drop|kamikaze|hurricane|mai\s*tai|long\s*island|longisland|white\s+russian|"
+    r"black\s+russian|mudslide|bellini|aperol\s+spritz|cocktail)\b", re.I)
+
+
+def serve_kind(item_name, category) -> str:
+    """"spirit" (a pour of one bottle, however it is served), "made" (a
+    drink of more than one bottle: its recipe card), "glass" (wine by the
+    glass) or "beer"."""
+    if category == "beer":
+        return "beer"
+    if _MADE_DRINK_RE.search(str(item_name or "")):
+        return "made"
+    return "glass" if category == "wine" else "spirit"
+
+
+def named_on_invoices(item_name, category, cands) -> bool:
+    """Whether any bought product of the drink's category shares a word of
+    its name beyond the kind of spirit ("Bombay": no BOMBAY on an invoice).
+    True when the name has nothing to look for."""
+    words = _words(_POS_NOISE.sub(" ", str(item_name or ""))) - _GENERIC
+    if not words:
+        return True
+    return any(c[2] == category and (words & c[1]) for c in cands.values())
+
+
 def suggest_pour(item_name, category, cands) -> dict:
     """What an unmatched POS drink most likely pours (owner, 10/15/26: "the
     easiest way to correlate these so I don't mess up"): the bottle or keg
@@ -1332,6 +1382,11 @@ def suggest_pour(item_name, category, cands) -> dict:
     if not key or score < 0.2:
         return {}
     return {"product_key": key, "product": pname, "oz": oz if (draft or category != "beer") else None}
+
+
+def _card_key(s) -> tuple:
+    """One cocktail's card: its POS provider and button name, spacing and case aside."""
+    return (s["provider"], " ".join(str(s["item_name"] or "").lower().split()))
 
 
 def _spec_public(s, names=None) -> dict:
