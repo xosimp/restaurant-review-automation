@@ -91,8 +91,17 @@ def reviews_read(monkeypatch):
 
 
 def _answer(rid, viewer):
+    from flask import g
     with Flask(__name__).test_request_context("/api/review-insight?async=1"):
+        # The login on the request, as login_required puts it: its salary
+        # view picks its Reviews read too (client_api.review_read_scope).
+        g.cavnar_current_user = viewer
         return client_api.review_insight_answer(rid, viewer)
+
+
+# The manager's own Reviews read: hourly labor, no Food Cost figures
+# (insight_store.review_scope, blind re-audit 10/26/26 B3).
+TEAM_KIND = "reviews" + insight_store.review_scope(False, False)
 
 
 def _rid(db):
@@ -122,7 +131,7 @@ def test_a_stored_owner_read_is_never_served_to_a_login_that_cannot_see_location
 def test_each_login_is_served_its_own_stored_read(db, held, reviews_read):
     rid = _rid(db)
     insight_store.put(rid, "reviews:locations", "fp-owner", OWNER_READ)
-    insight_store.put(rid, "reviews", "fp-team", TEAM_READ)
+    insight_store.put(rid, TEAM_KIND, "fp-team", TEAM_READ)
     assert _answer(rid, MANAGER)[0]["insight"] == TEAM_READ["insight"]
     assert _answer(rid, OWNER)[0]["insight"] == OWNER_READ["insight"]
 
@@ -149,13 +158,16 @@ def test_the_synchronous_fallback_reads_the_kind_that_matches_the_login(db, monk
     monkeypatch.setattr(client_api, "_review_insight_recs", lambda rid, out: out)
     monkeypatch.setattr(client_api, "_record_insight_fallback", lambda *a, **k: None)
     insight_store.put(rid, "reviews:locations", "fp-owner", OWNER_READ)
-    manager, _ = client_api._do_review_insight(rid, viewer=MANAGER)
+    with models.salary_view(False):
+        manager, _ = client_api._do_review_insight(rid, viewer=MANAGER)
     assert "Lakeview" not in json.dumps(manager)
-    owner, _ = client_api._do_review_insight(rid, viewer=OWNER)
+    with models.salary_view(True):
+        owner, _ = client_api._do_review_insight(rid, viewer=OWNER)
     assert owner["insight"] == OWNER_READ["insight"] and owner["stale"] is True
-    insight_store.put(rid, "reviews", "fp-team", TEAM_READ)
+    insight_store.put(rid, TEAM_KIND, "fp-team", TEAM_READ)
     client_api._insight_cache.clear()
-    manager, _ = client_api._do_review_insight(rid, viewer=MANAGER)
+    with models.salary_view(False):
+        manager, _ = client_api._do_review_insight(rid, viewer=MANAGER)
     assert manager["insight"] == TEAM_READ["insight"] and manager["stale"] is True
 
 

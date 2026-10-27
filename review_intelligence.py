@@ -600,9 +600,16 @@ def daypart_breakdown(restaurant_id: int, days: int = 90, db_path: str = DB_PATH
 
 # ── What the other modules know about the same period ───────────────────────
 
-def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+def operational_context(restaurant_id: int, db_path: str = DB_PATH, include_food: bool = True) -> dict:
     """Labor, food cost, waste and marketing for the same restaurant, each
     line carrying its own staleness and its own live/sample state.
+
+    Labor is read in the CALLER's salary view (models.viewer_sees_salaries):
+    all-in for the owner, hourly for anyone else — `labor.hourly_only` says
+    the figure leaves salaried pay out, and then it is not set against the
+    target, which counts salaried pay (blind re-audit 10/26/26 B3). Food
+    cost and the waste trend only with `include_food` (a reader who may see
+    Food Cost): a manager's Reviews read carried the week's waste dollars.
 
     The Reviews module read none of this. Every one of these functions is in
     the same process — ask_cavnar.build_context already composes all of them
@@ -643,8 +650,15 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         a = analyse_shifts_for_restaurant(restaurant_id)
         if a and a.get("is_live"):
             rng = a.get("date_range") or {}
+            try:
+                from models import get_restaurant as _gr_oc, salaried_staff as _ss_oc
+                _hourly_only = bool(not a.get("includes_salaries") and _ss_oc(_gr_oc(restaurant_id)))
+            except Exception as _se:
+                print(f"[review_intelligence] salaried roster unreadable for {restaurant_id}: {_se!r}")
+                _hourly_only = True          # unknown: never set an hourly figure against the target
             ctx["labor"] = {
                 "labor_pct": round(_f(a.get("overall_labor_pct")), 1),
+                "hourly_only": _hourly_only,
                 "target_pct": round(_f(a.get("labor_target"), 30.0), 1),
                 "total_sales": round(_f(a.get("total_sales"))),
                 "period_days": a.get("period_days"),
@@ -660,7 +674,7 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
     try:
         from inventory import analysis_for
-        inv, inv_live, analysis = analysis_for(restaurant_id)
+        inv, inv_live, analysis = analysis_for(restaurant_id) if include_food else (None, False, None)
         if inv and inv_live and analysis:
             waste_items = analysis.get("waste_items") or []
             ctx["food_cost"] = {
@@ -675,7 +689,7 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
     try:
         from waste_trend import build_waste_trend
-        wt = build_waste_trend(restaurant_id) or {}
+        wt = (build_waste_trend(restaurant_id) or {}) if include_food else {}
         stats = wt.get("stats") or {}
         if stats.get("direction"):
             ctx["waste"] = {
@@ -1362,7 +1376,24 @@ def _operational_lines(ctx) -> dict:
     from ai_guard import OperationalLine, op_field
     lines = {}
     lab = ctx.get("labor")
-    if lab:
+    if lab and lab.get("hourly_only"):
+        # Hourly staff only (a reader who may not see salaries): never set
+        # against the target, which counts salaried pay — 28% "against a 35%
+        # target" read as under target while labor with salaries ran 42%.
+        age = f", data through {lab['covers_to']}" + (f" ({lab['age_days']} days ago)" if lab.get("age_days") else "") if lab.get("covers_to") else ""
+        lines["labor"] = OperationalLine(
+            f"- Labor (hourly staff only — salaried pay is not in this figure, so it is not compared with the "
+            f"target): {lab['labor_pct']}% of sales, "
+            f"{lab['understaffed_days']} understaffed and {lab['overstaffed_days']} overstaffed days "
+            f"over {lab['period_days']} days{age}",
+            {"labor_pct": op_field("hourly labor % of sales", lab["labor_pct"], "pct", display=f"{lab['labor_pct']}%"),
+             "understaffed_days": op_field("understaffed days", lab["understaffed_days"], "count",
+                                           display=f"{lab['understaffed_days']} understaffed days"),
+             "overstaffed_days": op_field("overstaffed days", lab["overstaffed_days"], "count",
+                                          display=f"{lab['overstaffed_days']} overstaffed days"),
+             "period_days": op_field("days in the period", lab["period_days"], "count", evidence=False),
+             "age_days": op_field("days since the data", lab.get("age_days"), "count", evidence=False)})
+    elif lab:
         age = f", data through {lab['covers_to']}" + (f" ({lab['age_days']} days ago)" if lab.get("age_days") else "") if lab.get("covers_to") else ""
         lines["labor"] = OperationalLine(
             f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% target, "
@@ -2166,7 +2197,13 @@ def diagnosis_plan(restaurant_id: int, db_path: str = DB_PATH, force: bool = Fal
     clusters = complaint_clusters(restaurant_id, db_path=db_path)
     if not clusters:
         return None
-    ctx = operational_context(restaurant_id, db_path=db_path)
+    # The stored diagnoses are every Reviews reader's (a manager's too, and
+    # the Reviews read hands them on): their evidence is the hourly labor and
+    # no Food Cost figure, wherever this runs (blind re-audit 10/26/26 B3 —
+    # in the 6am job every read was the owner's, all-in, beside the waste $).
+    import models as _models_dg
+    with _models_dg.salary_view(False):
+        ctx = operational_context(restaurant_id, db_path=db_path, include_food=False)
     op_block = _operational_block(ctx)
     op_lines = _operational_lines(ctx)
     # The game-night line is evidence only for a service or wait cluster

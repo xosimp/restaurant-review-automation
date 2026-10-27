@@ -425,7 +425,12 @@ def _cache_key(rid, schedule_id, rows, user, today, can_publish, sections):
     rows_sig = json.dumps(rows, sort_keys=True, default=str) if rows is not None else ("saved", _version(rid, schedule_id))
     who = ""
     if isinstance(user, dict):
-        who = "|".join(str(user.get(k) or "") for k in ("id", "username", "role", "is_admin", "is_principal"))
+        who = "|".join(str(user.get(k) or "") for k in ("id", "username", "role", "is_admin", "is_principal",
+                                                        "acting_admin_role"))
+    # The salary view too (labor_view is all-in for the owner): support acting
+    # through view-as holds the owner's login but never reads the salaries
+    # (blind re-audit 10/26/26 B3).
+    who += "|s" + ("1" if _m.viewer_sees_salaries() else "0")
     raw = json.dumps([rid, int(schedule_id), dict(h), stamps, rsig, rows_sig, who, str(today), bool(can_publish),
                       sections], sort_keys=True, default=str)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()

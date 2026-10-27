@@ -7140,8 +7140,18 @@ def _mask_text(s):
     return _IP_RE.sub(lambda m: f"{m.group(1)}.x.x", s)
 
 
+# Salaried people's pay and the figures it shows through (blind re-audit
+# 10/26/26 B3): the account holder's and a full admin's, never support's —
+# in the console as through view-as (permissions.sees_salaries).
+_SALARY_KEYS = {"salaried_staff_json", "salaried_staff", "salaried", "salaried_cost", "salaried_total_cost",
+                "salaried_total_pct", "salaried_day", "salaried_per_day", "salaried_vs_target_pts",
+                "salaried_week_cost", "annual", "all_in_pct", "all_in_projected"}
+
+
 def redact_for_support(obj, key=None):
     """A payload with the support role's masking applied; never mutates."""
+    if (key or "").lower() in _SALARY_KEYS:
+        return None if obj is None else "(hidden)"
     if isinstance(obj, dict):
         return {k: redact_for_support(v, k) for k, v in obj.items()}
     if isinstance(obj, list):

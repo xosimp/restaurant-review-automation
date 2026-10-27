@@ -5028,6 +5028,13 @@ def init_db(db_path: str = DB_PATH):
         # audit 9/29/26, "forecasts": event_memory.night_facts), so the bias
         # correction does not learn an event week as the forecast's lean.
         "ALTER TABLE forecast_log ADD COLUMN explained_by TEXT",
+        # The pay basis a salary-sensitive forecast (forecast_log.SALARY_KINDS:
+        # the prime-cost projection, the labor week) was made on — "all_in"
+        # (salaries in, the owner's view) or "hourly" — scored on the same
+        # basis and calibrated only against rows of it; NULL = frozen before
+        # the basis was kept, never calibrated against (blind re-audit
+        # 10/26/26 B8/B4: an hourly-era lean corrected an all-in projection).
+        "ALTER TABLE forecast_log ADD COLUMN pay_basis TEXT",
     ]
     _pg_boot = _dialect.is_postgres(conn)
     try:
@@ -12953,7 +12960,11 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     day with sales in the period carries a trading day's share of the
     salaries (salaried_day_share), the same basis as the Labor page (owner,
     9/30/26). The stored rows stay hourly; hourly_labor_pct and
-    hourly_total_labor carry the shifts alone."""
+    hourly_total_labor carry the shifts alone. `pay_basis` names which
+    every row is on — "all_in" (salaries in), "no_salaries" (a reader who
+    sees salaries, nobody salaried: the two are one) or "hourly" — the key a
+    reader checks before setting two figures side by side (blind re-audit
+    10/26/26 B3/B4: labor_pct meant two things under one name)."""
     from datetime import date as _date_gh, timedelta as _td_gh
     conn = get_conn(db_path)
     try:
@@ -12973,7 +12984,8 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
         conn.close()
     today = _restaurant_today(restaurant_id).isoformat()
     share = 0.0
-    if with_salaries and viewer_sees_salaries():
+    sees = bool(with_salaries and viewer_sees_salaries())
+    if sees:
         try:
             share = float(salaried_day_share(get_restaurant(restaurant_id, db_path)) or 0)
         except Exception:
@@ -12981,6 +12993,7 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     out = []
     for r in rows:
         d = dict(r)
+        d["pay_basis"] = "hourly" if not sees else ("no_salaries" if share <= 0 else "hourly")
         end = str(d.get("period_end") or "")[:10]
         if share > 0 and d.get("total_sales"):
             days = d.get("days")
@@ -12996,6 +13009,7 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
                 d["total_labor"] = round(hourly + d["salaried_cost"], 2)
                 d["labor_pct"] = round(d["total_labor"] / float(d["total_sales"]) * 100, 1)
                 d["includes_salaries"] = True
+                d["pay_basis"] = "all_in"
         if d.get("kind") == LABOR_PERIOD_WEEK:
             try:
                 wk_end = (_date_gh.fromisoformat(str(d["period_start"])[:10]) + _td_gh(days=6)).isoformat()
@@ -13016,6 +13030,10 @@ def _periods_comparable(cur: dict, prev: dict) -> bool:
     if not (cur.get("complete") and prev.get("complete")):
         return False
     if not cur.get("basis") or cur.get("basis") in ("mixed", "unknown") or cur.get("basis") != prev.get("basis"):
+        return False
+    # And on one pay basis (get_labor_history pay_basis): an all-in week is
+    # never compared with an hourly one.
+    if cur.get("pay_basis") != prev.get("pay_basis"):
         return False
     try:
         return (_date_pc.fromisoformat(str(prev["period_end"])[:10]) + _td_pc(days=1)
@@ -13884,27 +13902,57 @@ class salary_view:
         return False
 
 
+def reads_as_owner(fn):
+    """Decorator: a job body whose every output goes to the account holder
+    alone runs in the owner's salary view (all-in labor) however it is
+    called — the scheduler's run, Run now, a script (jobs_registry
+    salary_view "owner")."""
+    return in_salary_view(True, fn)
+
+
+def in_salary_view(sees, fn):
+    """`fn` wrapped to run in salary_view(sees) on whichever thread calls it
+    — a sweep's pool worker starts with no context of its own, so a job
+    that reports to the owner hands its units over this way (a pooled unit
+    otherwise reads manager-safe, viewer_sees_salaries)."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        with salary_view(sees):
+            return fn(*args, **kwargs)
+    return run
+
+
 def viewer_sees_salaries() -> bool:
     """Whether this read may carry the salaries. Salaries are people's pay
     and the owner's alone (dsr.access OWNER_ONLY_PREFIXES): an all-in labor
     % beside the hourly one gives them away. Work that carries a viewer's
     view (salary_view) - that view; in a request, only the account holder
-    (permissions.is_principal), and NOT when the request has no login on it
-    (blind re-audit 10/20/26 R6-F1: the dashboard page's own login check set
-    none, and None read as yes); outside a request with no view set (a job
-    reporting to the owner) - yes."""
+    (permissions.sees_salaries: never support acting through view-as), and
+    NOT when the request has no login on it (blind re-audit 10/20/26 R6-F1);
+    outside a request with no view set - NO.
+
+    A job is manager-safe by default (blind re-audit 10/26/26 B3 P0): this
+    read yes off a request, so the daily issue scan titled the labor issue
+    with the owner's all-in % and texted it to the routed manager. Work
+    that reports to the owner alone opts in, per recipient, with
+    salary_view(True) (the weekly digest, the monthly and quarterly
+    summaries, each owner's morning brief, the DSR's owner render), and
+    every registered job runs inside salary_view(False) unless it does
+    (ops._job_context)."""
     try:
         carried = _SALARY_VIEW.get()
         if carried is not None:
             return carried
         from flask import g, has_request_context
         if not has_request_context():
-            return True
+            return False
         user = getattr(g, "cavnar_current_user", None)
         if user is None:
             return False
-        from permissions import is_principal
-        return bool(is_principal(user))
+        from permissions import sees_salaries
+        return bool(sees_salaries(user))
     except Exception:
         return False
 

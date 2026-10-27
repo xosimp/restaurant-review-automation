@@ -1839,9 +1839,9 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
         # Whose salary view: off a request every read was the owner's, so a
         # manager's brief carried the all-in labor figure in its good news
         # and goal lines (blind re-audit 10/20/26 R6-F3b).
-        from permissions import is_principal as _is_principal_mb
+        from permissions import sees_salaries as _sees_salaries_mb
         import models as _models_mb
-        sees = bool(_is_principal_mb(u))
+        sees = bool(_sees_salaries_mb(u))
         key = (_view_key(u), _safe(_own_silences, restaurant_id, u, db_path) or frozenset(), sees)
         if _personal(restaurant_id, u, db_path):
             key = key + (("login", u["id"]),)

@@ -567,8 +567,11 @@ struct FoodCostAnalyticsSection: View {
     private static func profitabilitySentence(_ p: FoodCostCFO.Profitability,
                                               projected: Double) -> String {
         var s = "month to date"
-        if let food = p.foodCostPct, let labor = p.laborPct {
-            s += String(format: " (food %.1f%% + labor %.1f%%)", food, labor)
+        // Both parts over net sales, so they add up to the prime cost: the
+        // food cost % is over FOOD sales and never shown as a part of it
+        // (blind re-audit 10/26/26 B3).
+        if let food = p.foodSharePct, let labor = p.laborPct {
+            s += String(format: " (food %.1f%% + labor %.1f%% of sales)", food, labor)
         }
         s += ". At this run rate the month lands near $\(projected.commaFormatted)"
         if let sales = p.projectedSales {

@@ -1192,6 +1192,13 @@ def _month_scale(restaurant_id, month_start, end, days_in_month, db_path=DB_PATH
     return total / have, "this restaurant's own weekday pattern (its average sales by day of week)"
 
 
+# The profitability payload's figures version (profitability_projection
+# "figures_version"): 1 — labor_pct was the shift analysis's share and food
+# was over food sales only; 2 — labor_pct is the labor in the prime cost over
+# net sales, on labor_salary_basis, with food_share_pct over net beside it.
+PROFITABILITY_FIGURES_VERSION = 2
+
+
 def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhold: bool = True) -> dict:
     """Month-to-date prime cost, projected to month end.
 
@@ -1447,7 +1454,21 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
         "net_sales_mtd": round(net_sales, 2),
         "cogs_mtd": round(cogs_mtd, 2),
         "labor_cost_mtd": round(labor_cost, 2),
+        # The food cost % proper — COGS over FOOD sales (cogs.build_food_cost_pct)
+        # — against its target. NOT a part of the prime cost: drink sales are
+        # in net and not in food sales, so beside the labor % it never adds.
         "food_cost_pct": fc.get("pct"), "food_cost_target": fc.get("target"),
+        # The food part OF the prime cost: COGS over the month's NET sales,
+        # the denominator labor_pct and prime_cost_pct share (pct_denominator),
+        # so food_share_pct + labor_pct = prime_cost_pct (blind re-audit
+        # 10/26/26 B3: "food 42.9% + labor 26.0%" stood beside a prime of 56.0%
+        # at a bar-serving restaurant).
+        "food_share_pct": round(cogs_mtd / net_sales * 100, 1) if net_sales else None,
+        "pct_denominator": "net_sales",
+        # What the keys mean (B4: payload semantics changed under the same
+        # names): 2 = labor_pct is the labor IN the prime cost over net, on
+        # labor_salary_basis, and food_share_pct is over net too.
+        "figures_version": PROFITABILITY_FIGURES_VERSION,
         # The labor % IN the prime cost (labor_pct_mtd), so "food X% + labor
         # Y%" reads the figure it adds up from; the shift analysis's share,
         # where it stood in for unmeasured nights, is labor_share_pct. Both
@@ -1678,12 +1699,18 @@ def record_profitability_forecast(restaurant_id: int, db_path: str = DB_PATH, to
         return {"recorded": False, "reason": "before the 15th"}
     if forecast_log.frozen(restaurant_id, "profitability_month", today, db_path=db_path):
         return {"recorded": False, "reason": "already frozen this month"}
-    proj = profitability_projection(restaurant_id, db_path=db_path, withhold=False)
+    # On the owner's basis (all-in labor), recorded with it: the projection
+    # owners read is all-in, and its record is calibrated only against rows
+    # of the same basis (forecast_log.SALARY_KINDS). The nightly job reads
+    # manager-safe by default, which would freeze an hourly projection.
+    import models as _models_rp
+    with _models_rp.salary_view(True):
+        proj = profitability_projection(restaurant_id, db_path=db_path, withhold=False)
     if not proj.get("available") or proj.get("prime_cost_pct") is None:
         return {"recorded": False, "reason": proj.get("reason") or "no projection"}
     out = forecast_log.record(restaurant_id, "profitability_month", proj["prime_cost_pct"], period_of=today,
                               basis=f"{proj.get('days_elapsed')} days of the month, prime cost run rate",
-                              db_path=db_path)
+                              db_path=db_path, pay_basis=forecast_log.ALL_IN)
     if not out.get("recorded"):
         return {"recorded": False, "reason": "already frozen this month"}
     return {"recorded": True, "horizon_end": out["horizon_end"], "predicted": proj["prime_cost_pct"]}
@@ -1919,9 +1946,16 @@ def _profit_block(pp) -> str:
     # The labor % is the one IN the prime cost, named for its basis (audit
     # #25 F1): salaries in for the owner, hourly staff only otherwise.
     sal = {"all_in": ", salaries included", "hourly": ", hourly staff only"}.get(pp.get("labor_salary_basis"), "")
-    line = (f"Prime cost is {pp['prime_cost_pct']}% of sales month to date "
-            f"(month-to-date food {pp['food_cost_pct']}% + labor {pp['labor_pct']}%{sal}), on "
-            f"${pp['net_sales_mtd']:,.0f} of sales over {pp['days_elapsed']} days. "
+    # Both parts over the same net sales, so they add up to the prime cost;
+    # the food cost % over FOOD sales is said apart and never added (B3).
+    _food_share = pp.get("food_share_pct")
+    parts = (f" (month-to-date food {_food_share}% + labor {pp['labor_pct']}%{sal} of sales)"
+             if _food_share is not None else "")
+    own = (f" The month-to-date food cost on food sales alone is {pp['food_cost_pct']}% — a different "
+           f"denominator (no drink sales), so it is not a part of the prime cost."
+           if pp.get("food_cost_pct") is not None else "")
+    line = (f"Prime cost is {pp['prime_cost_pct']}% of sales month to date{parts}, on "
+            f"${pp['net_sales_mtd']:,.0f} of sales over {pp['days_elapsed']} days.{own} "
             f"Note this month-to-date food cost figure covers a different window from the "
             f"trailing-28-day one above, so the two will not match. "
             f"At this run rate the month lands near ${pp['projected_sales']:,.0f} of sales "
@@ -2030,6 +2064,8 @@ def typed_facts(drivers=None, food_cost=None, profitability=None) -> list:
         out += [F("food.profit.prime_cost_pct", pp.get("prime_cost_pct"), "%", lk),
                 F("food.profit.labor_pct", pp.get("labor_pct"), "%", lk),
                 F("food.profit.food_cost_pct", pp.get("food_cost_pct"), "%", "measured"),
+                # The food part of the prime cost, over net (food_share_pct).
+                F("food.profit.food_share_pct", pp.get("food_share_pct"), "%", "measured"),
                 F("food.profit.prev_month_prime_pct", pp.get("prev_month_prime_pct"), "%", lk)]
         out += [F("food.profit.net_sales_mtd", pp.get("net_sales_mtd"), "$", "measured"),
                 F("food.profit.projected_sales", pp.get("projected_sales"), "$", "projection", "month"),

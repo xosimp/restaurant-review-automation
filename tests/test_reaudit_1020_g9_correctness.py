@@ -62,7 +62,8 @@ def test_r9_07_a_manager_started_tracker_is_judged_on_its_own_hourly_basis(db_pa
     with models.salary_view(False):             # the manager's request
         o = outcomes.record(rid, "manual", "trim", "Trim Monday lunch", "labor_pct", today=t0, db_path=db_path)
     assert o["salary_basis"] == 0 and o["baseline_value"] == 25.0
-    done = outcomes.evaluate(o["id"], today=TODAY, db_path=db_path)   # the nightly job: all-in by default
+    with models.salary_view(True):              # even a job in the owner's view
+        done = outcomes.evaluate(o["id"], today=TODAY, db_path=db_path)
     assert done["after_value"] == 25.0, "judged on the basis it started on, not the job's all-in view"
     assert done["verdict"] == "no_change" or done["verdict"] not in ("improved", "worsened")
 
@@ -71,7 +72,8 @@ def test_r9_07_an_owner_started_tracker_reads_all_in_everywhere(db_path):
     rid = _rid(db_path)
     t0 = TODAY - timedelta(days=28)
     _flat_labor(db_path, rid, t0)
-    o = outcomes.record(rid, "manual", "trim", "Trim Monday lunch", "labor_pct", today=t0, db_path=db_path)
+    with models.salary_view(True):              # the owner's request
+        o = outcomes.record(rid, "manual", "trim", "Trim Monday lunch", "labor_pct", today=t0, db_path=db_path)
     assert o["salary_basis"] == 1 and o["baseline_value"] > 25.0
     # A manager's progress view never shows the owner's all-in figure, and
     # never re-reads it hourly against an all-in baseline.

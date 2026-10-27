@@ -7871,8 +7871,10 @@ def _do_targets_get(u):
     if not _loss_viewer(u):
         # A comps and voids figure is LOSS_VIEW's, its target too.
         t["comp_void_target_pct"] = None
-    if not _principal(u):
-        # Salaries are named people's pay: the owner's alone.
+    from permissions import sees_salaries as _sees_salaries_t
+    if not _sees_salaries_t(u):
+        # Salaries are named people's pay: the owner's alone — never a
+        # manager's, nor support's acting through view-as (B3 10/26/26).
         t["salaried"], t["salaried_names"], t["salaried_roles"] = [], [], []
         t["salaried_warnings"] = []
     return {"ok": True, "targets": t, "can_edit": _principal(u), "sees_pay": _sees_pay(u)}, 200

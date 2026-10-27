@@ -149,6 +149,37 @@ def labor_figures(rid, start, end, view=None, db_path=None, nights=None, final_o
     return out
 
 
+def prime_cost_pct(rid, start, end, db_path=None, with_salaries=None):
+    """(prime cost %, detail) over [start, end] as ONE share of net sales:
+    the food ledger's COGS over the window's net sales, plus labor over net
+    (labor_figures, on the reader's salary view unless `with_salaries` says).
+    Both parts are shares of the same sales, so they add — the food cost %
+    is over FOOD sales (no drink sales), and "food cost % + labor %" ran 12+
+    points over a bar-serving restaurant's prime cost (blind re-audit
+    10/26/26 B3). (None, why) when either part cannot be measured — never
+    a prime cost with one component assumed."""
+    import cogs
+    s, e = _d(start), _d(end)
+    days = (date.fromisoformat(e) - date.fromisoformat(s)).days + 1
+    fc = cogs.build_food_cost_pct(rid, days=days, db_path=db_path, today=date.fromisoformat(e))
+    cogs_d, why = cogs.window_cogs(fc, s, e)
+    if cogs_d is None:
+        return None, why
+    net = _f((fc or {}).get("net_sales"))
+    if not net or net <= 0:
+        net, nwhy = cogs.net_sales_in_window(rid, date.fromisoformat(s), date.fromisoformat(e))
+        net = _f(net)
+        if not net or net <= 0:
+            return None, nwhy or "net sales for the window are unknown"
+    view = None if with_salaries is None else bool(with_salaries)
+    fig = labor_figures(rid, s, e, view=view, db_path=db_path)
+    if not fig["days"] or fig["pct"] is None:
+        return None, "no days with both labor and sales in this window"
+    food_share = float(cogs_d) / net * 100.0
+    return (round(food_share + fig["pct"], 1),
+            f"food {food_share:.1f}% + labor {fig['pct']:.1f}% of net sales — labor {fig['basis_text']}")
+
+
 def _labor_figure(hourly, salaried, net, sees, share) -> dict:
     """One labor_figures reading (a window's, or one day's)."""
     net = _f(net)

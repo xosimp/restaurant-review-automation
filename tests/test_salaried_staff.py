@@ -59,7 +59,8 @@ def _world(db_path):
 def test_a_salaried_persons_punches_leave_hourly_labor(db_path):
     import labor
     rid = _world(db_path)
-    a = labor.analyse_shifts_for_restaurant(rid)
+    with models.salary_view(True):                  # the owner's read (off a request: manager-safe)
+        a = labor.analyse_shifts_for_restaurant(rid)
     assert a["hourly_costed_labor"] == 7 * 8 * 20.0              # the cooks only: Erik's 28h are not $26 an hour
     assert a["salaried_hours_left_out"] == 28.0
     assert "Erik Baylis" not in a["employee_hours"]

@@ -214,6 +214,14 @@ def test_a_read_on_no_week_above_the_floor_discloses_it(db_path, monkeypatch):
 
 
 def test_the_stored_review_read_is_revalidated_from_its_raw_text_without_a_model_call(db_path, monkeypatch):
+    # The owner's read, kept under the owner's kind ("reviews"; off a request
+    # a read is manager-safe — client_api.review_read_scope).
+    import models
+    with models.salary_view(True):
+        _the_stored_review_read_is_revalidated(db_path, monkeypatch)
+
+
+def _the_stored_review_read_is_revalidated(db_path, monkeypatch):
     rid = _reviews_restaurant(db_path)
     calls = []
     _model(monkeypatch, _REVIEW_READ, calls)

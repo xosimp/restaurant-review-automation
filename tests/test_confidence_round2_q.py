@@ -364,10 +364,13 @@ def test_q6_replay_b2_p6_one_peer_no_longer_stands_as_the_cohort():
 
 def _flog(rid, kind, horizon, predicted, actual, last=None, mean=None, created="2026-08-01"):
     err, signed = forecast_log.errors(predicted, actual)
+    # A salary-sensitive kind is read on the reader's pay basis (forecast_log.SALARY_KINDS).
+    pay = forecast_log.current_pay_basis() if kind in forecast_log.SALARY_KINDS else None
     c = models.get_conn()
     c.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, "
-              "signed_error_pct, naive_last, naive_mean, naive_n, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-              (rid, kind, horizon, predicted, actual, err, signed, last, mean, 8 if mean else 1, created))
+              "signed_error_pct, naive_last, naive_mean, naive_n, created_at, pay_basis) "
+              "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+              (rid, kind, horizon, predicted, actual, err, signed, last, mean, 8 if mean else 1, created, pay))
     c.commit()
     c.close()
 

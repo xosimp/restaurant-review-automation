@@ -450,10 +450,11 @@ def test_the_monthly_review_prime_cost_is_last_months_measurement(db_path, monke
     monkeypatch.setattr(fci, "profitability_projection",
                         lambda *a, **k: pytest.fail("the review must not read this month's projection"))
     monkeypatch.setattr(bi, "executive_brief", lambda *a, **k: {})
-    windows = {("2026-08-01", "2026-08-31"): {"food_cost_pct": 30.0, "labor_pct": 28.0},
-               ("2026-07-01", "2026-07-31"): {"food_cost_pct": 31.0, "labor_pct": 29.0}}
-    monkeypatch.setattr(metrics, "measure",
-                        lambda r, key, s, e, db, **_kw: ((windows.get((s, e)) or {}).get(key), "test"))
+    # Prime cost as ONE share of net sales (metrics.prime_cost_pct: COGS and
+    # labor over net — blind re-audit 10/26/26 B3), read for each window.
+    windows = {("2026-08-01", "2026-08-31"): 58.0, ("2026-07-01", "2026-07-31"): 60.0}
+    monkeypatch.setattr(metrics, "prime_cost_pct",
+                        lambda r, s, e, db_path=None, with_salaries=None: (windows.get((s, e)), "test"))
     r = monthly_review.build(rid, today=date(2026, 9, 16), db_path=db_path)
     assert r["prime_cost"]["pct"] == 58.0 and r["prime_cost"]["delta"] == -2.0
     assert r["prime_cost"]["claim_kind"] == "measured" and r["prime_cost"]["window"] == ["2026-08-01", "2026-08-31"]

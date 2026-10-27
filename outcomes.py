@@ -261,6 +261,43 @@ class _on_basis:
         return False
 
 
+# The metrics whose value is labor DOLLARS over sales: re-costing the shifts
+# (new rates, someone made salaried) moves them with nothing happening.
+PAY_METRICS = frozenset({"labor_pct", "labor_pct_day", "labor_pct_part"})
+
+
+def _pay_key(restaurant_id, metric, db_path=DB_PATH):
+    """models.labor_rates_key for a PAY_METRICS tracker, else None."""
+    if metrics.parse(metric)[0] not in PAY_METRICS:
+        return None
+    try:
+        return _models_mod.labor_rates_key(restaurant_id) if db_path == DB_PATH \
+            else _models_mod.labor_rates_key(restaurant_id, db_path)
+    except Exception as e:
+        print(f"[outcomes] pay key unreadable for {restaurant_id}: {e!r}")
+        return None
+
+
+def _pay_recosted(r, db_path=DB_PATH) -> bool:
+    """Whether a labor-cost tracker's pay changed since its baseline was read
+    (its stored pay_key against today's): the baseline and the "after" are
+    then on two pay bases — three managers made salaried leave the hourly
+    figure and add a salary share — and the move is not the recommendation's.
+    A row from before the key was kept (NULL) is not judged by this rule."""
+    if not r or not r.get("pay_key"):
+        return False
+    now = _pay_key(r["restaurant_id"], r.get("metric"), db_path)
+    return bool(now) and now != r["pay_key"]
+
+
+PAY_RECOST_DETAIL = ("not comparable: pay was re-costed since the baseline (pay rates or the salaried staff "
+                     "changed), so the before and after are on two bases")
+
+
+def _pay_recost_entry():
+    return {"kind": "pay_recost", "label": "Pay re-costed since the baseline"}
+
+
 def _settle_legacy_bases(conn, db_path=DB_PATH) -> int:
     """Boot (init_outcomes): every labor-% tracker from before salary_basis
     gets the basis its stored baseline was read on (_settle_legacy_basis),
@@ -1372,6 +1409,7 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
     salary_basis = None
     if metrics.salary_sensitive(metric):
         salary_basis = 1 if _models_mod.viewer_sees_salaries() else 0
+    pay_key = _pay_key(restaurant_id, metric, db_path)
     with _on_basis({"metric": metric, "salary_basis": salary_basis}):
         b = _baseline(restaurant_id, metric, today, window, db_path, trigger=trigger)
         nb = {"band": None, "sigma": None, "false_alarm_rate": None, "basis": None}
@@ -1399,14 +1437,14 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
                 "baseline_value, baseline_raw, baseline_kind, baseline_start, baseline_end, baseline_detail, "
                 "started_on, evaluate_on, status, created_by, module, trigger_value, trigger_start, trigger_end, "
                 "baseline_overlaps_trigger, noise_band, noise_sigma, false_alarm_rate, band_basis, measures_key, "
-                "salary_basis) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?, ?,?,?,?,?,?,?,?,?,?)",
+                "salary_basis, pay_key) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?, ?,?,?,?,?,?,?,?,?,?,?)",
                 (restaurant_id, source, source_key, owner_title(title)[:200], metric, b["value"], b["raw"],
                  b["kind"], b["start"], b["end"], b["detail"], today.isoformat(), evaluate_on.isoformat(),
                  user_id, mod, b.get("trigger_value"),
                  _iso(trig[0]) if trig else None, _iso(trig[1]) if trig else None,
                  1 if b.get("overlaps_trigger") else 0, nb.get("band"), nb.get("sigma"),
-                 nb.get("false_alarm_rate"), nb.get("basis"), rec_key, salary_basis))
+                 nb.get("false_alarm_rate"), nb.get("basis"), rec_key, salary_basis, pay_key))
         except sqlite3.IntegrityError:
             # The same key started by another connection that got there
             # first (a database without the lock's guarantee): answered by it.
@@ -2124,6 +2162,13 @@ def evaluate(outcome_id, db_path=DB_PATH, today=None):
                    if cmp["verdict"] in _MOVED else None)
         concurrent = find_concurrent(r, after_start.isoformat(), after_end.isoformat(), db_path)
         concurrent.extend(_own_confounders(r, cmp["verdict"], after, db_path))
+    if _pay_recosted(r, db_path):
+        # Two pay bases (blind re-audit 10/26/26 B3): not a verdict, never
+        # priced, never learned from — said why.
+        cmp = dict(cmp, verdict="unknown", delta=None, delta_pct=None)
+        dollars = None
+        after_detail = PAY_RECOST_DETAIL
+        concurrent.append(_pay_recost_entry())
     attribution = grade(cmp["verdict"], cmp["multiple"], concurrent, checkin=_checkin_of(r),
                         overlaps=overlaps_trigger(r))
     recheck_on = recheck_on_for(r) if (cmp["verdict"] in _MOVED and not is_informational(r)) else None
@@ -2227,7 +2272,8 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
         value, _detail = _measure(r["restaurant_id"], r["metric"], start.isoformat(), end.isoformat(), db_path)
         expected, scale, _kind = expected_for(r, start.isoformat(), end.isoformat(), db_path)
     cmp = _cmp(r, expected, value, scale)
-    if cmp["verdict"] == "unknown":
+    recosted = _pay_recosted(r, db_path)
+    if cmp["verdict"] == "unknown" or recosted:
         rv = "unknown"
     elif cmp["verdict"] == r["verdict"]:
         rv = "held"
@@ -2242,6 +2288,8 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
                                  read_windows=[(r["started_on"], _after_end(r)),
                                                (start.isoformat(), end.isoformat())])
     concurrent.extend(_own_confounders(r, r["verdict"], r.get("after_value"), db_path))
+    if recosted:
+        concurrent.append(_pay_recost_entry())
     first, _s, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
     eval_cmp = _cmp(r, first, r.get("after_value"), _s)
     attribution = grade(r["verdict"], eval_cmp["multiple"], concurrent, recheck_verdict=rv,
@@ -2312,7 +2360,9 @@ def _accrues(r) -> bool:
     measurement (result_counts): a check-in saying something else changed
     stops it as a "no" does (CA2 #7). A failed re-check stops it at the
     re-check (accrue_daily)."""
-    return (r.get("verdict") in _MOVED and r.get("dollars_monthly") not in (None, 0) and result_counts(r))
+    return (r.get("verdict") in _MOVED and r.get("dollars_monthly") not in (None, 0) and result_counts(r)
+            # Re-costed since the baseline: no more days priced (B3 10/26/26).
+            and not _pay_recosted(r))
 
 
 def _breadth(metric) -> int:
@@ -3279,6 +3329,13 @@ _ADDED_COLUMNS = (
     # salaries do not touch. Older rows are settled once at boot
     # (_settle_legacy_basis).
     ("salary_basis", "INTEGER"),
+    # The pay a labor-cost % tracker's baseline was costed on
+    # (models.labor_rates_key: role rates, the hourly rate, person rates and
+    # the salaried set) — a recost (models.recost_labor_history) moves the
+    # stored history onto new pay, so an "after" read against an older
+    # baseline is not comparable and never priced (blind re-audit 10/26/26
+    # B3, _pay_recosted). NULL for a metric pay does not cost.
+    ("pay_key", "TEXT"),
 )
 
 

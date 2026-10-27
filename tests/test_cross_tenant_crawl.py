@@ -24,6 +24,17 @@ nothing called the ROUTES with another tenant's ids. This does:
   leak; an error that echoes another tenant's row is a leak too), and
   B's rows are byte-for-byte unchanged after every rule (a WRITE leak) — any
   change is recorded against the rule and B's rows are put back.
+- **Numbers too** (blind re-audit 10/26/26 B3): B's numeric columns carry a
+  canary (NUM_INT / NUM_REAL), so an aggregate that drops its tenant filter —
+  a SUM of B's sales beside A's empty data — is caught as surely as B's text.
+- **As A's manager**, every GET again, asserting no response carries A's
+  salaries: A has a salaried person (SALARY_ANNUAL) and labor history, so an
+  all-in figure, a day's salary share or the salary itself in a manager's
+  answer is a leak (the owner's alone — CLAUDE.md, labor all-in).
+- **On Postgres** when the suite is (CAVNAR_TEST_PG_URL — the nightly's
+  `postgres` job): the app is routed to a scratch database of its own on
+  that server, seeded the same way, so a WHERE clause SQLite forgives and
+  Postgres reads differently is crawled where production runs.
 
 A rule that serves another tenant's data by design (a public page whose token
 is the credential) goes in `PUBLIC_BY_DESIGN` with the reason. Guards on the
@@ -42,8 +53,23 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MARKER = "ZQXBRAVOMARKERQZX"
 B_ID = 900001
+# B's numeric canaries: every INTEGER column that is not an id carries
+# NUM_INT, every REAL one NUM_REAL; neither may appear in A's answers.
+NUM_INT = 7319468
+NUM_REAL = 7319468.25
+NUM_MARKER = str(NUM_INT)
+# A's salaried person: a manager's answer may never carry the salary, a
+# day's share of it, or an all-in figure (MANAGER_SALARY_KEYS with a value).
+SALARY_ANNUAL = 1873452.0
+MANAGER_SALARY_KEYS = ("salaried_cost", "salaried_total_cost", "salaried_total_pct", "salaried_day",
+                       "salaried_per_day", "all_in_pct", "all_in_projected", "salaried_vs_target_pts")
 
 CANARY = "/api/crawl-canary"
+# Unscoped ON PURPOSE, registered in the crawl's own app: a SUM over every
+# tenant (the numeric canary must catch it) and a salary handed to anyone
+# (the manager pass must catch it).
+CANARY_SUM = CANARY + "-sum"
+CANARY_SALARY = CANARY + "-salary"
 
 # (method, rule) -> why another tenant's marker may appear in the body.
 PUBLIC_BY_DESIGN = {}
@@ -86,6 +112,10 @@ def _crawl_main(out_path):
 
     vol = tempfile.mkdtemp(prefix="cavnar-crawl-")
     sqlite3.connect(os.path.join(vol, "reviews.db")).close()          # pre-create: no legacy adoption
+    # A scratch Postgres database of the crawl's own (the fixture creates and
+    # drops it on CAVNAR_TEST_PG_URL's server), reached the way the suite's
+    # Postgres mode reaches one: models._PG_ROUTES — never DATABASE_URL.
+    pg_url = os.environ.pop("CRAWL_PG_URL", "") or ""
     for k in list(os.environ):
         if k.endswith(("_API_KEY", "_TOKEN", "_SECRET", "_AUTH_TOKEN", "_KEY", "_PASSWORD", "_DSN")) or \
                 k in ("DATABASE_URL", "CAVNAR_TEST_PG_URL", "RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID"):
@@ -102,6 +132,9 @@ def _crawl_main(out_path):
     sys.path.insert(0, ROOT)
     import dotenv
     dotenv.load_dotenv = lambda *a, **k: False
+    if pg_url:
+        import models as _models_route
+        _models_route._PG_ROUTES[_models_route.DB_PATH] = pg_url
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         import hosted_dashboard
     import logging
@@ -113,7 +146,7 @@ def _crawl_main(out_path):
     app.config["PROPAGATE_EXCEPTIONS"] = False
     auth.ENFORCE_PASSWORD_POLICY = False
 
-    out = {"blueprints": sorted(app.blueprints),
+    out = {"dialect": "postgres" if pg_url else "sqlite", "blueprints": sorted(app.blueprints),
            "expected_blueprints": sorted(bp.name for bp in blueprints.all_blueprints()),
            "before_request": [f.__module__ + "." + f.__qualname__ for f in app.before_request_funcs.get(None, [])],
            "after_request": [f.__module__ + "." + f.__qualname__ for f in app.after_request_funcs.get(None, [])],
@@ -141,6 +174,20 @@ def _crawl_main(out_path):
     app.add_url_rule(CANARY + "/<int:review_id>/edit", "crawl_canary_write", auth.login_required(_canary_write),
                      methods=["POST"])
 
+    def _canary_sum(current_user):
+        from flask import jsonify
+        c = models.get_conn()
+        row = c.execute("SELECT SUM(value) AS s FROM dsr_metrics").fetchone()          # unscoped ON PURPOSE
+        c.close()
+        return jsonify(ok=True, total=row["s"] if row else None)
+
+    def _canary_salary(current_user):
+        from flask import jsonify
+        r = models.get_restaurant(current_user["restaurant_id"])
+        return jsonify(ok=True, per_day=round(float(models.salaried_day_share(r) or 0), 2))    # ungated ON PURPOSE
+    app.add_url_rule(CANARY_SUM, "crawl_canary_sum", auth.login_required(_canary_sum), methods=["GET"])
+    app.add_url_rule(CANARY_SALARY, "crawl_canary_salary", auth.login_required(_canary_salary), methods=["GET"])
+
     # ── tenant A: an owner on the full plan, and one employee ──────────────
     from models import Restaurant, create_restaurant
     # A's login is a multi-location OWNER (it holds the location switcher),
@@ -156,39 +203,99 @@ def _crawl_main(out_path):
     auth.upsert_membership(a_owner, a_rid, "owner")
     a_emp = auth.create_user(a_rid, "emp.alpha", "emp.alpha@staff.invalid", "x" * 24)
     auth.upsert_membership(a_emp, a_rid, "employee", employee_name="Alpha Emp")
+    # A's manager, and what a manager must never read: a salaried person,
+    # and labor history for the all-in figures to be built from.
+    a_mgr = auth.create_user(a_rid, "alphamgr", "alpha-mgr@crawl.test", "alpha-crawl-pass-2")
+    auth.set_user_role(a_mgr, "manager")
+    auth.upsert_membership(a_mgr, a_rid, "manager")
+    models.update_restaurant(a_rid, {"salaried_staff_json": json.dumps([{"name": "Salary Canary",
+                                                                          "annual": SALARY_ANNUAL}])})
+    from time_utils import restaurant_now_by_id
+    from datetime import timedelta as _td
+    _today = restaurant_now_by_id(a_rid).date()
+    _lc = models.get_conn()
+    try:
+        for i in range(1, 15):
+            d = _today - _td(days=i)
+            _lc.execute("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales, labor_cost, "
+                        "labor_pct, total_hours) VALUES (?,?,?,?,?,?,?)",
+                        (a_rid, d.isoformat(), d.strftime("%A"), 4000.0, 1100.0, 27.5, 60.0))
+        _lc.commit()
+    finally:
+        _lc.close()
+    models._invalidate_request_cache(a_rid)
+    _share = float(models.salaried_day_share(models.get_restaurant(a_rid)) or 0)
+    # The salary and a day's share of it, in every way a figure is written.
+    salary_canaries = sorted({s.encode() for s in (
+        f"{SALARY_ANNUAL:.0f}", f"{SALARY_ANNUAL:,.0f}", f"{_share:.2f}", f"{_share:,.2f}", f"{_share:,.0f}",
+        f"{round(_share):d}") if len(s.replace(",", "")) >= 4})
+    out["salary_canaries"] = [s.decode() for s in salary_canaries]
 
     # ── tenant B: the restaurant row at B_ID, then one marked row per table ─
     b_tmp = create_restaurant(Restaurant(name=f"Bravo {MARKER}", owner_email=f"bravo-{MARKER.lower()}@crawl.test",
                                          service_tier="full", billing_status="active", module_reviews=1,
                                          module_labor=1, module_inventory=1, module_marketing=1,
                                          location_group="Crawl Group"))
-    conn = sqlite3.connect(models.DB_PATH)
-    conn.row_factory = sqlite3.Row
+    if pg_url:
+        conn = models.get_conn()
+        # The crawl's own connection outlives every request on this thread: a
+        # request's teardown closes what the thread opened (models.
+        # close_thread_connections), so it is taken off that list.
+        _bag = getattr(models._open_conns, "bag", None)
+        if _bag is not None:
+            _bag.discard(conn)
+        try:
+            # B's rows are seeded table by table in name order: foreign keys
+            # (enforced on Postgres, off on SQLite) are not what this tests.
+            conn.execute("SET session_replication_role = replica")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+    else:
+        conn = sqlite3.connect(models.DB_PATH)
+        conn.row_factory = sqlite3.Row
     conn.execute("UPDATE restaurants SET id=? WHERE id=?", (B_ID, b_tmp))
     conn.commit()
     b_owner = auth.create_user(B_ID, f"bravo{MARKER.lower()}", f"bravo-{MARKER.lower()}@crawl.test", "bravo-pass-123")
     auth.upsert_membership(b_owner, B_ID, "client")
 
-    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' "
-                                         "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+    if pg_url:
+        tables = [r[0] for r in conn.execute(
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "WHERE n.nspname='public' AND c.relkind IN ('r','p') AND NOT c.relispartition ORDER BY c.relname")]
+    else:
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' "
+                                             "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+
+    def _columns(t):
+        """[{name, type}] — insertable columns (a generated one is left out)."""
+        if pg_url:
+            return [{"name": r[0], "type": r[1]} for r in conn.execute(
+                "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' "
+                "AND table_name=? AND COALESCE(is_generated, 'NEVER')='NEVER' "
+                "AND COALESCE(identity_generation, '')!='ALWAYS' ORDER BY ordinal_position", (t,)).fetchall()]
+        return [{"name": c["name"], "type": c["type"]} for c in conn.execute(f'PRAGMA table_info("{t}")').fetchall()]
+
     tenant_tables, cols_of = [], {}
     for t in tables:
-        cols = conn.execute(f'PRAGMA table_info("{t}")').fetchall()
+        cols = _columns(t)
         cols_of[t] = cols
         if any(c["name"] == "restaurant_id" for c in cols) and t != "restaurants":
             tenant_tables.append(t)
 
-    def _value(t, c):
+    def _value(t, c, numeric=True):
         name, typ = c["name"].lower(), (c["type"] or "").upper()
         if name == "restaurant_id":
             return B_ID
         if name == "id" or name.endswith("_id"):
             return B_ID if ("INT" in typ or not typ) else f"{MARKER}-{name}"
-        if "INT" in typ or "BOOL" in typ:
-            return 1
+        if "BOOL" in typ:
+            return True if pg_url else 1
+        if "INT" in typ:
+            return NUM_INT if numeric else 1
         if any(x in typ for x in ("REAL", "FLOA", "DOUB", "NUMERIC", "DECIMAL")):
-            return 1.0
-        if "BLOB" in typ:
+            return NUM_REAL if numeric else 1.0
+        if "BLOB" in typ or "BYTEA" in typ:
             return MARKER.encode()
         if name.endswith("_at") or name in ("created", "updated", "ts", "at", "when") or "expires" in name:
             # Far future: a platform-wide sweep of EXPIRED rows (2FA
@@ -203,26 +310,58 @@ def _crawl_main(out_path):
             return json.dumps({"marker": MARKER, "text": MARKER})
         return MARKER
 
-    seeded, unseeded = [], {}
+    seeded, unseeded, numeric_fallback = [], {}, []
     check_in = re.compile(r"CHECK constraint failed: (\w+) IN \('([^']*)'")
+    pg_check = re.compile(r'violates check constraint "([^"]+)"')
+    pg_any = re.compile(r"\(?(\w+)\)?(?:::\w+)?\s*=\s*(?:ANY\s*\(\s*\(?ARRAY\[\s*)?'([^']*)'")
+
+    def _enum_fix(err):
+        """(column, its first allowed value) a CHECK refusal names, or None."""
+        m = check_in.search(err)
+        if m:
+            return m.group(1), m.group(2)
+        m = pg_check.search(err) if pg_url else None
+        if not m:
+            return None
+        try:
+            row = conn.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname=?",
+                               (m.group(1),)).fetchone()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            return None
+        hit = pg_any.search(row[0]) if row else None
+        return (hit.group(1), hit.group(2)) if hit else None
+
     for t in tenant_tables:
         names = [c["name"] for c in cols_of[t]]
         vals = [_value(t, c) for c in cols_of[t]]
-        for _attempt in range(6):
+        numeric = True
+        for _attempt in range(8):
             try:
                 conn.execute(f'INSERT INTO "{t}" ({", ".join(chr(34) + n + chr(34) for n in names)}) '
                              f'VALUES ({", ".join("?" for _ in names)})', vals)
                 conn.commit()
                 seeded.append(t)
                 unseeded.pop(t, None)
+                if not numeric:
+                    numeric_fallback.append(t)
                 break
             except sqlite3.IntegrityError as e:
                 conn.rollback()
                 unseeded[t] = f"{type(e).__name__}: {e}"[:160]
-                m = check_in.search(str(e))          # an enum column: take its first allowed value
-                if not m or m.group(1) not in names:
-                    break
-                vals[names.index(m.group(1))] = m.group(2)
+                fix = _enum_fix(str(e))              # an enum column: take its first allowed value
+                if fix and fix[0] in names and vals[names.index(fix[0])] != fix[1]:
+                    vals[names.index(fix[0])] = fix[1]
+                    continue
+                if numeric:
+                    # A numeric CHECK (a 0/1 flag, a bounded score): this
+                    # table's numbers fall back to 1 — its text still marks it.
+                    numeric = False
+                    vals = [v if isinstance(v, str) else _value(t, c, numeric=False)
+                            for c, v in zip(cols_of[t], vals)]
+                    continue
+                break
             except sqlite3.Error as e:
                 conn.rollback()
                 unseeded[t] = f"{type(e).__name__}: {e}"[:160]
@@ -231,6 +370,7 @@ def _crawl_main(out_path):
     out["tenant_tables"] = len(tenant_tables)
     out["seeded"] = len(seeded)
     out["unseeded"] = unseeded
+    out["numeric_seeded"] = len(seeded) - len(numeric_fallback)
     models._invalidate_request_cache(B_ID)
 
     # ── B's snapshot: every tenant table's B rows, and B's restaurants row ──
@@ -238,9 +378,12 @@ def _crawl_main(out_path):
 
     def _rows(t):
         if t == "restaurants":
-            return [tuple(r) for r in conn.execute("SELECT * FROM restaurants WHERE id=?", (B_ID,))]
-        return [tuple(r) for r in conn.execute(f'SELECT * FROM "{t}" WHERE restaurant_id=? ORDER BY rowid',
-                                               (B_ID,))]
+            got = [tuple(r) for r in conn.execute("SELECT * FROM restaurants WHERE id=?", (B_ID,))]
+        else:
+            got = [tuple(r) for r in conn.execute(f'SELECT * FROM "{t}" WHERE restaurant_id=? ORDER BY '
+                                                  + ("ctid" if pg_url else "rowid"), (B_ID,))]
+        conn.commit()
+        return got
 
     def _digest(rows):
         return hashlib.sha1(repr(rows).encode("utf-8", "replace")).hexdigest()
@@ -252,14 +395,20 @@ def _crawl_main(out_path):
     base = snapshot()
 
     def restore(t):
-        cols = [c["name"] for c in cols_of[t]]
         if t == "restaurants":
-            conn.execute("DELETE FROM restaurants WHERE id=?", (B_ID,))
-        else:
-            conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (B_ID,))
+            # Updated in place: tenant rows point at it (a foreign key on Postgres).
+            names = [k for k in conn.execute("SELECT * FROM restaurants WHERE id=?", (B_ID,)).fetchone().keys()]
+            row = saved[t][0]
+            sets = [(n, v) for n, v in zip(names, row) if n != "id"]
+            conn.execute("UPDATE restaurants SET " + ", ".join(f'"{n}"=?' for n, _ in sets) + " WHERE id=?",
+                         [v for _, v in sets] + [B_ID])
+            conn.commit()
+            return
+        cols = [c["name"] for c in cols_of[t]]
+        conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (B_ID,))
         for row in saved[t]:
             conn.execute(f'INSERT INTO "{t}" ({", ".join(chr(34) + c + chr(34) for c in cols)}) '
-                         f'VALUES ({", ".join("?" for _ in cols)})', row)
+                         f'VALUES ({", ".join("?" for _ in cols)})', row[:len(cols)])
         conn.commit()
 
     # A's own state, put back after each request (a route the crawl calls
@@ -309,6 +458,7 @@ def _crawl_main(out_path):
     got_request_exception.connect(_record, app)
     query = "id={0}&restaurant_id={0}&rid={0}&review_id={0}&location_id={0}".format(B_ID)
     marker = MARKER.encode()
+    num_marker = NUM_MARKER.encode()
     methods = ("GET", "POST", "PUT", "PATCH", "DELETE")
     requests_made = reached = 0
     leaks, writes, server_errors, slow = [], [], [], []
@@ -354,8 +504,9 @@ def _crawl_main(out_path):
                 slow.append([method, rule.rule, round(took, 1)])
             if status >= 500 and [method, rule.rule, status] not in server_errors:
                 server_errors.append([method, rule.rule, status])
-            if marker in data and not any(l[:2] == [method, rule.rule] for l in leaks):
-                i = data.find(marker)
+            hit = marker if marker in data else (num_marker if num_marker in data else None)
+            if hit and not any(l[:2] == [method, rule.rule] for l in leaks):
+                i = data.find(hit)
                 leaks.append([method, rule.rule, status, data[max(0, i - 160):i + 60].decode("utf-8", "replace")])
             keep_a()
         now = snapshot()
@@ -368,6 +519,38 @@ def _crawl_main(out_path):
     out.update(requests=requests_made, reached=reached, by_status=by_status, by_prefix=by_prefix, leaks=leaks, writes=writes,
                server_errors=server_errors, exceptions=exceptions, slow=slow, seconds=round(time.monotonic() - started, 1),
                rules=len(rules))
+
+    # ── the manager pass: every GET as A's manager, no salaries in any answer ─
+    key_leak = re.compile(r'"(?:' + "|".join(MANAGER_SALARY_KEYS) + r')"\s*:\s*-?[0-9]')
+    m_requests = m_reached = 0
+    salary_leaks = []
+    for rule in rules:
+        if rule.rule in SKIP_RULES or rule.rule.startswith(("/staff", "/admin")) \
+                or (rule.rule.startswith(CANARY) and rule.rule != CANARY_SALARY) or "GET" not in (rule.methods or ()):
+            continue
+        c = app.test_client()
+        c.set_cookie("session_token", auth.create_session(a_mgr, restaurant_id=a_rid))
+        c.set_cookie("csrf_js", "crawl-csrf")
+        headers = {"Authorization": f"Bearer {auth.create_session(a_mgr, device_type='ios', restaurant_id=a_rid)}",
+                   "X-CSRF": "crawl-csrf", "Accept": "application/json"}
+        try:
+            resp = c.open(f"{fill(rule.rule).replace(str(B_ID), str(a_rid))}", method="GET", headers=headers)
+            status, data = resp.status_code, resp.get_data()
+        except Exception as e:
+            status, data = 599, repr(e).encode()
+        m_requests += 1
+        if 200 <= status < 300:
+            m_reached += 1
+        found = next((s for s in salary_canaries if s in data), None)
+        km = key_leak.search(data.decode("utf-8", "replace")) if not found else None
+        if (found or km) and not any(l[0] == rule.rule for l in salary_leaks):
+            what = found.decode() if found else km.group(0)
+            i = data.find(found) if found else data.find(km.group(0).encode())
+            salary_leaks.append([rule.rule, status, what, data[max(0, i - 160):i + 60].decode("utf-8", "replace")])
+        keep_a()
+        conn.execute("UPDATE users SET role='manager', is_active=1 WHERE id=?", (a_mgr,))
+        conn.commit()
+    out.update(manager_requests=m_requests, manager_reached=m_reached, salary_leaks=salary_leaks)
     with open(out_path, "w") as fh:
         json.dump(out, fh)
     import shutil
@@ -378,13 +561,40 @@ def _crawl_main(out_path):
 # The tests
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _pg_scratch():
+    """(url, drop) — a fresh database on CAVNAR_TEST_PG_URL's scratch server
+    for the crawl's app, or (None, None) when the suite is on SQLite."""
+    base = (os.getenv("CAVNAR_TEST_PG_URL") or "").strip()
+    if not base:
+        return None, None
+    import uuid
+    import psycopg
+    from urllib.parse import urlsplit, urlunsplit
+    name = "cavnar_crawl_" + uuid.uuid4().hex[:12]
+    with psycopg.connect(base, autocommit=True) as c:
+        c.execute(f'CREATE DATABASE "{name}"')
+    parts = urlsplit(base)
+
+    def drop():
+        with psycopg.connect(base, autocommit=True) as c:
+            c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    return urlunsplit(parts._replace(path="/" + name)), drop
+
+
 @pytest.fixture(scope="module")
 def crawl():
     out = tempfile.NamedTemporaryFile(prefix="crawl-", suffix=".json", delete=False).name
     env = {k: v for k, v in os.environ.items() if not k.endswith(("_API_KEY", "_TOKEN", "_SECRET"))}
     env.pop("DATABASE_URL", None)
-    proc = subprocess.run([sys.executable, os.path.abspath(__file__), "--crawl", out], cwd=ROOT, env=env,
-                          capture_output=True, text=True, timeout=600)
+    pg_url, drop = _pg_scratch()
+    if pg_url:
+        env["CRAWL_PG_URL"] = pg_url
+    try:
+        proc = subprocess.run([sys.executable, os.path.abspath(__file__), "--crawl", out], cwd=ROOT, env=env,
+                              capture_output=True, text=True, timeout=900)
+    finally:
+        if drop:
+            drop()
     assert proc.returncode == 0, proc.stdout[-2000:] + "\n" + proc.stderr[-4000:]
     with open(out) as fh:
         result = json.load(fh)
@@ -425,6 +635,31 @@ def test_the_crawl_catches_the_canarys_read_and_write_leaks(crawl):
     and a write by primary key that changes B's row."""
     assert any(l[1].startswith(CANARY) and l[0] == "GET" for l in crawl["leaks"]), crawl["leaks"]
     assert any(w[0].startswith(CANARY) and w[2] == ["reviews"] for w in crawl["writes"]), crawl["writes"]
+
+
+def test_the_crawl_catches_a_numeric_leak(crawl):
+    """Guards the guard (blind re-audit 10/26/26 B3): B's numbers carry a
+    canary, and an aggregate that drops its tenant filter — a SUM over every
+    restaurant's rows — is caught. Most tenant tables kept their numeric
+    canary (a CHECK on a flag falls back to 1 for that table)."""
+    assert any(l[1] == CANARY_SUM for l in crawl["leaks"]), crawl["leaks"]
+    assert crawl["numeric_seeded"] >= 0.8 * crawl["seeded"], crawl["numeric_seeded"]
+
+
+def test_the_manager_pass_reached_the_handlers_and_catches_a_salary(crawl):
+    """Guards the guard: the manager pass reaches handlers, and the canary
+    that hands a salary share to any login is caught."""
+    assert crawl["manager_requests"] >= 450 and crawl["manager_reached"] >= 300, crawl["manager_reached"]
+    assert crawl["salary_canaries"], "A's salaried person must give the pass something to look for"
+    assert any(l[0] == CANARY_SALARY for l in crawl["salary_leaks"]), crawl["salary_leaks"]
+
+
+def test_no_route_shows_a_manager_the_salaries(crawl):
+    """A manager never reads salaries in any surface (CLAUDE.md, labor
+    all-in; blind re-audit 10/26/26 B3): no GET a manager may make answers
+    with the salary, a day's share of it, or an all-in figure."""
+    leaks = [l for l in crawl["salary_leaks"] if l[0] != CANARY_SALARY]
+    assert not leaks, "\n".join(f"{r} -> {s}: {what}: …{ctx}…" for r, s, what, ctx in leaks)
 
 
 def test_no_route_serves_another_tenants_row(crawl):

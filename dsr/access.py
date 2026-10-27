@@ -12,7 +12,9 @@ what a login may read.
                    console login (manager, member), None for anyone with no
                    console at all (employees, support). Will's rule: every
                    owner login gets the Owner DSR, every manager login the
-                   Manager DSR.
+                   Manager DSR. Support acting through view-as holds an
+                   owner identity but gets the manager view (the owner
+                   view carries the salaries — B3 10/26/26).
 
 What a view leaves out, using the rules permissions.py already has — never a
 new one:
@@ -83,10 +85,13 @@ def _block_permissions():
 def view_for(user):
     """"owner", "manager", or None (no DSR at all). The one decision every
     DSR surface makes — reuse it, never re-derive it from a role string."""
-    from permissions import DASHBOARD_ACCESS, has_permission, is_principal
+    from permissions import DASHBOARD_ACCESS, has_permission, is_principal, support_view_as
     if not user:
         return None
-    if is_principal(user):
+    # Support acting through view-as holds the owner's identity, but reads
+    # what the owner's managers read: the owner view carries the salaries
+    # (_live_salaries), the budget and prime cost (B3 10/26/26).
+    if is_principal(user) and not support_view_as(user):
         return OWNER
     if has_permission(user, DASHBOARD_ACCESS):
         return MANAGER

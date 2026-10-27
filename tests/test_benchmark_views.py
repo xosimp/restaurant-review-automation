@@ -80,7 +80,7 @@ def test_card_below_the_minimum_leads_with_the_restaurants_own_normal(db_path):
     row = next(r for r in d["rows"] if r["metric"] == "labor_pct_28d")
     assert row["kind"] == "self" and row["standing"] == "worse than your normal" and row["behind"]
     assert row["tone"] == "warn" and row["value_text"] == "35%"
-    assert row["action"]["ask"].startswith("My labor % is worse than your normal")
+    assert row["action"]["ask"].startswith("My labor % (hourly staff) is worse than your normal")
     assert d["strength"] is None                         # no band, no comparison strength
 
 

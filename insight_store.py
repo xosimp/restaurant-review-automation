@@ -44,6 +44,13 @@ def get_conn(db_path=None):
     return _models_mod.get_conn(db_path)
 
 
+# The stored reads written before the per-view split (init_insight_store).
+PRE_SPLIT_MIGRATION = "insight_cache_retire_pre_salary_view_1026"
+PRE_SPLIT_SUFFIX = ":pre_split"
+PRE_SPLIT_SQL = ("UPDATE insight_cache SET kind = kind || '" + PRE_SPLIT_SUFFIX + "' "
+                 "WHERE kind IN ('labor', 'food', 'reviews', 'reviews:locations')")
+
+
 def init_insight_store(db_path: str = DB_PATH):
     """Boot DDL (models.init_db) — never on a request path."""
     conn = get_conn(db_path)
@@ -68,6 +75,16 @@ def init_insight_store(db_path: str = DB_PATH):
                 if "duplicate column" not in str(e).lower():    # another process added it first
                     raise
         conn.commit()
+        # Once per database (data_migrations): the Labor, Food and Reviews
+        # reads stored before they were kept per salary view were written in
+        # whoever opened the tab first's view, and `latest()` serves them on
+        # the stale path whatever their fingerprint — a manager's hourly read
+        # as the owner's, or an all-in one beside a hourly label. Renamed,
+        # never deleted (ai_reads keeps their history); the next open writes
+        # each view's own (blind re-audit 10/26/26 B4).
+        conn.execute(_models_mod.DATA_MIGRATIONS_DDL)
+        conn.commit()
+        _models_mod._run_once_sql(conn, PRE_SPLIT_MIGRATION, PRE_SPLIT_SQL)
     finally:
         conn.close()
 
@@ -80,7 +97,12 @@ _KIND_ACTIONS = {"reviews": "review_insight", "food": "inventory_insight", "mark
                  "reviews:locations": "review_insight",
                  # The Labor and Food reads for a login who may not see salaries
                  # (salary_kind, audit #25 F13).
-                 "labor:hourly": "labor_insight", "food:hourly": "inventory_insight"}
+                 "labor:hourly": "labor_insight", "food:hourly": "inventory_insight",
+                 # The Reviews read per what of the other modules a login may
+                 # see (review_scope, blind re-audit 10/26/26 B3).
+                 "reviews:hourly": "review_insight", "reviews:hourly:nofood": "review_insight",
+                 "reviews:locations:hourly": "review_insight",
+                 "reviews:locations:hourly:nofood": "review_insight"}
 
 # The reads whose figures depend on the salary view: Labor (all-in labor %
 # for the owner, hourly for anyone else) and Food (its prime cost carries
@@ -107,6 +129,19 @@ def salary_kind(kind) -> str:
     except Exception as e:
         logging.getLogger(__name__).warning(f"[insight_store] salary view unreadable, kept hourly: {e!r}")
         return kind + HOURLY_SUFFIX
+
+
+def review_scope(sees_salaries, sees_food) -> str:
+    """The suffix a Reviews read is kept under for a login (client_api.
+    review_read_scope): its operational evidence carries the labor % in
+    that login's salary view and the week's waste dollars only for one who
+    sees Food Cost. "" — salaries (the account holder, who holds Food Cost
+    too); ":hourly" — no salaries, Food Cost; ":hourly:nofood" — neither.
+    One read per restaurant served a manager the owner's all-in labor and
+    the waste dollars (blind re-audit 10/26/26 B3)."""
+    if sees_salaries:
+        return ""
+    return HOURLY_SUFFIX + ("" if sees_food else ":nofood")
 
 
 def fingerprint(*parts) -> str:
