@@ -48089,6 +48089,12 @@ function sfw2RuleCheck(chk) {
 .br-t{width:100%;border-collapse:collapse;font-size:15px;margin-top:14px}
 .br-t th{font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);text-align:left;padding:10px 12px;border-bottom:1px solid var(--hb-line2)}
 .br-t td{padding:13px 12px;border-bottom:1px solid var(--hb-line2);color:var(--ink2);vertical-align:middle}
+/* The product sort's body sits on its summary's 20px gutter - its note, search and table edges line up
+   instead of running to the card's edges (owner, 10/27/26). */
+#br-prod-b{padding:0 20px 18px}
+#br-prod-b>.br-note{margin-top:2px}
+#br-prod-b .br-t th:first-child,#br-prod-b .br-t td:first-child{padding-left:0}
+#br-prod-b .br-t th:last-child,#br-prod-b .br-t td:last-child{padding-right:0}
 .br-t td.n,.br-t th.n{text-align:right;white-space:nowrap}
 .br-t td b{color:var(--ink);font-weight:600}
 .br-t .m{display:block;font-size:13.5px;color:var(--ink3);margin-top:3px}
