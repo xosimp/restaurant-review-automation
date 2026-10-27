@@ -23,7 +23,7 @@ exploring code:
 | `INTELLIGENCE_ENGINE.md` | The cross-restaurant learning layer and its privacy rules |
 | `docs/ops/SECURITY.md`, `docs/ops/RECOVERY.md`, `docs/ops/ENVIRONMENT.md`, `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`, `docs/ops/PIN_PEPPER_RUNBOOK.md`, `docs/ops/POSTGRES_CUTOVER.md` (and `migrations/`) | Controls, the emergency runbook, every environment variable, the deploy shape, the PIN pepper |
 | `docs/plans/` | Designs, each opening with its status. Built: the DSR engine, task sheets. Not yet built: Back Office, Postgres and more workers, the restaurant health row, the review-fetch queue, the nonce CSP |
-| `docs/audits/` | Audit registers whose finding IDs tests still cite (the 9/22/26 edge-case audit: 39 strict `xfail`s) |
+| `docs/audits/` | Audit registers whose finding IDs tests still cite (the 9/22/26 edge-case audit; every strict `xfail` it opened has since been fixed and removed — 0 remain) |
 | `docs/history/` | Superseded material kept for the record; nothing in it is live |
 | `docs/clients/`, `docs/integrations/`, `docs/app-store-submission.md` | Per-client config (Simple EJ's checklists and DSR config), vendor API collections (RPOWER), the App Store Connect entries |
 | `ios/CavnarAI/README.md`, `scripts/README.md` | The iOS project's setup; who runs each script |
@@ -68,11 +68,12 @@ This codebase is unusually good at hiding a live reference from a grep:
 - **Bound imports.** `from models import get_conn` at module top level is a
   reference that the name `models.get_conn` will never match. Most modules
   do this, and it has already caused silent wrong behaviour in tests: a
-  patch of `models.get_conn` never reaches a bound copy. `client_api`,
-  `mobile_api`, `drafter`, `social_routes` and `demo_seed` therefore define
-  a module-level `get_conn` that resolves through `models` at call time —
-  copy that pattern rather than the bare import when a module calls
-  `get_conn()` with no `db_path`.
+  patch of `models.get_conn` never reaches a bound copy. Every production
+  module now resolves `get_conn` through `models` at call time (a
+  module-level `get_conn` shim) — `tests/test_no_bound_get_conn.py` fails a
+  new top-level `from models import get_conn`. `models.get_conn`'s default is
+  `None` (DB_PATH read when called); a `db_path=DB_PATH` default in a function
+  signature still binds at definition.
 - **Lazy imports inside functions.** Most cross-module calls here are
   `import x` *inside* the function body, so a module-level grep misses them.
 - **Registry-driven dispatch.** `ask_cavnar_tools.TOOLS`, `pos.PROVIDERS`,
@@ -105,7 +106,14 @@ A deletion is only "verified" when the trace is written down alongside it.
 
 - **Root-cause first.** Diagnose the real cause; never ship the fastest
   surface patch. Verify live before claiming something is fixed.
-- **Push after every completed task.** Don't wait to be asked.
+- **Push to `main` after every completed task.** Don't wait to be asked.
+  Once Railway's production deploys the `production` branch (docs/ops/RECOVERY.md
+  → Deploys), a push deploys nothing: production is promoted from a `main` SHA
+  whose `gate` check is green, through `.github/workflows/promote.yml`
+  (9am–3pm CT weekdays; `emergency` skips the window, never the gate). Until
+  that switch is made, a push to `main` still deploys. Emergency deploys come
+  from a pushed commit, never `railway up` of a working tree (`/health` must
+  name its build).
 - **Restart the local backend** (`PORT=5050 python3 hosted_dashboard.py`)
   after any backend edit — the user tests against it from a real device over
   ngrok.
@@ -134,7 +142,10 @@ A deletion is only "verified" when the trace is written down alongside it.
   value: that was the bug, and it made the number rise as the restaurant
   got worse. Any new "value" component states its rate inline and counts
   distinct work, never rows or months-since-signup.
-- **Inline JS is ES5 only**, enforced by `tests/test_frontend_rules.py`.
+- **Inline JS is ES5 only**, enforced by `tests/test_frontend_rules.py` (regex)
+  and `tests/test_inline_scripts_parse.py` (every template's inline `<script>`
+  parsed by node's acorn, both branches of each Jinja conditional; ES5 on every
+  owner, staff and guest page — the console pages in `MODERN_JS_OK` only shrink).
   Colours come from CSS variables only, enforced by `scripts/check_colors.py`.
   Every web button carries `.cbtn`, enforced by `tests/test_button_system.py`.
 - **New `restaurants` column = 4 touch points**: the `Restaurant` dataclass,
@@ -160,7 +171,27 @@ A deletion is only "verified" when the trace is written down alongside it.
   after a few tweaks, never twice "to be sure" (Will, 9/15/26 and again
   9/28/26: "it stalls productivity"). When it does run, in parallel:
   `python3 -m pytest -q -p no:warnings -n auto --dist loadfile`. One suite
-  at a time: two at once halve each other.
+  at a time: two at once halve each other. Touching a top-10 component
+  (TESTING.md → Tiers: `models.get_conn`/`db_dialect`, `get_restaurant`/
+  `update_restaurant`/`has_module`, the login decorators, `client_api._m` ↔
+  `mobile_api`, the labor % producers, `time_utils`, `dsr/` payloads,
+  `scheduler`/`jobs_registry`/`job_queue`, `permissions`, `dashboard.html`)
+  runs `python3 -m pytest -m contract -n auto -q -p no:warnings tests/` (under
+  a minute) before the push. CI's `gate` job (lints, contract slice, boots on
+  SQLite and Postgres 16, recorded-SQL PREPARE; UTC+14) is the required check;
+  the full suites run nightly (`.github/workflows/nightly.yml`). After a solver
+  or benchmark change run `python3 scripts/run_determinism_check.py` (serial,
+  one CP-SAT worker; also nightly).
+- **Tests take the restaurant's clock.** `tests/clock.py` (`restaurant_today`,
+  `today_for`, `next_monday`, `frozen`); never `date.today()`/`datetime.now(`
+  in a test or a literal week that will pass — `tests/test_test_ratchets.py`
+  blocks new ones and CI runs at UTC+14 (nightly also UTC-11). No new
+  `inspect.getsource` assertion for behaviour (same ratchet). A flaky test is
+  marked `quarantine` the day it flakes, never skipped; CI fails a skip whose
+  reason `tests/expected_skips.txt` does not explain, and fails any test that
+  tried to reach the network (the conftest guard allows only this machine).
+  A test that boots the app in a subprocess stubs `dotenv.load_dotenv` first
+  (`tests/test_subprocess_apps_never_load_dotenv.py`).
 - **`get_restaurant()` is memoised per Flask request**, and only per request —
   outside one (scheduler, tests, scripts) it is uncached, deliberately, so a
   long-running job sees rows change under it — except inside an explicit
@@ -169,19 +200,29 @@ A deletion is only "verified" when the trace is written down alongside it.
   `restaurants` outside `update_restaurant` must call
   `models._invalidate_request_cache(rid)`.
 - **Never put schema DDL on a request or per-call path.** Every table is
-  created at boot — by `init_db()` (which also calls `ops.init_ops`,
+  created at boot by `models.boot_schema()` — the one boot DDL chain that
+  hosted_dashboard, worker.py, `/health`'s reference schema and the test
+  template all call; a new init step goes there, never into one caller. A boot
+  data rewrite runs once (`models.run_once` / a `(name, sql)` entry, ledger
+  `data_migrations`). An index on a table production already has is built
+  before the deploy (`scripts/build_index.py`, CONCURRENTLY) and listed in
+  `migrations/prebuilt_indexes.txt` (`tests/test_boot_ddl_rules.py`); schema
+  changes are additive and format markers compare with `==`
+  (ARCHITECTURE_MANIFEST.md, Release compatibility). The chain: `init_db()` (which also calls `ops.init_ops`,
   `billing_jobs.init_billing`, `admin_events.init_admin_events`,
   `offboarding.init_offboarding`, `admin_ops.init_admin_ops` and
   `ai_utils.init_ai_ops`, and since 10/11/26 `job_queue.init_job_queue`,
-  `model_gateway.init_model_gateway`, `pg_shadow.init_pg_shadow`) or by one of the `init_*` functions
+  `model_gateway.init_model_gateway`, `pg_shadow.init_pg_shadow`, and since 10/26/26 `rollout.init_rollout`, `client_compat.init_client_compat`) and the `init_*` functions
   `hosted_dashboard.py` calls right after it (`auth`, `push`, `webhooks`,
   `guest_marketing`, `sales_audits`, `platform_monitor.init_platform_tables`,
   `provider_health.init_provider_health`). `ai_utils._ensure_usage_schema` is
   the pattern where a lazy table is unavoidable: once per database per
   process, with a self-healing retry if a write later fails on a missing
   column.
-- **The scheduler only runs on Railway** (`scheduler.scheduling_allowed()`,
-  also false while `RESTORE_FROM` is set): a local backend has its own SQLite
+- **The scheduler only runs on Railway's production environment**
+  (`config.scheduling_allowed()`: false on any other named environment —
+  `config.deploy_env()` from `CAVNAR_ENV`, else Railway's environment name —
+  and while `RESTORE_FROM` is set): a local backend has its own SQLite
   file and lease but production's Resend and Twilio keys, so a local
   scheduler re-sends real briefs, digests, alerts and issue texts. The same
   gate refuses every admin action that emails, texts, or changes Stripe or
@@ -194,12 +235,21 @@ A deletion is only "verified" when the trace is written down alongside it.
   production `.env` still sends those. `ALLOW_LOCAL_SCHEDULER=1` overrides
   both deliberately. The scheduler also stands down while
   `MAINTENANCE_READ_ONLY` is set (the Postgres cutover's write freeze).
+- **Staging never reaches real people.** `config.outbound_sends_allowed()` is
+  false outside `production` (and `local`) and is checked at the send points
+  themselves — `emails.deliver`, the Twilio send, APNs and Web Push,
+  `config.stripe_api` with a live key, DocuSign's live account, Google replies
+  and posts, customer webhooks. A new send point checks it too;
+  `ALLOW_NONPROD_SENDS=1` is the deliberate override.
 - **Never run a copy of the app from a worktree with Flask's own `.env`
   loading.** `hosted_dashboard.py` loads the `.env` beside it and runs
   `app.run(..., load_dotenv=False)`, because Flask's lookup walks up from the
   working directory — a copy under `.claude/worktrees/` loaded the main
   checkout's `.env` (production's keys). A throwaway server for a UI check
-  runs with no provider keys in its environment.
+  runs with no provider keys in its environment — copy
+  `tests/browser/keyless_server.py` (allowlisted environment, stubbed
+  `load_dotenv`, loopback-only sockets, a free port, dies with the test), as
+  the Playwright smoke `tests/browser/test_dashboard_smoke.py` does.
 - **Deployment shape.** The scheduler runs in the web process by default.
   **Never run it as a separate Railway service**: volumes cannot be shared
   between services, so it would schedule against an empty database while the
@@ -226,19 +276,16 @@ A deletion is only "verified" when the trace is written down alongside it.
   or a `/health` that is not 200 within the 120-second healthcheck, is
   downtime until a rollback — `/health` answers 200 for a degraded platform
   on purpose and must stay read-only.
-- **Do not raise gunicorn `--workers` past 1** until the bounded pools
-  that still multiply with workers are sized for it: the two admin pools —
-  `ops.run_admin_task` and `admin_routes._submit_admin_job` — the webhook
-  and push delivery pools, the owner AI job pool `ai_async`, the
-  interactive AI lane (`ai_lane`, `AI_LANE_WORKERS` — its polled Ask turns'
-  events live in process memory, so a second worker also needs the poll
-  pinned to its process), the AI
-  background pools (Ask's read and summary pools, the shadow-review and
-  scoring pools) and the schedule model-call pool — one per process,
-  `schedule_engine._call_pool`, `SCHEDULE_CALL_POOL_WORKERS` (default
-  `job_queue.max_running("generation")` x `SCHEDULE_PARALLEL_CALLS`, in the
-  queue worker process). Each worker gets its own copy, so two workers
-  double each bound on outbound work; the inventory and order are in
+- **Do not raise gunicorn `--workers` past 1** until the remaining blockers in
+  `docs/plans/POSTGRES_AND_WORKERS_PLAN.md` → *Multi-worker readiness* are done.
+  The bounded pools no longer multiply: each pool's setting is the CONTAINER's
+  bound and every web worker takes `bound // workers` (`pool_sizing.per_worker`;
+  gunicorn's master publishes its real `--workers` as `CAVNAR_WEB_WORKERS`;
+  `worker.py` keeps whole bounds) — a new bounded pool is sized through
+  `pool_sizing.sized(name, bound)`. One-thread pools stay one thread per worker;
+  the schedule call pool is not split (claimed generation rows hold the fleet's
+  streams). A polled Ask turn's events go to `ai_lane_events` when there is
+  more than one worker, so any worker answers its poll. The inventory is in
   `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`. Per process BY DESIGN (each
   guards that process's own four request threads, so it is right per
   worker): `ASK_MAX_CONCURRENT` and `ai_utils._INTERACTIVE_SLOTS`. Caches
@@ -287,7 +334,13 @@ A deletion is only "verified" when the trace is written down alongside it.
   fans out as `job_queue` rows (`strategy_jobs.fan_out_learner` is the
   pattern) instead of a long inline sweep on the scheduler thread. A growing ledger gets an entry
   in `ops._RETENTION_DAYS` / `_RETENTION_COLUMN`; a finding about a model's
-  output is `ai_utils.record_quality_event`, not `ops.capture`.
+  output is `ai_utils.record_quality_event`, not `ops.capture`. A job's health
+  is its failure share, not its score: `ops.jobs_failing` warns when its last
+  two runs each failed half or more of what they attempted, or attempted
+  nothing while `eligible` restaurants waited (so a per-restaurant sweep reports
+  `eligible`); a partial run of a non-sending `retry` job that failed ≥ 20%
+  retries once, 30 minutes later. `job_queue` defers a kind it has no handler
+  for (never fails it).
 - **Recovery lives in `docs/ops/RECOVERY.md`.** The local backup snapshot is
   deliberately NOT redacted (it never leaves the volume and is the restore
   artifact); only the off-site copies are — the object-storage and emailed
@@ -306,23 +359,86 @@ A deletion is only "verified" when the trace is written down alongside it.
   `/static/` URL (one built at run time, an email's absolute link, a
   reference in a `/static` script) still has no cache-busting: never give
   those a far-future `max-age`, or a fix will be stranded in browser caches.
+  A page knows its build (`cavnar_build`, `config.build_id()`), every JSON
+  answer carries `X-Cavnar-Build`, and `_csrf_fetch.html` offers one "Cavnar AI
+  was updated." reload bar when they differ.
 - **SQL must stay translatable to Postgres.** `models.get_conn` returns a
   Postgres connection when `DATABASE_URL` names one (`db_dialect`); run
   `scripts/pg_sql_audit.py` after adding SQL — it must report
   `untranslatable: 0, sqlite_only: 0`. The text check alone hid 50+
-  statements that failed on a real server (10/11/26 SCALE-10): CI's
-  `postgres` job PREPAREs every statement (`pg_sql_audit.py --database-url`,
-  `prepare_failed: 0`) and runs the DB-heavy tests on Postgres; run it locally
-  against a throwaway cluster when a change is SQL-heavy. **Production runs on
+  statements that failed on a real server (10/11/26 SCALE-10): CI's `gate`
+  PREPAREs every static statement and every statement the contract slice ran
+  (`pg_sql_audit.py --strict --database-url … --recorded …`), and the nightly
+  runs every test file on Postgres in four shards; run it locally against the
+  scratch Postgres 16 when a change is SQL-heavy. A hot path's query plan is
+  held by `tests/test_pg_query_plans.py`. **Production runs on
   Postgres since 10/19/26** (Railway service `Postgres`, Pro plan,
   point-in-time recovery on; `DATABASE_URL=${{Postgres.DATABASE_URL}}` on
   `web`): every SQL change must work on both backends, and a `railway ssh`
   one-off reaches the live data through `models.get_conn` — the volume's
   `reviews.db` is the frozen pre-switch copy. Never set `DATABASE_URL` for a
   LOCAL app (production's database) — tests use `CAVNAR_TEST_PG_URL` on a
-  scratch server (`docs/ops/POSTGRES_CUTOVER.md`).
+  scratch **Postgres 16** server (locally
+  `postgresql://postgres@127.0.0.1:55433/postgres`; a 14 gives false failures,
+  `docs/ops/POSTGRES_CUTOVER.md`). Off Railway the app ignores `DATABASE_URL`
+  unless `ALLOW_LOCAL_PG=1` (a scratch server only), and the suite refuses to
+  start inside a Railway environment.
 - **Every Anthropic call passes the model gateway** (`model_gateway`, inside
   `ai_utils.create_with_retry`): call classes, per-tenant budgets and the
   organisation's tokens a minute. The fleet AI ceiling is per paying
   restaurant (`AI_GLOBAL_PER_CLIENT_USD`) with a runaway detector and
   `AI_EMERGENCY_STOP` — never an absolute fleet-wide cap again.
+- **A model change ships with its eval.** Changing `ai_utils.MODELS`, a tier
+  default or T1's previous model fails `tests/test_ai_model_change_needs_eval.py`
+  until every eval surface has a measured baseline on its new model
+  (`scripts/run_ai_eval.py freeze` / `run --baseline` on Railway, commit
+  `eval_baselines/` — scores only, never customer text — then `fingerprint
+  --write`); a tier's default model changing names the tier in
+  `ai_workflows.TIER_CANARY_DEFAULT` for at least a week. A call with a
+  registered workflow policy goes through `route_for(...).apply(...)`.
+- **Silent handlers only go down.** `scripts/check_silent_handlers.py` reads
+  every app module (packages too) and holds each file's count of broad handlers
+  that leave no trace to `scripts/silent_handlers_baseline.json`; a new one logs
+  or `ops.capture`s. A unit of several writes under one broad handler is one
+  `models.atomic(conn)`. New app code logs, never `print()`s.
+- **Labor % is one function.** An owner-facing labor figure is read through
+  `metrics.labor_figures(rid, start, end, view)` (or `metrics.daily_labor`):
+  all-in for a viewer who sees salaries, hourly for anyone else, basis stated.
+  `labor_daily_history.labor_cost`/`labor_pct` are HOURLY and never quoted to
+  the owner as "labor %". A cached read whose figures carry labor is kept per
+  salary view. `scripts/check_labor_math.py` fails new labor-cost ÷ sales
+  arithmetic outside `metrics.py`, `labor.py` and `dsr/`.
+- **Blueprints live in one list, `blueprints.plan()`.** hosted_dashboard
+  registers only through `blueprints.register_all(app)`; the module-gate sweep,
+  the cross-tenant crawl, the client-path and twin-wiring tests read
+  `blueprints.all_blueprints()`. A new blueprint or app-wide hook is a step in
+  that plan.
+- **Tenant isolation has a crawler.** `tests/test_cross_tenant_crawl.py` calls
+  every rule as tenant A with tenant B's ids; any response carrying B's marker,
+  any change to B's rows or any unhandled exception fails. The SQL ratchet
+  (`scripts/check_tenant_scope.py`) counts every `id=?` / `id IN (` without
+  `restaurant_id`; a new baseline entry carries its `why`. An Ask tool with
+  `module: None` is in a `tool_allowed` name set or
+  `ask_cavnar_tools._MODULELESS_REVIEWED` with the reason. A permission test
+  that depends on app hooks uses `tests/real_app.py`.
+- **A module-level cache registers with `process_caches`**
+  (`process_caches.register("module._NAME", _NAME)` beside its definition);
+  the suite clears them all per test (`tests/test_process_caches.py`).
+- **Cohort rollout:** `rollout.enabled(feature, restaurant_id)`;
+  `ROLLOUT_<FEATURE>` wins over the console's `rollout_flags` row
+  (`POST /admin/api/rollout`, audited).
+- **The phone's payloads are a contract.** `tests/test_ios_response_shapes.py`
+  holds every main iOS read to `ios/CavnarAI/CavnarAITests/Fixtures/<route>.json`
+  and `<route>.v1.json` (what installed builds read): a v1 key is never renamed,
+  removed or re-typed until `MOBILE_MIN_BUILD` retires the builds that read it.
+  Fixtures are re-captured (`CAVNAR_WRITE_IOS_FIXTURES=1`), never typed. Every
+  request the app builds names its build (`X-Cavnar-App`); `ios/CavnarAI/generate.sh`
+  stamps the build number from the commit count — archive only from a project it
+  generated.
+- **A send whose outcome is unknown is never retried as failed.** A Twilio read
+  timeout is `uncertain` (`notify.SmsResult.uncertain`, sms_log `unknown`) and
+  counts as sent for retries; an outbox that calls a provider stamps the row
+  before the call and never lets a lease takeover send it again
+  (`schedule_publish`). Stripe is tested through the real SDK
+  (`tests/test_stripe_real_sdk.py`); provider fixtures in
+  `tests/fixtures/providers/` are all SYNTHETIC (the repo is public).
