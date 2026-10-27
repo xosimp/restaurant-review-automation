@@ -198,9 +198,26 @@ def restore_frozen() -> bool:
     database file, on the app volume. A stat, no import of ours beyond the
     already-loaded models (its DB_PATH, so a test's database has its own)."""
     import sys
+    if volume_optional() and not (os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip() and on_railway():
+        # No volume (release-safety audit 10/26/26, P3): the freeze lives in
+        # object storage (marker_store), answered from a 30-second cache.
+        try:
+            import marker_store
+            return marker_store.exists(".restore_freeze")
+        except Exception:
+            return False
     models = sys.modules.get("models")
     path = getattr(models, "DB_PATH", None) or os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
     return os.path.exists(os.path.join(os.path.dirname(os.path.abspath(path)) or ".", ".restore_freeze"))
+
+
+def volume_optional() -> bool:
+    """VOLUME_OPTIONAL=1 (release-safety audit 10/26/26, P3): this service may
+    run with no Railway volume — its database is Postgres, its markers live
+    in object storage (marker_store) and its backups go straight to object
+    storage. Off by default: production keeps its volume until Will detaches
+    it (docs/ops/RECOVERY.md → Retiring the volume)."""
+    return (os.getenv("VOLUME_OPTIONAL") or "").strip().lower() in _TRUTHY
 
 
 def google_places_key() -> str:

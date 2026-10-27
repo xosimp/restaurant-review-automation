@@ -46,6 +46,15 @@ def require_volume(environ=None, db_path=None):
               "this database is lost on every deploy.")
         return None
     mount = (env.get("RAILWAY_VOLUME_MOUNT_PATH") or "").strip()
+    if not mount and (env.get("VOLUME_OPTIONAL") or "").strip().lower() in ("1", "true", "yes", "on"):
+        # No volume, on purpose (release-safety audit 10/26/26, P3): allowed
+        # only where nothing durable needs one — the database is Postgres,
+        # the markers and backups have object storage, and no blob is kept
+        # on local disk. Otherwise refused, as before.
+        _volume_optional_ready(env)
+        print("VOLUME_OPTIONAL: running on Railway with no volume — database on Postgres, markers and "
+              "backups in object storage.")
+        return None
     if not mount:
         raise RuntimeError("Refusing to boot: this is Railway but no volume is attached "
                            "(RAILWAY_VOLUME_MOUNT_PATH is unset), so the database would be an empty "
@@ -60,6 +69,28 @@ def require_volume(environ=None, db_path=None):
         raise RuntimeError(f"Refusing to boot: the database ({db_path or DB_PATH}) is not on the "
                            f"volume ({mount}).")
     return mount
+
+def _volume_optional_ready(env):
+    """Raise unless a volume-less boot keeps everything durable: Postgres
+    (DATABASE_URL), an object store for markers and backups (BACKUP_S3_* or
+    BLOB_S3_*), and no BLOB_STORE=local without an explicit BLOB_STORE_DIR."""
+    url = (env.get("DATABASE_URL") or "").strip()
+    pinned_sqlite = (env.get("DB_BACKEND") or "").strip().lower() == "sqlite"
+    if not url.startswith(("postgres://", "postgresql://")) or pinned_sqlite:
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL is set but the database is not Postgres — a "
+                           "SQLite file in the container is lost on every deploy. Attach the volume.")
+    s3 = all((env.get(f"BACKUP_S3_{k}") or "").strip() for k in ("ENDPOINT", "BUCKET", "ACCESS_KEY_ID",
+                                                                  "SECRET_ACCESS_KEY")) or \
+        all((env.get(f"BLOB_S3_{k}") or "").strip() for k in ("ENDPOINT", "BUCKET", "ACCESS_KEY_ID",
+                                                                "SECRET_ACCESS_KEY"))
+    if not s3:
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL is set but no object storage is configured "
+                           "(BACKUP_S3_* or BLOB_S3_*): the restore guard's and the emptied-database "
+                           "markers would not survive a deploy. Configure it, or attach the volume.")
+    if (env.get("BLOB_STORE") or "").strip().lower() == "local" and not (env.get("BLOB_STORE_DIR") or "").strip():
+        raise RuntimeError("Refusing to boot: VOLUME_OPTIONAL with BLOB_STORE=local keeps blobs on the "
+                           "container's disk. Use BLOB_STORE=s3 (or db).")
+
 
 # ── The one time axis every review query uses ─────────────────────────────────
 #

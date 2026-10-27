@@ -1331,13 +1331,30 @@ def volume_marker_path(db_path=None):
 
 
 def _on_volume(db_path=None):
-    """Whether the database lives on the Railway volume. Only there is a
-    marker written: locally it would be litter in the checkout."""
+    """Whether the database lives on the Railway volume — or, with no volume
+    on purpose (VOLUME_OPTIONAL), is the platform's own database, whose
+    marker lives in object storage (marker_store). Only then is a marker
+    written: locally it would be litter in the checkout."""
     from models import DB_PATH
+    if _marker_in_object_store(db_path):
+        return True
     mount = (os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip()
     if not mount:
         return False
     return os.path.dirname(os.path.abspath(db_path or DB_PATH)) == os.path.abspath(mount)
+
+
+def _marker_in_object_store(db_path=None):
+    """The platform's database on a volume-less service (release-safety audit
+    10/26/26, P3): its marker is marker_store's, in object storage."""
+    from models import DB_PATH
+    if db_path and os.path.abspath(db_path) != os.path.abspath(DB_PATH):
+        return False
+    try:
+        import marker_store
+        return marker_store.backend() == "object"
+    except Exception:
+        return False
 
 
 def _allow_empty():
@@ -1357,6 +1374,9 @@ def client_restaurant_count(conn) -> int:
 
 
 def read_volume_marker(db_path=None):
+    if _marker_in_object_store(db_path):
+        import marker_store
+        return marker_store.read(VOLUME_MARKER)
     try:
         with open(volume_marker_path(db_path), encoding="utf-8") as f:
             data = json.load(f)
@@ -1393,6 +1413,14 @@ def record_volume_marker(db_path=None, conn=None):
     marker = {"version": 1, "db": os.path.basename(os.path.abspath(db_path or _db_path())),
               "first_seen_at": prev.get("first_seen_at") or now, "updated_at": now,
               "clients_seen": max(int(prev.get("clients_seen") or 0), int(n))}
+    if _marker_in_object_store(db_path):
+        try:
+            import marker_store
+            marker_store.write(VOLUME_MARKER, marker)
+        except Exception as e:
+            log.warning("volume marker: could not write it to object storage: %s", e)
+            return None
+        return marker
     path = volume_marker_path(db_path)
     tmp = path + ".tmp"
     try:
