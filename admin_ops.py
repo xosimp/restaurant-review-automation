@@ -1439,6 +1439,17 @@ def review_source(r):
     return "none", "Google Business"
 
 
+def review_fetch_eligible(r):
+    """Whether the scheduled review fetch covers this restaurant at all —
+    scheduler.run_daily_fetch's own predicate (reviews_live=1 OR a Business
+    Profile token; the in-service and simulated-demo cuts are the callers').
+    A trial that never connected Google, or a store whose fetching an admin
+    switched off, is never fetched, so it is never "behind" (admin audit
+    10/27/26 K-01): the unconfigured one has its own unconf:reviews issue."""
+    get = r.get if isinstance(r, dict) else (lambda k, d=None: getattr(r, k, d))
+    return bool(get("reviews_live") or get("gmb_refresh_token"))
+
+
 PLACES_SAMPLED_LABEL = "Google reviews (sampled — Places returns 5 at a time)"
 _POS_LABELS = {"toast": "Toast", "square": "Square", "clover": "Clover", "rpower": "RPOWER"}
 # One day of review fetches: a Business Profile that has not answered for
@@ -1950,6 +1961,8 @@ def location_record(r, d):
                                else "ok" if any(i["state"] == "connected" for i in integrations) else "none"),
         "onboarding": onboarding,
         "data_health": _data_health_for(r, d),
+        # Whether the scheduled review fetch covers it at all (K-01).
+        "review_fetch_eligible": review_fetch_eligible(r),
         "freshness": {"reviews": _iso_z(r.get("last_fetched_at")), "pos": _pos_state_for(r, d).get("last_synced"),
                       "pos_state": _pos_state_for(r, d),
                       "inventory": (d["ingredients"].get(rid) or {}).get("last_count_at"),
@@ -2388,7 +2401,7 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
     # every fetch working; this says the fetch itself stopped reaching it.
     # One missed slot can be the bounded pass's tail; two is not.
     if (r.get("module_reviews") and not r.get("is_demo") and bs in ("active", "trial")
-            and r.get("last_fetched_at")):
+            and r.get("last_fetched_at") and review_fetch_eligible(r)):
         missed = fetch_slots_missed(r.get("last_fetched_at"))
         if missed and missed >= FLEET_FETCH_MISSED_SLOTS:
             add("fetch_behind", f"Review fetch has missed {missed} scheduled runs", "warning",
@@ -2876,6 +2889,8 @@ def _platform_issues(recs, d):
             continue
         if not any(m["key"] == "reviews" and m["enabled"] for m in rec.get("modules") or []):
             continue
+        if not rec.get("review_fetch_eligible", True):
+            continue        # the fetch never covers it (K-01): not behind, unconnected or switched off
         last = (rec.get("freshness") or {}).get("reviews")
         if not last:
             joined = _age_days(rec.get("created_at"), "UTC")

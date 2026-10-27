@@ -106,3 +106,22 @@ def test_k10_list_mrr_leaves_trialing_subscriptions_out(db_path):
     k = admin_ops.overview()["kpis"]
     assert k["mrr"] == 0 and k["mrr_list"] == 0
     assert k["mrr_committed"] == 349.0 and k["mrr_committed_list"] > 0
+
+
+# ── K-01: fetch coverage counts only restaurants the fetch covers ──────────
+
+def test_k01_fetch_behind_leaves_out_restaurants_the_fetch_never_covers(db_path):
+    a = _rest(db_path, "Unconnected Trial", billing_status="trial")                      # no place id, no GBP
+    b = _rest(db_path, "Fetch Off Grill", billing_status="active", google_place_id="ChIJx")  # switched off
+    c = _rest(db_path, "Live Places Cafe", billing_status="active", google_place_id="ChIJy")
+    old = _ago_utc(days=10)
+    _sql(db_path, "UPDATE restaurants SET created_at=?, reviews_live=0, gmb_refresh_token=NULL", (old,))
+    _sql(db_path, "UPDATE restaurants SET reviews_live=1 WHERE id=?", (c,))
+    ct2 = (admin_ops._now_ct() - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S")
+    _sql(db_path, "UPDATE restaurants SET last_fetched_at=? WHERE id IN (?, ?)", (ct2, b, c))
+    ov = admin_ops.overview()
+    assert ov["kpis"]["fetch_behind"] == 1           # only the store the fetch covers
+    recs = {r["id"]: r for r in admin_ops.clients()["clients"]}
+    assert not any(i["key"].endswith(":fetch_behind") for i in recs[b]["issues"])
+    assert any(i["key"] == f"{c}:fetch_behind" for i in recs[c]["issues"])
+    assert recs[a]["review_fetch_eligible"] is False and recs[c]["review_fetch_eligible"] is True
