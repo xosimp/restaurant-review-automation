@@ -10,6 +10,7 @@
 
 # The SQLite jobs: the live Postgres halves wait for CAVNAR_TEST_PG_URL.
 CAVNAR_TEST_PG_URL names no scratch Postgres
+needs CAVNAR_TEST_PG_URL \(a scratch Postgres\)
 # The Postgres jobs: what reads the SQLite file itself (conftest
 # PG_MODE_SKIP_FILES and the sqlite_only marker).
 ^Postgres mode:
