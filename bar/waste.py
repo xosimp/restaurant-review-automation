@@ -89,7 +89,8 @@ def bought_products(restaurant_id, db_path=None, lines=None) -> dict:
 def log_waste(restaurant_id, waste_date, product_key, qty, unit, reason, note=None, user_id=None,
               today=None, db_path=None, products=None) -> dict:
     """One waste event. Raises ValueError with an owner-facing sentence."""
-    today = today or date.today()
+    from bar.common import local_today
+    today = today or local_today(restaurant_id)        # the restaurant's date (audit #25 F4)
     d = _day(waste_date, today)
     key = str(product_key or "").strip()
     products = products if products is not None else bought_products(restaurant_id, db_path)

@@ -89,6 +89,10 @@ SURFACE_LABELS = {
     "review_read_locations": "the Reviews read across your locations",
     "marketing_read": "the Marketing read",
     "labor_read": "the Labor read",
+    # The Labor and Food reads written for a login who may not see salaries
+    # (insight_store.salary_kind, audit #25 F13).
+    "labor_read_hourly": "the Labor read",
+    "food_read_hourly": "the Food Cost read",
     "marketing_feed": "the Marketing feed",
     "review_diagnosis": "the review diagnosis",
     "food_diagnosis": "the food cost diagnosis",
@@ -110,6 +114,7 @@ SURFACE_MODULE = {
     "review_read": "reviews", "review_diagnosis": "reviews",
     "marketing_read": "marketing", "marketing_feed": "marketing",
     "labor_read": "labor", "competitor_read": "intel",
+    "labor_read_hourly": "labor", "food_read_hourly": "inventory",
     "monthly_review": OWNER_ONLY, "digest": OWNER_ONLY, "brief": OWNER_ONLY, "weekly_plan": OWNER_ONLY,
     "dsr_narrative": OWNER_ONLY,
     # The Reviews read written for a login shown its other locations (kind
@@ -134,10 +139,18 @@ def line_scope(surface) -> dict:
 # insight_cache kind -> the surface its read is filed under (insight_store.put).
 STORE_SURFACE = {"food": "food_read", "reviews": "review_read", "marketing": "marketing_read",
                  "labor": "labor_read", "mkt_opps": "marketing_feed",
-                 "reviews:locations": "review_read_locations"}
+                 "reviews:locations": "review_read_locations",
+                 "labor:hourly": "labor_read_hourly", "food:hourly": "food_read_hourly"}
 # The recommendation-line prefix each stored read's numbered lines carry
 # (client_api.present_read_lines), for the read's rec_keys.
-STORE_LINE_PREFIX = {"food": "insight_food", "marketing": "insight_marketing", "labor": "insight_labor"}
+STORE_LINE_PREFIX = {"food": "insight_food", "marketing": "insight_marketing", "labor": "insight_labor",
+                     "labor:hourly": "insight_labor", "food:hourly": "insight_food"}
+# The surfaces a read written in the SALARY view is kept under (the owner's
+# Labor read carries all-in labor %, the Food read's prime cost the same
+# labor): a login who may not see salaries is never served one — its own
+# reads are the *_hourly surfaces (audit #25 F13). Rows kept before the
+# split may be either view's, so they fail closed the same way.
+SALARY_VIEW_SURFACES = ("labor_read", "food_read")
 
 
 # ── the claims ───────────────────────────────────────────────────────────────

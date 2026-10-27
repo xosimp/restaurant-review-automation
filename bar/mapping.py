@@ -339,8 +339,9 @@ def mapping_payload(restaurant_id, db_path=None, today=None) -> dict:
     confirmed it, and its sales; whether a decision is still needed."""
     from datetime import date, timedelta
     from bar.common import WINDOW_DAYS
+    from bar.common import local_today
     from bar.sales import bar_sales
-    today = today or date.today()
+    today = today or local_today(restaurant_id)        # the restaurant's date (audit #25 F4)
     since = (today - timedelta(days=WINDOW_DAYS)).isoformat()
     detail = bar_sales(restaurant_id, db_path=db_path, since=since)
     m = detail["mapping"]

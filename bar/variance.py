@@ -781,7 +781,8 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     `bar_ops.keg_yield`, and the internals the waste block reads. `canon`
     is the price watch's canonical-product map when the caller has it
     (bar.build: the same lines and the owner's links), else read here."""
-    today = today or date.today()
+    from bar.common import local_today
+    today = today or local_today(restaurant_id)        # the restaurant's date (audit #25 F4)
     if lines is None:
         from bar.purchases import _lines
         lines = _lines(restaurant_id, db_path)

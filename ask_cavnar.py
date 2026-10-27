@@ -369,29 +369,48 @@ def _recent_days_lines(restaurant_id):
 
     The section above is a period aggregate, which cannot answer the most
     natural question an owner opens with. Reads labor_daily_history, the
-    same table Home's ribbon uses, so the two can never disagree.
+    same table Home's ribbon uses — and each day's labor % on the SAME
+    basis as the period figure above (metrics.labor_figures, audit #25
+    F2): the stored labor_pct is hourly, and it was quoted as "% labor"
+    beside an all-in period figure for the owner. Dates M/D/YY (the model
+    echoes them); a day with no labor figure says so rather than "0.0%".
     """
-    from models import get_conn
+    import models as _models_rd
     try:
-        conn = get_conn()
-        rows = conn.execute(
-            "SELECT date, day_of_week, sales, labor_pct, total_hours FROM labor_daily_history "
-            "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 "
-            "ORDER BY date DESC LIMIT 3", (restaurant_id,)).fetchall()
-        conn.close()
-    except Exception:
+        conn = _models_rd.get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT date, day_of_week, sales, total_hours, COALESCE(final, 1) AS final FROM labor_daily_history "
+                "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 "
+                "ORDER BY date DESC LIMIT 3", (restaurant_id,)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[ask] recent days unreadable for {restaurant_id}: {e!r}")
         return []
     if not rows:
         return []
+    from time_utils import mdy
+    try:
+        import metrics as _metrics_rd
+        fig = _metrics_rd.labor_figures(restaurant_id, str(rows[-1]["date"])[:10], str(rows[0]["date"])[:10],
+                                        final_only=False)
+    except Exception as e:
+        print(f"[ask] recent days labor unreadable for {restaurant_id}: {e!r}")
+        fig = {"by_day": {}, "includes_salaries": False}
+    words = "labor with salaries" if fig.get("includes_salaries") else "labor"
     # These come from a different table than the shift analysis above and can
     # be much older than it. Saying "most recent days" without saying how
     # recent invited the model to answer "how is today going" with a figure
     # from last year.
-    out = [f"- Most recent days with recorded sales{_staleness(rows[0]['date'], restaurant_id, key='sales')}:"]
+    out = [f"- Most recent days with recorded sales{_staleness(rows[0]['date'], restaurant_id, key='sales')}"
+           f" ({fig.get('basis_text') or 'labor as recorded'}):"]
     for r in rows:
-        out.append(f"    {r['day_of_week']} {r['date']}: ${float(r['sales'] or 0):,.0f} sales, "
-                   f"{float(r['labor_pct'] or 0):.1f}% labor, "
-                   f"{float(r['total_hours'] or 0):.0f} hours")
+        day = (fig.get("by_day") or {}).get(str(r["date"])[:10]) or {}
+        labor = f"{day['pct']:.1f}% {words}" if day.get("pct") is not None else "labor not recorded"
+        so_far = "" if int(r["final"] or 0) else " (so far — the day was not closed when read)"
+        out.append(f"    {r['day_of_week']} {mdy(str(r['date'])[:10])}: ${float(r['sales'] or 0):,.0f} sales, "
+                   f"{labor}, {float(r['total_hours'] or 0):.0f} hours{so_far}")
     return out
 
 

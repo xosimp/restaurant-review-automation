@@ -4567,7 +4567,8 @@ def mobile_labor_insight(current_user):
 
     payload, status = insight_refresh.serve(
         "labor", rid, render=render, refresh=lambda: _capi.labor_refresh(rid), stale=_stale,
-        pending=_pending, failed=_failed, refresh_job=insight_refresh.refresh_job_arg())
+        pending=_pending, failed=_failed, key=_capi.labor_refresh_key(),
+        refresh_job=insight_refresh.refresh_job_arg())
     return jsonify(**payload), status
 
 
@@ -9732,9 +9733,12 @@ def mobile_topic_weeks(current_user):
 @mobile_bp.route("/labor/daily")
 @mobile_login_required
 def mobile_labor_daily(current_user):
-    from models import get_labor_daily
+    # Each day's labor % on the viewer's basis (metrics.daily_labor, audit
+    # #25 F2): all-in for the owner, as the web Labor tab's daily line;
+    # hourly for anyone else. The stored labor_pct is hourly.
+    import metrics as _metrics_ld
     try:
-        return jsonify(ok=True, days=get_labor_daily(current_user["restaurant_id"], days=14))
+        return jsonify(ok=True, days=_metrics_ld.daily_labor(current_user["restaurant_id"], days=14))
     except Exception as e:
         return jsonify(ok=False, days=[], error=_safe_err(e)), 500
 

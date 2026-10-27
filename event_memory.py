@@ -1417,7 +1417,10 @@ def _staffing_on(rows):
     lab = _median(labor) if labor else None
     top = ", ".join(f"{v:g} {k}" for k, v in sorted(by_role.items(), key=lambda kv: -kv[1])[:3])
     text = (f"on those nights a median {heads:g} people worked" + (f" ({top})" if top else "")
-            + (f" and labor ran {lab:.1f}% of sales" if lab is not None else "")
+            # Hourly staff only, said so (audit #25 F2): the nights' stored
+            # labor % (the report's labor.pct, the daily archive's) carries
+            # no salaries, and an owner's every other labor % is all-in.
+            + (f" and hourly labor ran {lab:.1f}% of sales" if lab is not None else "")
             + f", over {len(vals)} night{'s' if len(vals) != 1 else ''} with punches")
     return {"n": len(vals), "median_headcount": heads, "median_labor_pct": lab,
             "median_hours": _median(hours) if hours else None, "by_role": by_role, "text": text}

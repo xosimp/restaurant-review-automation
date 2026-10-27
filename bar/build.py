@@ -118,7 +118,8 @@ def pos_name_map(payload) -> dict:
 
 
 def _build(restaurant_id, db_path=None, today=None) -> dict:
-    today = today or date.today()
+    from bar.common import local_today
+    today = today or local_today(restaurant_id)        # the restaurant's date (audit #25 F4)
     all_lines = _lines(restaurant_id, db_path)
     if not all_lines:
         return {"ok": True, "available": False,
