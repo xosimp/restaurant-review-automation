@@ -950,6 +950,21 @@ toast (`.toast.toast-sticky`, `#session-ended`, top of the page) with a Sign
 in again button; the page stops polling behind it. Pollers skip ticks while
 `document.hidden` and catch up on `visibilitychange`.
 
+**A newer build behind an open tab** (audit 10/26/26 A06-13) is the one
+other bar that stays: `#cav-updated`, drawn by the shared fetch wrapper
+(`templates/_csrf_fetch.html`, so every page that includes it — the
+dashboard, Settings, the staff portal, the console) the first time a JSON
+answer's `X-Cavnar-Build` names another build than the one the page was
+rendered with (`cavnar_build`). "Cavnar AI was updated." then **Reload**
+(`cbtn cbtn-primary cbtn-sm`) and **Not now** (`cbtn cbtn-text cbtn-sm`,
+gone for this page). The sticky toast's place and shape — top right, 24px in
+(16px from each side under 520px), radius 9, 14.5px/500 — on the plain
+toast's inversion (`--ink` ground, `--paper` words) with an `--ember` left
+edge and `--elev-float`; `role="status"`, polite. Above the modals
+(z-index 10040), so a stale page can always be reloaded. Never twice on one
+page, never without both builds (a local run has none; "unknown" is none),
+never over an ended session.
+
 **Unverified or partial data** carries `CavnarCaveat` (iOS) or the caveat
 line the module already uses — the reader must always be able to tell a
 measured figure from an estimate.

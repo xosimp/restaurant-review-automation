@@ -98,6 +98,17 @@ def on_railway() -> bool:
     return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
 
 
+def build_id() -> str:
+    """The commit this process serves, its first 12 characters
+    (RAILWAY_GIT_COMMIT_SHA, which Railway sets on every deploy, else
+    GIT_COMMIT), or "" when it is not known — a local run. A page renders
+    it (`cavnar_build`, hosted_dashboard's context processor) so the fetch
+    wrapper (_csrf_fetch.html) can tell when a JSON answer's X-Cavnar-Build
+    names a newer build than the JavaScript on screen (audit 10/26/26
+    A06-13)."""
+    return (os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or "").strip()[:12]
+
+
 def scheduling_allowed() -> bool:
     """Whether this process may run scheduled jobs and send what only the
     scheduler's process may send (scheduler.scheduling_allowed delegates

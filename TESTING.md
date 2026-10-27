@@ -45,8 +45,11 @@ python3 -m pytest -q -p no:warnings -n auto --dist loadfile
 # Color lint — template/CSS color changes only
 python3 scripts/check_colors.py
 
-# ES5/frontend rule check — dashboard.html inline JS changes only
-python3 -m pytest tests/test_frontend_rules.py -q
+# ES5/frontend rule check — template inline JS changes only (~2 s)
+python3 -m pytest tests/test_frontend_rules.py tests/test_inline_scripts_parse.py -q
+
+# The browser smoke — once playwright is installed (see "Web pages in a real browser")
+python3 -m pytest tests/browser -q -p no:warnings
 ```
 
 ## On Postgres (`CAVNAR_TEST_PG_URL`, blind re-audit 10/11/26 SCALE-10)
@@ -243,6 +246,12 @@ Most schedule test files are named after the audit round that wrote them. Read b
 | Learning — memory, habits, calibration, experiments | `test_schedule_learning.py`, `test_sf10_g1_*.py`, `test_sched_fix_h1_learning.py`, `test_sched_fix_h2_memory.py`, `test_schedule_experiments.py` |
 
 **The benchmark.** `tests/test_schedule_benchmark.py` runs `schedule_benchmark.FAST_PLAN` (about a minute) once, in a child process with its own throwaway database, no provider key and no network, and makes each (archetype, arm, invariant) its own test. What the code breaks today is a strict xfail naming the finding that fixes it (`KNOWN`): when a fix makes one pass, the xfail fails until its entry is removed — the gate only tightens. The full run, every archetype at full size on both arms with three presses, is `scripts/run_schedule_benchmark.py` (about 25 minutes; `--heavy` adds the 500-person one, ~8 GB). The week drafted is the restaurant's next one on today's clock (sales are judged against today), moved past a holiday week, so a run in late November still measures an ordinary week.
+
+## Web pages: every inline script parses, and a real browser opens each place (audit 10/26/26 A01-14, A06-05/06)
+
+- **`tests/test_inline_scripts_parse.py` (~2 s, in the gate).** Every inline `<script>` of every template (Jinja neutralised, line numbers kept; a block with `{% if %}`/`{% for %}` parsed once with the first branch of each conditional and once with the `else`) goes through one node process, the program on stdin. The parser is the acorn node ships inside itself (`node --expose-internals`): `ecmaVersion: "latest"` for every block — a stray brace kills a whole block — and `ecmaVersion: 5` for every page an owner, an employee or a guest opens, which catches what the regex lint in `test_frontend_rules.py` cannot (a default parameter, a spread, a trailing comma in a call, `for…of`, shorthand properties). The internal pages (admin console, sales audit tool) are held to "parses" only, in `MODERN_JS_OK`, and an entry that becomes ES5-clean fails, so the list only shrinks. Where node's acorn is unavailable it falls back to `vm.Script` plus the regex lint and says so; without node it skips (fails under `CI`).
+- **`tests/browser/test_dashboard_smoke.py` (marker `browser`, ~45 s).** Playwright drives Chromium against a throwaway, keyless app (`tests/browser/keyless_server.py`: a fresh volume, an allowlisted environment with no provider keys, `dotenv.load_dotenv` a no-op, loopback-only sockets, no scheduler, a free port on 127.0.0.1, gone when the test is). At 390px and 1280px the seeded demo owner signs in through the form and opens Home, Reviews, Labor, Food Cost, Marketing, Intel, Account, Ask and Bar: no page error, no console error, the root visible, no same-origin 4xx/5xx (a 503 saying the model "isn't configured on this server" is the truth there and is excused), and no false "Cavnar AI was updated" bar. Then the bar in the real page, and that the app reached for no network. Other origins are answered empty inside the browser. Skipped without playwright. To run it locally: `pip install playwright==1.64.1 && python -m playwright install chromium` (CI: `--with-deps chromium`).
+- **`tests/test_stale_tab_reload.py` (node, in the gate).** The fetch wrapper rendered as a page includes it, run against stubbed responses: same build, the full 40-character commit, "unknown", HTML and external answers show nothing; another build shows one bar whose Reload reloads; Not now dismisses it for the page; a page without a build never shows it.
 
 ## Test file naming
 
