@@ -618,6 +618,8 @@ ADMIN_WRITES_PER_MINUTE = 60
 _ADMIN_WINDOW_SECONDS = 60
 _ADMIN_MAX_KEYS = 2000
 _admin_hits = {}
+import process_caches as _process_caches  # noqa: E402
+_process_caches.register("security._admin_hits", _admin_hits)   # blind re-audit 10/27/26 B4
 import threading as _threading
 _admin_hits_lock = _threading.Lock()
 

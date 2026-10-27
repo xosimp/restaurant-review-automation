@@ -95,6 +95,25 @@ def test_a_solver_first_week_leaves_no_minute_without_a_manager_on_random_restau
     assert not unexplained, (unexplained, got["stats"].get("managers"))
 
 
+@pytest.mark.contract
+def test_one_random_restaurant_drafted_once_is_legal_with_a_manager_on_every_minute():
+    """This file's piece of the deploy gate (blind re-audit 10/27/26): the
+    (20, 1) restaurant drafted ONCE by the solver — production's draft
+    source — breaks no legal rule and leaves no minute without a manager.
+    The module fixture's four restaurants drafted twice each (the
+    determinism pairs) stay in the nightly."""
+    s = bench.synthetic(20, 1)
+    got = _draft(s)
+    c = s["constraints"]
+    rows = list(s["plan"]) + got["rows"]
+    assert got["rows"], got["stats"]
+    assert not _legal(rows, c), _legal(rows, c)[:3]
+    assert c.managers, "the synthetic restaurant has managers"
+    said = {u["date"] for u in got["unassigned"] if c.family(u.get("role")) == "manager"}
+    unexplained = {d: g for d, g in sr.manager_gaps(rows, c).items() if d not in said}
+    assert not unexplained, (unexplained, got["stats"].get("managers"))
+
+
 @pytest.mark.parametrize("case", _CASES)
 def test_the_unfilled_shifts_are_said_never_filled_illegally(drafts, case):
     s, got, _again = drafts[case]

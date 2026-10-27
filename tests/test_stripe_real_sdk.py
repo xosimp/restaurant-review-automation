@@ -43,6 +43,9 @@ import models
 import ops
 import webhook_routes
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES = os.path.join(ROOT, "tests", "fixtures", "providers", "stripe")
 SECRET = "whsec_fixture_real_sdk_0123456789"

@@ -8386,6 +8386,7 @@ import collections as _collections_studio
 _studio_cache = _collections_studio.OrderedDict()
 _process_caches.register("schedule_engine._studio_cache", _studio_cache)
 _studio_live = {}
+_process_caches.register("schedule_engine._studio_live", _studio_live)
 _studio_lock = threading.Lock()
 _studio_counts = {"hits": 0, "misses": 0, "evictions": 0}
 # key -> the lock its one build holds (studio_prepared's single flight).

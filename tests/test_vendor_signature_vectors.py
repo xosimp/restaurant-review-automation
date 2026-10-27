@@ -23,6 +23,9 @@ import pytest
 import notify
 import webhook_routes
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 TWILIO_TOKEN = "12345"
 TWILIO_URL = "https://mycompany.com/myapp.php?foo=1&bar=2"
 TWILIO_PARAMS = {"CallSid": "CA1234567890ABCDE", "Caller": "+12349013030", "Digits": "1234",

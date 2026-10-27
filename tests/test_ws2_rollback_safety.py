@@ -14,6 +14,9 @@ import pytest
 import platform_monitor as pm
 import schedule_shifts
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOW = datetime(2026, 10, 26, 18, 0, 0)
 

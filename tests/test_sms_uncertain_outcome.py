@@ -22,6 +22,9 @@ import models
 import notify
 from models import Restaurant, create_restaurant, get_conn
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _redirect(monkeypatch, db_path):

@@ -39,6 +39,10 @@ def routes():
     env = dict(os.environ, RAILWAY_VOLUME_MOUNT_PATH=tmp, RUN_SCHEDULER_IN_WEB="0",
                ANTHROPIC_API_KEY="", RESEND_API_KEY="", ALLOW_LOCAL_SCHEDULER="0")
     code = (
+        # Never the checkout's .env (production's keys): hosted_dashboard
+        # loads the .env beside it at import (blind re-audit 10/27/26 B1 F17).
+        "import dotenv\n"
+        "dotenv.load_dotenv = lambda *a, **k: False\n"
         "import hosted_dashboard as h, json\n"
         "rows=[(r.endpoint.split('.')[0] if '.' in r.endpoint else 'app', r.rule, sorted(m for m in r.methods if m not in ('HEAD','OPTIONS'))) for r in h.app.url_map.iter_rules()]\n"
         "print(json.dumps(rows))\n"

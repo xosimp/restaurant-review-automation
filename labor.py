@@ -394,6 +394,8 @@ import os as _os_sh
 SHIFT_HISTORY_CACHE_SECONDS = float(_os_sh.getenv("SHIFT_HISTORY_CACHE_SECONDS", "900"))
 SHIFT_HISTORY_CACHE_ROWS = int(_os_sh.getenv("SHIFT_HISTORY_CACHE_ROWS", "300000"))
 _shared_history = _collections_sh.OrderedDict()
+import process_caches as _process_caches  # noqa: E402
+_process_caches.register("labor._shared_history", _shared_history)   # blind re-audit 10/27/26 B1 F15
 _shared_history_lock = _threading_sh.Lock()
 
 

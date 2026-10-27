@@ -726,6 +726,9 @@ _LIVE_READ_EVERY = 2.0            # ...and reads it at most this often
 _priority_waiting = {}            # bucket -> live/close requests of this process waiting on it
 _live_marked = {}                 # bucket -> monotonic time this process last wrote its live mark
 _live_seen = {}                   # bucket -> (monotonic time read, live mark active)
+import process_caches as _process_caches  # noqa: E402
+_process_caches.register("rpower._live_marked", _live_marked)   # blind re-audit 10/27/26 B1 F15
+_process_caches.register("rpower._live_seen", _live_seen)
 
 
 def _bucket_lock(key):

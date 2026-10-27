@@ -355,6 +355,8 @@ def test_a_cover_ask_by_text_goes_on_the_staff_campaign_never_the_owner_alert(db
 
 # ── STRESS-16 ───────────────────────────────────────────────────────────────
 
+# In the deploy gate's contract slice: the manager-every-minute rule (blind re-audit 10/27/26).
+@pytest.mark.contract
 def test_the_only_managers_drop_needs_who_runs_the_floor_and_the_gate_reads_the_gap(db, told, mail):
     import staff_settings
     rid = _restaurant(db, [("Max", "Manager"), ("Ana B", "Server")],

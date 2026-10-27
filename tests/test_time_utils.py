@@ -5,6 +5,10 @@ from zoneinfo import ZoneInfo
 
 from time_utils import restaurant_tz, restaurant_now
 from models import Restaurant
+import pytest
+
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
 
 
 def test_defaults_to_operator_time():

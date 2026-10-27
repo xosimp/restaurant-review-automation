@@ -126,16 +126,23 @@ def register_all(app):
 def url_map_app(template_folder=None):
     """A throwaway Flask app with every blueprint registered and nothing else
     (no CSRF wiring, no hooks, no boot): what a test needs to read the whole
-    url_map or call a view without importing hosted_dashboard. Each
-    blueprint's "registered once" mark is put back afterwards: Flask refuses a
-    new hook (csrf_protect) on a blueprint any app has registered, so this
-    throwaway registration used to leave a later test unable to wire it — and
-    wiring it here instead left later bare test apps behind a CSRF check."""
+    url_map or call a view without importing hosted_dashboard.
+
+    It registers a shallow COPY of each blueprint, never the shared object:
+    Flask marks a blueprint "registered once" (`Blueprint._got_registered_
+    once`) and then refuses a new hook on it (csrf_protect), so registering
+    the real ones here left a later test unable to wire CSRF — and wiring it
+    here instead left later bare test apps behind a CSRF check. This used to
+    write Flask's private flag back on the real objects; a copy needs no
+    private attribute (blind re-audit 10/27/26, B4 "url_map_app writes
+    Flask's private _got_registered_once"). The copy shares the original's
+    deferred setup functions (the routes), which registration only reads.
+    No blueprint here nests another (`register_blueprint` on a blueprint);
+    tests/test_client_paths_resolve.py holds that."""
+    import copy
     from flask import Flask
     app = Flask("cavnar_url_map", template_folder=template_folder)
     app.secret_key = "url-map-only"
     for bp in all_blueprints():
-        before = getattr(bp, "_got_registered_once", False)
-        app.register_blueprint(bp)
-        bp._got_registered_once = before
+        app.register_blueprint(copy.copy(bp))
     return app

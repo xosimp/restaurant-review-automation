@@ -23,6 +23,9 @@ import guest_marketing as gm
 import models
 from models import Restaurant, create_restaurant
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _db(monkeypatch, db_path):

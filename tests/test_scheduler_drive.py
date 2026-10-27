@@ -22,14 +22,19 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
-
-time_machine = pytest.importorskip("time_machine")
+# A plain import, never importorskip: a missing time-machine is a broken dev
+# install, and a module-level skip would turn the whole file into "1 skipped"
+# (blind re-audit 10/27/26 F11).
+import time_machine
 
 import jobs_registry  # noqa: E402
 import models  # noqa: E402
 import ops  # noqa: E402
 import scheduler  # noqa: E402
 import status_manager  # noqa: E402
+
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
 
 CHI = ZoneInfo("America/Chicago")
 _DAILY = 26 * 60

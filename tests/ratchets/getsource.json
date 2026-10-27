@@ -1,6 +1,6 @@
 {
  "about": "inspect.getsource( call sites per test file (tests/test_test_ratchets.py; only goes down)",
- "total": 768,
+ "total": 767,
  "files": 208,
  "counts": {
   "test_a2p_alert_campaign.py": 1,
@@ -31,7 +31,7 @@
   "test_context_reaudit_1007.py": 2,
   "test_cost_controls.py": 5,
   "test_cut_floor_default.py": 1,
-  "test_data_quality_sources.py": 4,
+  "test_data_quality_sources.py": 3,
   "test_delight.py": 2,
   "test_density_fix_c_email.py": 5,
   "test_docs_controls.py": 57,

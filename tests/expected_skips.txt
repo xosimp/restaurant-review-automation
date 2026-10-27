@@ -21,9 +21,11 @@ the off-site scrub runs on the SQLite snapshot
 # determinism tests strict when nothing was cut; the nightly serial run
 # fails when more than one case skips).
 a solve was cut by the .* cap
-# Calendar-conditional: right on the first days of a month or at midnight.
+# Calendar-conditional: right on the first two days of a month (the AI spend
+# rollup reads SQLite's own clock, so the test cannot freeze it). The
+# local-midnight alert-cap skip is gone: that test runs at a fixed instant
+# (blind re-audit 10/27/26 B1 F13).
 needs two complete days of this month before today
-run too close to the restaurant's local midnight
 # The default database path is absolute in some environments.
 default DB_PATH is absolute in this environment
 # The Studio's concurrent-save race (A02-04, WS5 restages it so it no

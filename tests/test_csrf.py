@@ -5,6 +5,9 @@ from flask import Blueprint, Flask, jsonify
 
 from csrf import csrf_protect, ensure_csrf_cookie, CSRF_COOKIE, CSRF_HEADER
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture
 def client():

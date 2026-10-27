@@ -17,6 +17,9 @@ from auth import create_user, init_auth
 from models import Restaurant, create_restaurant, get_conn
 from push import _deliver, get_device_tokens, init_push, register_device_token
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 # (HTTP status, APNs reason) as Apple documents them: 429 TooManyRequests —
 # too many requests to one device token; 503 Shutdown — the server is
 # shutting down; 503 ServiceUnavailable for contrast.

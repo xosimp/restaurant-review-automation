@@ -48,6 +48,9 @@ import pytest
 import ios_shape_capture as cap
 from test_ios_schedule_payload_contract import shape_mismatches
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IOS = os.path.join(ROOT, "ios", "CavnarAI")
 FIXTURES = os.path.join(IOS, "CavnarAITests", "Fixtures")

@@ -15,6 +15,10 @@ import ai_utils
 import client_api
 import good_news
 import models
+import pytest
+
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
 
 
 def test_a_request_with_no_login_does_not_see_salaries():

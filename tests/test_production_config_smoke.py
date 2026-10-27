@@ -53,7 +53,9 @@ PRODUCTION = {
 # seasons a test reads, a key and pepper of its own, the CAN-SPAM address
 # production also sets, and blank provider keys (never a real send).
 HARMLESS = {"RAILWAY_VOLUME_MOUNT_PATH", "CAVNAR_SEASONS_DIR", "SECRET_KEY", "CAVNAR_PIN_PEPPER",
-            "CAVNAR_POSTAL_ADDRESS", "RESEND_API_KEY", "TWILIO_AUTH_TOKEN", "STRIPE_SECRET_KEY"}
+            "CAVNAR_POSTAL_ADDRESS", "RESEND_API_KEY", "TWILIO_AUTH_TOKEN", "STRIPE_SECRET_KEY",
+            # pytest-timeout's ceiling: read by the test runner, never by the app.
+            "PYTEST_TIMEOUT"}
 
 
 @pytest.fixture
@@ -81,12 +83,59 @@ def production_config(monkeypatch):
     request_limits.reset()
 
 
+def environment_writes(source):
+    """Every environment variable `source` sets, however it is written (blind
+    re-audit 10/27/26 B1 F17: the regexes saw only three literal forms):
+    os.environ.setdefault / os.environ[...] = / os.environ.update({...} or
+    KEY=...) / os.putenv / monkeypatch.setenv, a name held in a constant
+    included, and every key of a dict a loop then writes with
+    os.environ[key] = value."""
+    import ast
+    tree = ast.parse(source)
+    consts = {t.id: n.value.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
+              for t in n.targets if isinstance(t, ast.Name) and isinstance(n.value, ast.Constant)
+              and isinstance(n.value.value, str)}
+
+    def name(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name) and node.id in consts:
+            return consts[node.id]
+        return None
+
+    def is_environ(node):
+        return isinstance(node, ast.Attribute) and node.attr == "environ"
+    out = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            f = n.func
+            if f.attr in ("setdefault", "update") and is_environ(f.value) or f.attr in ("setenv", "putenv"):
+                if f.attr == "update":
+                    for arg in n.args:
+                        if isinstance(arg, ast.Dict):
+                            out |= {name(k) for k in arg.keys if name(k)}
+                    out |= {k.arg for k in n.keywords if k.arg}
+                elif n.args and name(n.args[0]):
+                    out.add(name(n.args[0]))
+        elif isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Subscript) and is_environ(t.value) and name(t.slice):
+                    out.add(name(t.slice))
+    return {v for v in out if v and v.isupper()}
+
+
+def test_the_environment_scan_reads_every_way_of_writing_a_variable():
+    src = ("import os\nKEY = 'ABC_ONE'\n"
+           "os.environ.setdefault('A_TWO', '1')\nos.environ['A_THREE'] = '1'\nos.environ[KEY] = '1'\n"
+           "os.environ.update({'A_FOUR': '1'}, A_FIVE='1')\nos.putenv('A_SIX', '1')\n"
+           "def t(monkeypatch):\n    monkeypatch.setenv('A_SEVEN', '1')\n")
+    assert environment_writes(src) == {"ABC_ONE", "A_TWO", "A_THREE", "A_FOUR", "A_FIVE", "A_SIX", "A_SEVEN"}
+
+
 def test_every_switch_the_suite_flips_is_undone_here():
     with open(os.path.join(ROOT, "tests", "conftest.py"), encoding="utf-8") as fh:
         text = fh.read()
-    flipped = set(re.findall(r'os\.environ\.setdefault\("([A-Z0-9_]+)"', text))
-    flipped |= set(re.findall(r'monkeypatch\.setenv\("([A-Z0-9_]+)"', text))
-    flipped |= set(re.findall(r'os\.environ\["([A-Z0-9_]+)"\]\s*=', text))
+    flipped = environment_writes(text)
     unexplained = flipped - set(PRODUCTION) - HARMLESS
     assert not unexplained, ("conftest sets %s: add each to PRODUCTION (production's value) or HARMLESS "
                              "(with the reason) here" % sorted(unexplained))
@@ -182,6 +231,20 @@ def test_a_generation_drafts_with_the_solver_and_finishes(production_config, mon
     assert done["ok"] is True and done["status"] == "done", done.get("error")
     assert not model_drafted, "production drafts with the solver; the model was asked to draft"
     assert detail is not None and detail.get("ok") is not False
+    # The saved week, judged by the rule engine on production's arm (blind
+    # re-audit 10/27/26 B4: the suite's ~3,000 generation tests run the model
+    # arm): no legal breach, and no minute with staff on and no manager.
+    import csv
+    import io
+    import schedule_rules as sr
+    rows = list(csv.DictReader(io.StringIO(detail["schedule_csv"])))
+    assert rows, "the solver drafted an empty week"
+    monday = dt.date.fromisoformat(detail["week_start"])
+    week = [(monday + dt.timedelta(days=i)).isoformat() for i in range(7)]
+    c = sr.build_constraints(detail["restaurant_id"], week, [dt.date.fromisoformat(d).strftime("%A") for d in week])
+    legal = [v for v in sr.violations(rows, c) if v.get("hard") and sr.tier_of(v) == sr.TIER_LEGAL]
+    assert not legal, legal[:3]
+    assert c.managers and not sr.manager_gaps(rows, c), sr.manager_gaps(rows, c)
 
 
 def test_a_week_with_nothing_to_build_from_says_so_and_never_blames_the_model(production_config, monkeypatch,

@@ -20,6 +20,9 @@ import pytest
 import models
 import status_manager
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(scope="module")
 def reference():
