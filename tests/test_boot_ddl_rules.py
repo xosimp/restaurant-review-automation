@@ -48,6 +48,19 @@ def test_the_rule_itself():
     assert schema_baseline.violations(current, base, {"idx_new_on_old"}) == []
 
 
+@pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, ".git")), reason="no git checkout to archive a release from")
+def test_the_baseline_can_be_read_from_a_release_itself():
+    """schema_baseline.py --ref (blind re-audit 10/27/26 B5 P3): the baseline
+    from a release's own code, so a refresh after a promotion needs nobody to
+    remember it — and the committed file is never ahead of the code."""
+    released = schema_baseline.snapshot_ref("HEAD")
+    assert {"restaurants", "users", "sessions"} <= set(released["tables"])
+    assert released["indexes"] and all(isinstance(t, str) for t in released["indexes"].values())
+    committed = schema_baseline.load_baseline()
+    assert set(committed["tables"]) <= set(released["tables"]), \
+        set(committed["tables"]) - set(released["tables"])
+
+
 def test_the_baseline_and_prebuilt_list_are_readable():
     base = schema_baseline.load_baseline()
     assert "restaurants" in base["tables"] and "users" in base["tables"]

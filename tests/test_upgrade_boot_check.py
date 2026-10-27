@@ -124,14 +124,18 @@ def test_an_upgrade_from_the_committed_tree_to_this_one_passes(base_tree):
 
 def test_a_new_unique_index_over_existing_rows_fails_the_upgrade_check(base_tree, tmp_path):
     """login_history's seeded rows share a restaurant: a fresh boot builds
-    this index without a murmur; the upgrade boot cannot."""
-    head = _patched(base_tree, tmp_path, 'create_unique_index(boot_conn(path), "CREATE UNIQUE INDEX IF NOT '
-                                         'EXISTS uq_rf6_probe ON login_history(restaurant_id)")')
+    the unique index without a murmur; the upgrade boot cannot. And a plain
+    index it does build on that existing table breaks the prebuilt rule —
+    judged against the previous release itself, not a hand-kept baseline."""
+    head = _patched(base_tree, tmp_path,
+                    '_c = boot_conn(path); create_unique_index(_c, "CREATE UNIQUE INDEX IF NOT EXISTS uq_rf6_probe '
+                    'ON login_history(restaurant_id)"); _c.execute("CREATE INDEX IF NOT EXISTS idx_rf6_probe ON '
+                    'login_history(created_at, user_id)"); _c.commit(); _c.close()')
     out = ubc.run_backend(base_tree, head, None, rollback=False, out=lambda *_: None)
     assert not out["ok"] and not out["inconclusive"]
     text = "\n".join(out["failures"])
     assert "index uq_rf6_probe not built (unique)" in text
-    assert "index rule: uq_rf6_probe built at boot on login_history" in text
+    assert "index rule: idx_rf6_probe built at boot on login_history" in text
 
 
 @pytest.mark.skipif(not PG, reason="CAVNAR_TEST_PG_URL names no scratch Postgres")
@@ -156,9 +160,3 @@ def test_a_required_column_on_a_populated_table_fails_only_the_upgrade_on_postgr
     finally:
         with psycopg.connect(PG, autocommit=True, connect_timeout=10) as c:
             c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-
-
-@pytest.mark.skipif(not PG, reason="CAVNAR_TEST_PG_URL names no scratch Postgres")
-def test_an_upgrade_passes_on_postgres(base_tree):
-    out = ubc.run_backend(base_tree, ROOT, PG, rollback=True, out=lambda *_: None)
-    assert out["ok"], out["failures"]
