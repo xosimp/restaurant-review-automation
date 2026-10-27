@@ -1,0 +1,11 @@
+{
+ "eta_choices": [
+  10,
+  20,
+  30,
+  45
+ ],
+ "eta_max": 120,
+ "ok": true,
+ "reports": []
+}

@@ -1,0 +1,87 @@
+{
+ "modules": [
+  {
+   "icon": "reviews",
+   "key": "reviews",
+   "kpi": {
+    "sublabel": "94.0% response rate",
+    "value": "78/83"
+   },
+   "label": "Reviews",
+   "mode": "full",
+   "pulse": {
+    "label": "1 urgent unanswered",
+    "tone": "bad",
+    "value": "78/83"
+   },
+   "status": "available"
+  },
+  {
+   "icon": "labor",
+   "key": "labor",
+   "kpi": {
+    "sublabel": "over 28% target",
+    "value": "28.1%"
+   },
+   "label": "Labor",
+   "mode": "full",
+   "pulse": {
+    "label": "labor · over 28%",
+    "tone": "warn",
+    "value": "28.1%"
+   },
+   "status": "available"
+  },
+  {
+   "icon": "inventory",
+   "key": "inventory",
+   "kpi": {
+    "kind": "opportunity",
+    "sublabel": "est. recoverable / mo",
+    "value": "$124"
+   },
+   "label": "Food Cost",
+   "mode": "full",
+   "pulse": {
+    "kind": "opportunity",
+    "label": "est. recoverable",
+    "tone": "warn",
+    "value": "$124"
+   },
+   "status": "available"
+  },
+  {
+   "icon": "marketing",
+   "key": "marketing",
+   "kpi": {
+    "sublabel": "pieces this month",
+    "value": "10"
+   },
+   "label": "Marketing",
+   "mode": "full",
+   "pulse": {
+    "label": "pieces this month",
+    "tone": null,
+    "value": "10"
+   },
+   "status": "available"
+  },
+  {
+   "icon": "intel",
+   "key": "intel",
+   "kpi": {
+    "sublabel": "recommendations ready",
+    "value": "3"
+   },
+   "label": "Intel",
+   "mode": "full",
+   "pulse": {
+    "label": "recommendations",
+    "tone": null,
+    "value": "3"
+   },
+   "status": "available"
+  }
+ ],
+ "ok": true
+}

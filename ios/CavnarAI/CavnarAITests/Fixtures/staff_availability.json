@@ -1,0 +1,75 @@
+{
+ "days": [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday"
+ ],
+ "notes": "",
+ "ok": true,
+ "pending_changes": [],
+ "time_off_hint": "Dates you're away go in a time-off request — your manager answers it and the schedule keeps you off those days. Availability is your usual week.",
+ "unavailable_days": [],
+ "updated_at": null,
+ "week": [
+  {
+   "day": "Monday",
+   "earliest": null,
+   "from": null,
+   "latest": null,
+   "status": "any",
+   "until": null
+  },
+  {
+   "day": "Tuesday",
+   "earliest": null,
+   "from": null,
+   "latest": null,
+   "status": "any",
+   "until": null
+  },
+  {
+   "day": "Wednesday",
+   "earliest": null,
+   "from": null,
+   "latest": null,
+   "status": "any",
+   "until": null
+  },
+  {
+   "day": "Thursday",
+   "earliest": null,
+   "from": null,
+   "latest": null,
+   "status": "any",
+   "until": null
+  },
+  {
+   "day": "Friday",
+   "earliest": null,
+   "from": null,
+   "latest": null,
+   "status": "any",
+   "until": null
+  },
+  {
+   "day": "Saturday",
+   "earliest": null,
+   "from": null,
+   "latest": null,
+   "status": "any",
+   "until": null
+  },
+  {
+   "day": "Sunday",
+   "earliest": null,
+   "from": null,
+   "latest": null,
+   "status": "any",
+   "until": null
+  }
+ ]
+}

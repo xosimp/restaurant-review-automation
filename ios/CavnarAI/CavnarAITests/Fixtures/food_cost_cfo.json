@@ -1,0 +1,1095 @@
+{
+ "brief": {
+  "can_wait": null,
+  "fix_first": {
+   "confidence": "medium",
+   "confidence_detail": {
+    "band": "medium",
+    "caps": {
+     "against_below": 50,
+     "beats_at": 95,
+     "freshness_unmeasured": 49,
+     "max": 99,
+     "no_track_record": 70,
+     "record_against": 49,
+     "record_unproven": 70,
+     "stale": 49,
+     "stale_below": 50
+    },
+    "caps_applied": [
+     "no_track_record"
+    ],
+    "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+    "changed_since": {
+     "as_of": "<volatile>",
+     "at": "2026-10-27",
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "what": "added 138 dishes to the menu",
+     "who": "A sync"
+    },
+    "confidence_impact": null,
+    "dimensions": {
+     "accuracy": {
+      "basis": "Not enough history yet — 0 measured, needs 5",
+      "cohort_label": null,
+      "high": null,
+      "improved": 0,
+      "lift": null,
+      "low": null,
+      "n": 0,
+      "pct": null,
+      "prior": null,
+      "prior_rung": null,
+      "prior_unlock": "confirm_profile",
+      "source": "none"
+     },
+     "evidence": {
+      "basis": "7 of 7 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+      "corroborating": 0,
+      "kind": "recipe_lines",
+      "n": 7,
+      "n_full": 7,
+      "pct": 74
+     },
+     "freshness": {
+      "as_of": "<volatile>",
+      "as_of_iso": "2026-10-25",
+      "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+      "errors": [],
+      "pct": 100,
+      "stalest": "inventory",
+      "stalest_basis": "Oldest count 10/25/26"
+     }
+    },
+    "label": "70% confidence",
+    "meaning": "How well supported this is — not the chance it works",
+    "pct": 70,
+    "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+    "sample": false,
+    "score": 0.7,
+    "thresholds": {
+     "high": 75,
+     "medium": 50
+    },
+    "version": 2
+   },
+   "difficulty": "high",
+   "dollars_monthly": 1354.47,
+   "evidence": "Wing Platter 50 Pc costs $27.64 on a $72.00 price against your 30% target, 207 sold in 28 days",
+   "evidence_input": {
+    "basis": "7 of 7 recipe lines reviewed behind this plate cost",
+    "kind": "recipe_lines",
+    "n": 7,
+    "n_full": 7
+   },
+   "if_ignored": "the dish keeps selling at a thin margin",
+   "item": "Wing Platter 50 Pc",
+   "kind": "menu",
+   "what": "Wing Platter 50 Pc runs at 38.4% food cost"
+  },
+  "food_cost": {
+   "label": null,
+   "missing": [
+    {
+     "component": "two inventory counts",
+     "why": "no inventory submitted in Back Office yet"
+    }
+   ],
+   "pct": null,
+   "target": 30.0
+  },
+  "forecast_accuracy": {
+   "available": false,
+   "beats_naive": null,
+   "bias_pct": null,
+   "kind": "waste_week",
+   "mean_error_pct": null,
+   "n_periods": 0,
+   "n_skill": 0,
+   "n_weeks": 0,
+   "reading": null,
+   "reason": "not enough scored forecasts yet to say how accurate these are — 0 closed weeks scored, needs 4",
+   "scored": 0,
+   "skill": null,
+   "skill_pct": null,
+   "skill_vs_last": null,
+   "skill_vs_mean": null,
+   "withheld": false
+  },
+  "improved": null,
+  "money_involved": {
+   "claim_kind": "forecast",
+   "monthly_at_stake": 1759.11,
+   "monthly_at_stake_basis": "the largest driver per ingredient — an ingredient that shows up as waste, a price rise and inside a dish's plate cost is counted once",
+   "projected_month_delta": null,
+   "totals_by_kind": {
+    "opportunity": 1759.11
+   }
+  },
+  "needs_attention_now": [
+   {
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "7 of 7 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "recipe_lines",
+       "n": 7,
+       "n_full": 7,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "high",
+    "dollars_monthly": 1354.47,
+    "evidence": "Wing Platter 50 Pc costs $27.64 on a $72.00 price against your 30% target, 207 sold in 28 days",
+    "evidence_input": {
+     "basis": "7 of 7 recipe lines reviewed behind this plate cost",
+     "kind": "recipe_lines",
+     "n": 7,
+     "n_full": 7
+    },
+    "if_ignored": "the dish keeps selling at a thin margin",
+    "item": "Wing Platter 50 Pc",
+    "kind": "menu",
+    "what": "Wing Platter 50 Pc runs at 38.4% food cost"
+   },
+   {
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "7 of 7 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "recipe_lines",
+       "n": 7,
+       "n_full": 7,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "high",
+    "dollars_monthly": 390.87,
+    "evidence": "Wings 20 Pc costs $11.06 on a $31.00 price against your 30% target, 205 sold in 28 days",
+    "evidence_input": {
+     "basis": "7 of 7 recipe lines reviewed behind this plate cost",
+     "kind": "recipe_lines",
+     "n": 7,
+     "n_full": 7
+    },
+    "if_ignored": "the dish keeps selling at a thin margin",
+    "item": "Wings 20 Pc",
+    "kind": "menu",
+    "what": "Wings 20 Pc runs at 35.7% food cost"
+   },
+   {
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "7 of 7 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "recipe_lines",
+       "n": 7,
+       "n_full": 7,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "high",
+    "dollars_monthly": 332.08,
+    "evidence": "Game Day Wing Party Pack costs $55.29 on a $145.00 price against your 30% target, 26 sold in 28 days",
+    "evidence_input": {
+     "basis": "7 of 7 recipe lines reviewed behind this plate cost",
+     "kind": "recipe_lines",
+     "n": 7,
+     "n_full": 7
+    },
+    "if_ignored": "the dish keeps selling at a thin margin",
+    "item": "Game Day Wing Party Pack",
+    "kind": "menu",
+    "what": "Game Day Wing Party Pack runs at 38.1% food cost"
+   }
+  ],
+  "prime_cost_accuracy": {
+   "available": false,
+   "beats_naive": null,
+   "bias_pct": null,
+   "kind": "profitability_month",
+   "mean_error_pct": null,
+   "n_months": 0,
+   "n_periods": 0,
+   "n_skill": 0,
+   "reading": null,
+   "reason": "not enough scored forecasts yet to say how accurate these are — 0 closed months scored, needs 4",
+   "scored": 0,
+   "skill": null,
+   "skill_pct": null,
+   "skill_vs_last": null,
+   "skill_vs_mean": null,
+   "withheld": false
+  },
+  "profitability": {
+   "available": false,
+   "basis": "Prime cost = COGS + labor, month to date, projected to month end at the current daily run rate. This is prime cost, not net profit — rent, utilities and overheads are not in this system. The labor share is this restaurant's own 9/29/26 to 10/26/26 figure applied to month-to-date sales, not a labor measurement of these specific days.",
+   "labor_from": "labor from 9/29/26–10/26/26",
+   "labor_period": "9/29/26 to 10/26/26",
+   "labor_period_end": "2026-10-26",
+   "labor_period_start": "2026-09-29",
+   "missing": [
+    {
+     "component": "two inventory counts",
+     "why": "no inventory submitted in Back Office yet"
+    }
+   ],
+   "reason": "two inventory counts missing"
+  },
+  "trust": {
+   "forecast_accuracy": {
+    "available": false,
+    "beats_naive": null,
+    "bias_pct": null,
+    "kind": "waste_week",
+    "mean_error_pct": null,
+    "n_periods": 0,
+    "n_skill": 0,
+    "n_weeks": 0,
+    "reading": null,
+    "reason": "not enough scored forecasts yet to say how accurate these are — 0 closed weeks scored, needs 4",
+    "scored": 0,
+    "skill": null,
+    "skill_pct": null,
+    "skill_vs_last": null,
+    "skill_vs_mean": null,
+    "withheld": false
+   },
+   "inferred_waste_pct": 0.0,
+   "prime_cost_accuracy": {
+    "available": false,
+    "beats_naive": null,
+    "bias_pct": null,
+    "kind": "profitability_month",
+    "mean_error_pct": null,
+    "n_months": 0,
+    "n_periods": 0,
+    "n_skill": 0,
+    "reading": null,
+    "reason": "not enough scored forecasts yet to say how accurate these are — 0 closed months scored, needs 4",
+    "scored": 0,
+    "skill": null,
+    "skill_pct": null,
+    "skill_vs_last": null,
+    "skill_vs_mean": null,
+    "withheld": false
+   },
+   "recipe_coverage_pct": 100.0
+  },
+  "what_changed": null,
+  "why": {
+   "cause": null,
+   "reason": "no root-cause read has been produced yet"
+  },
+  "worsened": null
+ },
+ "claim_kinds": {
+  "drivers": "computed",
+  "food_cost_pct": "measured",
+  "money_involved": "forecast",
+  "profitability": "forecast",
+  "recommended_action": "suggestion",
+  "trust": "measured",
+  "why": "inferred"
+ },
+ "diagnosis": null,
+ "drivers": {
+  "available": true,
+  "basis": "Each driver is priced from this restaurant's own recorded usage and prices, expressed monthly so drivers measured over different periods are comparable. Ranked by dollars — weighted by your answers to that kind of fix and the results measured after it here (with no record of yours, similar restaurants' results) — then confidence, then ease.",
+  "complete": true,
+  "degraded_sources": [],
+  "drivers": [
+   {
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "7 of 7 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "recipe_lines",
+       "n": 7,
+       "n_full": 7,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "high",
+    "dollars_monthly": 1354.47,
+    "evidence": "Wing Platter 50 Pc costs $27.64 on a $72.00 price against your 30% target, 207 sold in 28 days",
+    "evidence_input": {
+     "basis": "7 of 7 recipe lines reviewed behind this plate cost",
+     "kind": "recipe_lines",
+     "n": 7,
+     "n_full": 7
+    },
+    "if_ignored": "the dish keeps selling at a thin margin",
+    "ingredients": [
+     "Chicken Wings Jumbo 1&2 Joint Fresh",
+     "Celery Sticks",
+     "Carrot Sticks",
+     "Butter Solid Unsalted",
+     "Oil Fryer Canola Clear",
+     "Sauce Hot Cayenne Pepper",
+     "Dressing Ranch Buttermilk"
+    ],
+    "item": "Wing Platter 50 Pc",
+    "kind": "menu",
+    "label": "Wing Platter 50 Pc runs at 38.4% food cost",
+    "rec_key": "food_cost_driver:Wing Platter 50 Pc runs at 38.4% food co",
+    "recipe_lines": 7,
+    "recipe_unreviewed_lines": 0,
+    "target_pct": 30.0,
+    "value_kind": "opportunity"
+   },
+   {
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "7 of 7 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "recipe_lines",
+       "n": 7,
+       "n_full": 7,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "high",
+    "dollars_monthly": 390.87,
+    "evidence": "Wings 20 Pc costs $11.06 on a $31.00 price against your 30% target, 205 sold in 28 days",
+    "evidence_input": {
+     "basis": "7 of 7 recipe lines reviewed behind this plate cost",
+     "kind": "recipe_lines",
+     "n": 7,
+     "n_full": 7
+    },
+    "if_ignored": "the dish keeps selling at a thin margin",
+    "ingredients": [
+     "Chicken Wings Jumbo 1&2 Joint Fresh",
+     "Celery Sticks",
+     "Carrot Sticks",
+     "Butter Solid Unsalted",
+     "Oil Fryer Canola Clear",
+     "Sauce Hot Cayenne Pepper",
+     "Dressing Ranch Buttermilk"
+    ],
+    "item": "Wings 20 Pc",
+    "kind": "menu",
+    "label": "Wings 20 Pc runs at 35.7% food cost",
+    "rec_key": "food_cost_driver:Wings 20 Pc runs at 35.7% food cost",
+    "recipe_lines": 7,
+    "recipe_unreviewed_lines": 0,
+    "target_pct": 30.0,
+    "value_kind": "opportunity"
+   },
+   {
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "7 of 7 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "recipe_lines",
+       "n": 7,
+       "n_full": 7,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "high",
+    "dollars_monthly": 332.08,
+    "evidence": "Game Day Wing Party Pack costs $55.29 on a $145.00 price against your 30% target, 26 sold in 28 days",
+    "evidence_input": {
+     "basis": "7 of 7 recipe lines reviewed behind this plate cost",
+     "kind": "recipe_lines",
+     "n": 7,
+     "n_full": 7
+    },
+    "if_ignored": "the dish keeps selling at a thin margin",
+    "ingredients": [
+     "Chicken Wings Jumbo 1&2 Joint Fresh",
+     "Celery Sticks",
+     "Carrot Sticks",
+     "Butter Solid Unsalted",
+     "Oil Fryer Canola Clear",
+     "Sauce Hot Cayenne Pepper",
+     "Dressing Ranch Buttermilk"
+    ],
+    "item": "Game Day Wing Party Pack",
+    "kind": "menu",
+    "label": "Game Day Wing Party Pack runs at 38.1% food cost",
+    "rec_key": "food_cost_driver:Game Day Wing Party Pack runs at 38.1% f",
+    "recipe_lines": 7,
+    "recipe_unreviewed_lines": 0,
+    "target_pct": 30.0,
+    "value_kind": "opportunity"
+   },
+   {
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "4 of 4 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "recipe_lines",
+       "n": 4,
+       "n_full": 4,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "high",
+    "dollars_monthly": 287.08,
+    "evidence": "Steak & Eggs costs $8.45 on a $24.00 price against your 30% target, 212 sold in 28 days",
+    "evidence_input": {
+     "basis": "4 of 4 recipe lines reviewed behind this plate cost",
+     "kind": "recipe_lines",
+     "n": 4,
+     "n_full": 4
+    },
+    "if_ignored": "the dish keeps selling at a thin margin",
+    "ingredients": [
+     "Beef Strip Loin Choice Steak 12oz",
+     "Potato Russet 70ct",
+     "Eggs Large Grade A",
+     "Bread Texas Toast Sliced"
+    ],
+    "item": "Steak & Eggs",
+    "kind": "menu",
+    "label": "Steak & Eggs runs at 35.2% food cost",
+    "rec_key": "food_cost_driver:Steak & Eggs runs at 35.2% food cost",
+    "recipe_lines": 4,
+    "recipe_unreviewed_lines": 0,
+    "target_pct": 30.0,
+    "value_kind": "opportunity"
+   },
+   {
+    "act": {
+     "label": "Log or count it",
+     "nav": "inventory/count"
+    },
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "an offender in 4 of the last 8 weeks of waste counts — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "waste_weeks",
+       "n": 4,
+       "n_full": 4,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "low",
+    "dollars_monthly": 61.75,
+    "evidence": "Spring Mix wasted 104.0% of what was ordered against a 28% tolerance band, $19.50 logged 10/21/26–10/27/26 — an offender in 4 of the last 8 weeks",
+    "evidence_input": {
+     "basis": "an offender in 4 of the last 8 weeks of waste counts",
+     "kind": "waste_weeks",
+     "n": 4
+    },
+    "if_ignored": "the same share keeps going in the bin every week",
+    "item": "Spring Mix",
+    "kind": "waste",
+    "label": "Spring Mix waste above tolerance",
+    "rec_key": "food_cost_driver:Spring Mix waste above tolerance",
+    "value_kind": "opportunity",
+    "weeks_of_data": 4
+   },
+   {
+    "act": {
+     "label": "Log or count it",
+     "nav": "inventory/count"
+    },
+    "confidence": "medium",
+    "confidence_detail": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "changed_since": {
+      "as_of": "<volatile>",
+      "at": "2026-10-27",
+      "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+      "what": "added 138 dishes to the menu",
+      "who": "A sync"
+     },
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "an offender in 3 of the last 8 weeks of waste counts — a change since the data window isn't reflected yet",
+       "corroborating": 0,
+       "kind": "waste_weeks",
+       "n": 3,
+       "n_full": 4,
+       "pct": 74
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-25",
+       "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "inventory",
+       "stalest_basis": "Oldest count 10/25/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "difficulty": "low",
+    "dollars_monthly": 55.81,
+    "evidence": "Fries 3/8 Skin-On Frozen wasted 47.0% of what was ordered against a 20% tolerance band, $22.42 logged 10/21/26–10/27/26 — an offender in 3 of the last 8 weeks",
+    "evidence_input": {
+     "basis": "an offender in 3 of the last 8 weeks of waste counts",
+     "kind": "waste_weeks",
+     "n": 3
+    },
+    "if_ignored": "the same share keeps going in the bin every week",
+    "item": "Fries 3/8 Skin-On Frozen",
+    "kind": "waste",
+    "label": "Fries 3/8 Skin-On Frozen waste above tolerance",
+    "rec_key": "food_cost_driver:Fries 3/8 Skin-On Frozen waste above tol",
+    "value_kind": "opportunity",
+    "weeks_of_data": 3
+   }
+  ],
+  "min_driver_dollars": 15.0,
+  "reason": null,
+  "total_basis": "the largest driver per ingredient — an ingredient that shows up as waste, a price rise and inside a dish's plate cost is counted once",
+  "total_kinds": [
+   "opportunity"
+  ],
+  "total_monthly": 2482.06,
+  "total_monthly_deduplicated": 1759.11,
+  "totals_by_kind": {
+   "opportunity": 1759.11
+  }
+ },
+ "ok": true,
+ "profitability": {
+  "available": false,
+  "basis": "Prime cost = COGS + labor, month to date, projected to month end at the current daily run rate. This is prime cost, not net profit — rent, utilities and overheads are not in this system. The labor share is this restaurant's own 9/29/26 to 10/26/26 figure applied to month-to-date sales, not a labor measurement of these specific days.",
+  "labor_from": "labor from 9/29/26–10/26/26",
+  "labor_period": "9/29/26 to 10/26/26",
+  "labor_period_end": "2026-10-26",
+  "labor_period_start": "2026-09-29",
+  "missing": [
+   {
+    "component": "two inventory counts",
+    "why": "no inventory submitted in Back Office yet"
+   }
+  ],
+  "reason": "two inventory counts missing"
+ }
+}

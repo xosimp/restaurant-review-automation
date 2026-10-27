@@ -1,0 +1,77 @@
+{
+ "by_module": {
+  "food": {
+   "accept_rate": null,
+   "accept_rate_high": null,
+   "accept_rate_low": null,
+   "accepted": 0,
+   "answered": 0,
+   "completed": 0,
+   "dismissed": 0,
+   "enough": false,
+   "ignored": 0,
+   "implemented": 0,
+   "n": 0,
+   "shown": 5
+  },
+  "intel": {
+   "accept_rate": null,
+   "accept_rate_high": null,
+   "accept_rate_low": null,
+   "accepted": 0,
+   "answered": 0,
+   "completed": 0,
+   "dismissed": 0,
+   "enough": false,
+   "ignored": 0,
+   "implemented": 0,
+   "n": 0,
+   "shown": 4
+  },
+  "labor": {
+   "accept_rate": null,
+   "accept_rate_high": null,
+   "accept_rate_low": null,
+   "accepted": 0,
+   "answered": 0,
+   "completed": 0,
+   "dismissed": 0,
+   "enough": false,
+   "ignored": 0,
+   "implemented": 0,
+   "n": 0,
+   "shown": 1
+  },
+  "reviews": {
+   "accept_rate": null,
+   "accept_rate_high": null,
+   "accept_rate_low": null,
+   "accepted": 0,
+   "answered": 0,
+   "completed": 0,
+   "dismissed": 0,
+   "enough": false,
+   "ignored": 0,
+   "implemented": 0,
+   "n": 0,
+   "shown": 1
+  }
+ },
+ "by_tag": [],
+ "days": 30,
+ "min_measured": 5,
+ "min_settled": 10,
+ "most_effective": null,
+ "ok": true,
+ "since": "2026-09-27",
+ "totals": {
+  "improved": 0,
+  "measured": 0,
+  "measured_enough": false,
+  "open": 11,
+  "settled": 0,
+  "shown": 11,
+  "taken": 0,
+  "taken_enough": false
+ }
+}

@@ -207,13 +207,102 @@ final class ResponseShapeContractTests: XCTestCase {
         }
     }
 
+    // MARK: - The rest of the main screens (blind re-audit 10/27/26)
+    //
+    // Each read below is decoded with the model its screen holds; the
+    // assertions are light on purpose — the decode is the contract.
+
+    func testHomeModulesAndTheBadges() throws {
+        for r in try Self.decode(ModulesGridViewModel.ModulesResponse.self, "home_modules") {
+            XCTAssertEqual(r.modules.count, Self.count(try Self.object("home_modules"), "modules"))
+        }
+        for r in try Self.decode(NotificationsBadgeViewModel.CountResponse.self, "notifications_unread") {
+            XCTAssertTrue(r.ok)
+        }
+        XCTAssertEqual(try Self.decode(DataHealthSnapshot.self, "data_health").count, 2)
+        XCTAssertEqual(try Self.decode(RestaurantDNA.self, "dna").count, 2)
+        XCTAssertEqual(try Self.decode(BenchmarkCard.self, "benchmarks_card").count, 2)
+    }
+
+    func testHomeFollowThrough() throws {
+        XCTAssertEqual(try Self.decode(HomeFollowThroughViewModel.ValueSummary.self, "value").count, 2)
+        XCTAssertEqual(try Self.decode(HomeFollowThroughViewModel.GoalsResponse.self, "goals").count, 2)
+        XCTAssertEqual(try Self.decode(RecOutcomesResponse.self, "outcomes").count, 2)
+        XCTAssertEqual(try Self.decode(RecSummary.self, "recs_summary").count, 2)
+        XCTAssertEqual(try Self.decode(PendingSendActivities.PendingResponse.self, "actions_pending").count, 2)
+        XCTAssertEqual(try Self.decode(AskCavnarViewModel.ConversationsResponse.self, "ask_conversations").count, 2)
+    }
+
+    func testModuleSideReads() throws {
+        XCTAssertEqual(try Self.decode(ReviewStats.self, "review_stats").count, 2)
+        XCTAssertEqual(try Self.decode(LaborViewModel.TeamResponse.self, "labor_team").count, 2)
+        XCTAssertEqual(try Self.decode(LaborViewModel.TimeOffListResponse.self, "labor_time_off").count, 2)
+        XCTAssertEqual(try Self.decode(ForecastPreview.self, "labor_forecast").count, 2)
+        XCTAssertEqual(try Self.decode(FoodCostCFO.self, "food_cost_cfo").count, 2)
+        XCTAssertEqual(try Self.decode(FoodCostWasteTrend.self, "food_cost_waste_trend").count, 2)
+        XCTAssertEqual(try Self.decode(IntelMovement.self, "intel_movement").count, 2)
+        XCTAssertEqual(try Self.decode(DSRListResponse.self, "dsr_list").count, 2)
+        XCTAssertEqual(try Self.decode(TSSheetsResponse.self, "task_sheets").count, 2)
+        XCTAssertEqual(try Self.decode(GuestsPayload.self, "guests").count, 2)
+        XCTAssertEqual(try Self.decode(PeopleListResponse.self, "people").count, 2)
+    }
+
+    // MARK: - A manager's own views (labor and prime cost are per viewer)
+
+    func testTheManagersViews() throws {
+        let home = try Self.object("home_manager")
+        for summary in try Self.decode(HomeSummary.self, "home_manager") {
+            XCTAssertEqual(summary.modules.count, Self.count(home, "modules"))
+        }
+        for labor in try Self.decode(LaborStats.self, "labor_manager") {
+            XCTAssertTrue(labor.ok)
+        }
+        for food in try Self.decode(FoodCostAnalytics.self, "food_cost_manager") {
+            XCTAssertTrue(food.ok)
+        }
+        XCTAssertEqual(try Self.decode(ReviewsListViewModel.ReviewsResponse.self, "reviews_manager").count, 2)
+    }
+
+    // MARK: - The rest of the staff app
+
+    func testTheStaffAppsScreens() throws {
+        XCTAssertEqual(try Self.decode(StaffInboxPayload.self, "staff_inbox").count, 2)
+        XCTAssertEqual(try Self.decode(StaffInboxBadge.self, "staff_inbox").count, 2)
+        XCTAssertEqual(try Self.decode(StaffRequestsBoard.self, "staff_requests").count, 2)
+        XCTAssertEqual(try Self.decode(StaffWaitingResponse.self, "staff_requests").count, 2)
+        XCTAssertEqual(try Self.decode(StaffTimeOffList.self, "staff_time_off").count, 2)
+        XCTAssertEqual(try Self.decode(StaffAvailabilityRecord.self, "staff_availability").count, 2)
+        XCTAssertEqual(try Self.decode(StaffPreferencesState.self, "staff_preferences").count, 2)
+        XCTAssertEqual(try Self.decode(StaffNotificationSettings.self, "staff_notifications").count, 2)
+        XCTAssertEqual(try Self.decode(StaffPersonalBrief.self, "staff_preshift").count, 2)
+        XCTAssertEqual(try Self.decode(StaffStats.self, "staff_stats").count, 2)
+        XCTAssertEqual(try Self.decode(StaffEarnings.self, "staff_earnings").count, 2)
+        XCTAssertEqual(try Self.decode(StaffRecognition.self, "staff_recognition").count, 2)
+        XCTAssertEqual(try Self.decode(StaffPulseState.self, "staff_pulse").count, 2)
+        XCTAssertEqual(try Self.decode(StaffCoworkersResponse.self, "staff_colleagues").count, 2)
+        XCTAssertEqual(try Self.decode(StaffTasksPayload.self, "staff_tasks").count, 2)
+        XCTAssertEqual(try Self.decode(StaffThreadPayload.self, "staff_messages").count, 2)
+        XCTAssertEqual(try Self.decode(StaffRunningLateList.self, "staff_running_late").count, 2)
+        XCTAssertEqual(try Self.decode(StaffCalendarLink.self, "staff_calendar_link").count, 2)
+    }
+
     // MARK: - The registry
 
     /// Every fixture tests/test_ios_response_shapes.py captures is decoded
     /// above — that test holds this list to its own.
     static let decodedFixtures = ["me", "account", "home", "actions", "notifications", "reviews", "labor",
                                   "food_cost", "food_cost_bar", "marketing", "intel", "dsr_preview", "dsr_week",
-                                  "staff_shifts", "staff_me"]
+                                  "staff_shifts", "staff_me",
+                                  "home_modules", "review_stats", "notifications_unread", "labor_team",
+                                  "labor_time_off", "labor_forecast", "food_cost_cfo", "food_cost_waste_trend",
+                                  "intel_movement", "actions_pending", "dsr_list", "data_health", "task_sheets",
+                                  "outcomes", "value", "goals", "dna", "guests", "people", "recs_summary",
+                                  "benchmarks_card", "ask_conversations", "home_manager", "labor_manager",
+                                  "reviews_manager", "food_cost_manager", "staff_inbox", "staff_requests",
+                                  "staff_time_off", "staff_availability", "staff_preferences", "staff_notifications",
+                                  "staff_preshift", "staff_stats", "staff_earnings", "staff_recognition",
+                                  "staff_pulse", "staff_colleagues", "staff_tasks", "staff_messages",
+                                  "staff_running_late", "staff_calendar_link"]
 
     func testEveryCapturedFixtureIsInTheBundle() throws {
         for name in Self.decodedFixtures {

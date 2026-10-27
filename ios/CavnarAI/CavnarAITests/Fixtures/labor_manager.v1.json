@@ -1,0 +1,828 @@
+{
+ "analysis_failed": false,
+ "blended_rate": 17.03,
+ "costed_labor": 82353.59,
+ "data_caveat": "",
+ "data_complete": true,
+ "data_days": 28,
+ "date_range": {
+  "days": 28,
+  "end": "2026-10-26",
+  "start": "2026-09-29"
+ },
+ "days_missing_sales": [],
+ "days_with_conflicting_sales": [],
+ "demand_accuracy": {
+  "actual_vs_forecast_pct": null,
+  "available": false,
+  "bias_pct": null,
+  "claim_kind": "measured",
+  "excluded_other_basis": 40,
+  "inside_range_pct": null,
+  "mean_error_pct": null,
+  "n_nights": 2,
+  "n_ranged": 0,
+  "n_skill": 0,
+  "reason": "only 2 nights scored against their forecast in the last 56 days — needs 7",
+  "skill_pct": null,
+  "skill_vs_last_pct": null,
+  "skill_vs_mean_pct": null,
+  "window_days": 56
+ },
+ "dow_summary": {
+  "Friday": 24.2,
+  "Monday": 23.6,
+  "Saturday": 25.0,
+  "Sunday": 20.8,
+  "Thursday": 25.1,
+  "Tuesday": 28.0,
+  "Wednesday": 26.9
+ },
+ "duplicate_rows_ignored": 0,
+ "hours_are_estimated": false,
+ "is_live": true,
+ "labor_freshness": {
+  "as_of": "<volatile>",
+  "as_of_iso": "2026-10-26",
+  "basis": "Shifts through 10/26/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+  "pct": 100,
+  "stale": false,
+  "state": "current"
+ },
+ "labor_upcoming": [
+  {
+   "approximate": false,
+   "based_on": null,
+   "claim_kind": null,
+   "date": "2026-10-31",
+   "date_str": "10/31/26",
+   "days_away": 4,
+   "display_name": "Halloween",
+   "label": "Holiday — check your own history",
+   "last_year_date": null,
+   "last_year_weekday": null,
+   "lift_pct": null,
+   "name": "Halloween"
+  },
+  {
+   "approximate": false,
+   "based_on": null,
+   "claim_kind": null,
+   "date": "2026-11-11",
+   "date_str": "11/11/26",
+   "days_away": 15,
+   "display_name": "Veterans Day",
+   "label": "Holiday — check your own history",
+   "last_year_date": null,
+   "last_year_weekday": null,
+   "lift_pct": null,
+   "name": "Veterans Day"
+  }
+ ],
+ "money_kinds": {
+  "costed_labor": "estimate",
+  "overtime_premium": "estimate",
+  "potential_savings": "opportunity",
+  "potential_savings_monthly": "opportunity",
+  "potential_savings_weekly": "opportunity",
+  "total_labor_cost": "estimate",
+  "total_sales": "measured"
+ },
+ "money_went": [
+  {
+   "dollars": 45.03,
+   "employee": "Andre Kimura",
+   "hours": 43.9,
+   "hours_text": "43.9",
+   "kind": "overtime",
+   "label": "overtime premium",
+   "week": "9/28/26"
+  },
+  {
+   "dollars": 40.98,
+   "employee": "Luis Ortega",
+   "hours": 43.0,
+   "hours_text": "43",
+   "kind": "overtime",
+   "label": "overtime premium",
+   "week": "10/5/26"
+  },
+  {
+   "dollars": 40.37,
+   "employee": "Edgar Fuentes",
+   "hours": 44.6,
+   "hours_text": "44.6",
+   "kind": "overtime",
+   "label": "overtime premium",
+   "week": "10/5/26"
+  },
+  {
+   "dollars": 38.87,
+   "employee": "Andre Kimura",
+   "hours": 43.4,
+   "hours_text": "43.4",
+   "kind": "overtime",
+   "label": "overtime premium",
+   "week": "10/19/26"
+  },
+  {
+   "dollars": 36.8,
+   "employee": "Andre Kimura",
+   "hours": 43.2,
+   "hours_text": "43.2",
+   "kind": "overtime",
+   "label": "overtime premium",
+   "week": "10/12/26"
+  },
+  {
+   "dollars": 36.23,
+   "employee": "Luis Ortega",
+   "hours": 42.7,
+   "hours_text": "42.7",
+   "kind": "overtime",
+   "label": "overtime premium",
+   "week": "10/12/26"
+  },
+  {
+   "dollars": 31.97,
+   "employee": "Luis Ortega",
+   "hours": 42.4,
+   "hours_text": "42.4",
+   "kind": "overtime",
+   "label": "overtime premium",
+   "week": "10/19/26"
+  },
+  {
+   "dollars": 29.29,
+   "employee": "Andre Kimura",
+   "hours": 42.5,
+   "hours_text": "42.5",
+   "kind": "overtime",
+   "label": "overtime premium",
+   "week": "10/5/26"
+  }
+ ],
+ "ok": true,
+ "on_track": true,
+ "over_margin": 3.0,
+ "over_margin_basis": null,
+ "overall_labor_pct": 24.4,
+ "overstaffed_days": [],
+ "overtime_hours": 28.9,
+ "overtime_risk": [
+  {
+   "employee": "Luis Ortega",
+   "hours": 43.0,
+   "ot_allowed": false,
+   "premium": 40.98,
+   "status": "overtime",
+   "total_hours": 171.4,
+   "week": "10/5/26"
+  },
+  {
+   "employee": "Luis Ortega",
+   "hours": 42.7,
+   "ot_allowed": false,
+   "premium": 36.23,
+   "status": "overtime",
+   "total_hours": 171.4,
+   "week": "10/12/26"
+  },
+  {
+   "employee": "Luis Ortega",
+   "hours": 42.4,
+   "ot_allowed": false,
+   "premium": 31.97,
+   "status": "overtime",
+   "total_hours": 171.4,
+   "week": "10/19/26"
+  },
+  {
+   "employee": "Edgar Fuentes",
+   "hours": 44.6,
+   "ot_allowed": false,
+   "premium": 40.37,
+   "status": "overtime",
+   "total_hours": 143.8,
+   "week": "10/5/26"
+  },
+  {
+   "employee": "Andre Kimura",
+   "hours": 43.9,
+   "ot_allowed": false,
+   "premium": 45.03,
+   "status": "overtime",
+   "total_hours": 173.0,
+   "week": "9/28/26"
+  },
+  {
+   "employee": "Andre Kimura",
+   "hours": 43.4,
+   "ot_allowed": false,
+   "premium": 38.87,
+   "status": "overtime",
+   "total_hours": 173.0,
+   "week": "10/19/26"
+  },
+  {
+   "employee": "Andre Kimura",
+   "hours": 43.2,
+   "ot_allowed": false,
+   "premium": 36.8,
+   "status": "overtime",
+   "total_hours": 173.0,
+   "week": "10/12/26"
+  },
+  {
+   "employee": "Andre Kimura",
+   "hours": 42.5,
+   "ot_allowed": false,
+   "premium": 29.29,
+   "status": "overtime",
+   "total_hours": 173.0,
+   "week": "10/5/26"
+  },
+  {
+   "employee": "Ryan Mulcahy",
+   "hours": 39.1,
+   "ot_allowed": false,
+   "premium": null,
+   "status": "near",
+   "total_hours": 140.9,
+   "week": "9/28/26"
+  },
+  {
+   "employee": "Jasmine Thornton",
+   "hours": 37.2,
+   "ot_allowed": false,
+   "premium": null,
+   "status": "near",
+   "total_hours": 110.1,
+   "week": "10/19/26"
+  }
+ ],
+ "period_days": 28,
+ "period_too_short_to_project": false,
+ "potential_savings": 0,
+ "role_summary": [
+  {
+   "headcount": 8,
+   "hours": 798.6,
+   "labor_cost": 15852.98,
+   "labor_pct": 4.7,
+   "role": "Line Cook"
+  },
+  {
+   "headcount": 12,
+   "hours": 1013.9,
+   "labor_cost": 13687.61,
+   "labor_pct": 4.1,
+   "role": "Server"
+  },
+  {
+   "headcount": 10,
+   "hours": 951.3,
+   "labor_cost": 12842.71,
+   "labor_pct": 3.8,
+   "role": "Bartender"
+  },
+  {
+   "headcount": 3,
+   "hours": 324.2,
+   "labor_cost": 8427.2,
+   "labor_pct": 2.5,
+   "role": "Manager"
+  },
+  {
+   "headcount": 4,
+   "hours": 454.8,
+   "labor_cost": 7803.95,
+   "labor_pct": 2.3,
+   "role": "Dishwasher"
+  },
+  {
+   "headcount": 1,
+   "hours": 171.4,
+   "labor_cost": 4627.8,
+   "labor_pct": 1.4,
+   "role": "Kitchen Manager"
+  },
+  {
+   "headcount": 5,
+   "hours": 244.1,
+   "labor_cost": 4424.11,
+   "labor_pct": 1.3,
+   "role": "Prep Cook"
+  },
+  {
+   "headcount": 1,
+   "hours": 173.0,
+   "labor_cost": 3979.99,
+   "labor_pct": 1.2,
+   "role": "Sous Chef"
+  },
+  {
+   "headcount": 4,
+   "hours": 247.0,
+   "labor_cost": 4075.68,
+   "labor_pct": 1.2,
+   "role": "Host"
+  },
+  {
+   "headcount": 5,
+   "hours": 262.7,
+   "labor_cost": 3677.28,
+   "labor_pct": 1.1,
+   "role": "Busser"
+  },
+  {
+   "headcount": 4,
+   "hours": 174.2,
+   "labor_cost": 2612.39,
+   "labor_pct": 0.8,
+   "role": "Barback"
+  }
+ ],
+ "sales_data_missing": false,
+ "savings_breakdown": {
+  "cost_basis": "role_rates",
+  "cost_basis_label": "your per-role pay rates",
+  "data_days": 28,
+  "dollars_withheld": null,
+  "kinds": {
+   "labor_annual": "projection",
+   "labor_monthly": "opportunity",
+   "labor_overtime": "estimate",
+   "labor_vs_industry_annual": "benchmark",
+   "labor_vs_industry_monthly": "benchmark"
+  },
+  "labor_annual": 0,
+  "labor_industry_basis": null,
+  "labor_industry_comparable": false,
+  "labor_industry_note": null,
+  "labor_industry_pct": null,
+  "labor_monthly": 0,
+  "labor_overtime": 342,
+  "labor_target_label": "your target",
+  "labor_target_source": "set",
+  "labor_vs_industry_annual": 0,
+  "labor_vs_industry_monthly": 0,
+  "overtime_period_days": 28
+ },
+ "staffing_board": {
+  "lean": [
+   {
+    "ask": "Was service slow on Sunday 10/18/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/18/26",
+    "dollars": 18104.13,
+    "dollars_text": "$18,104",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "19.8",
+    "pts_text": "8.2",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "high",
+    "spc_text": "",
+    "title": "Sunday"
+   },
+   {
+    "ask": "Was service slow on Sunday 10/11/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/11/26",
+    "dollars": 17366.43,
+    "dollars_text": "$17,366",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "20.1",
+    "pts_text": "7.9",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Sunday"
+   },
+   {
+    "ask": "Was service slow on Sunday 10/4/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/4/26",
+    "dollars": 18554.85,
+    "dollars_text": "$18,555",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "20.4",
+    "pts_text": "7.6",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Sunday"
+   },
+   {
+    "ask": "Was service slow on Thursday 10/22/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 1,
+     "of": 4,
+     "pct": 25
+    },
+    "covers": null,
+    "date": "10/22/26",
+    "dollars": 14633.4,
+    "dollars_text": "$14,633",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "23.3",
+    "pts_text": "4.7",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Thursday"
+   },
+   {
+    "ask": "Was service slow on Friday 10/9/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/9/26",
+    "dollars": 13848.69,
+    "dollars_text": "$13,849",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "23.6",
+    "pts_text": "4.4",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Friday"
+   },
+   {
+    "ask": "Was service slow on Friday 10/23/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/23/26",
+    "dollars": 15055.9,
+    "dollars_text": "$15,056",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "24.1",
+    "pts_text": "3.9",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Friday"
+   },
+   {
+    "ask": "Was service slow on Friday 10/2/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/2/26",
+    "dollars": 15800.3,
+    "dollars_text": "$15,800",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "24.3",
+    "pts_text": "3.7",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Friday"
+   },
+   {
+    "ask": "Was service slow on Saturday 10/10/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/10/26",
+    "dollars": 17408.15,
+    "dollars_text": "$17,408",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "24.4",
+    "pts_text": "3.6",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Saturday"
+   },
+   {
+    "ask": "Was service slow on Saturday 10/17/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/17/26",
+    "dollars": 17577.6,
+    "dollars_text": "$17,578",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "24.8",
+    "pts_text": "3.2",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Saturday"
+   },
+   {
+    "ask": "Was service slow on Saturday 10/3/26? Check the reviews and labor from that day.",
+    "consistency": {
+     "hits": 3,
+     "of": 4,
+     "pct": 75
+    },
+    "covers": null,
+    "date": "10/3/26",
+    "dollars": 17203.8,
+    "dollars_text": "$17,204",
+    "kind": "lean",
+    "label": "in sales",
+    "pct_text": "24.9",
+    "pts_text": "3.1",
+    "say": "Check that day's reviews and ticket times before adding anyone.",
+    "severity": "medium",
+    "spc_text": "",
+    "title": "Saturday"
+   }
+  ],
+  "overstaffed": [],
+  "overtime": [
+   {
+    "ask": "How do I keep Andre Kimura under 40 hours without leaving the sous chef short?",
+    "dollars": 45.03,
+    "dollars_text": "$45",
+    "extra": 3.9,
+    "extra_text": "3.9",
+    "hours": 43.9,
+    "hours_text": "43.9",
+    "kind": "overtime",
+    "label": "overtime premium",
+    "mate": null,
+    "role": "Sous Chef",
+    "say": "No one else in the role had 3.9h free that week.",
+    "severity": "medium",
+    "title": "Andre Kimura",
+    "week": "9/28/26",
+    "week_start": "2026-09-28"
+   },
+   {
+    "ask": "How do I keep Luis Ortega under 40 hours without leaving the kitchen manager short?",
+    "dollars": 40.98,
+    "dollars_text": "$41",
+    "extra": 3.0,
+    "extra_text": "3",
+    "hours": 43.0,
+    "hours_text": "43",
+    "kind": "overtime",
+    "label": "overtime premium",
+    "mate": null,
+    "role": "Kitchen Manager",
+    "say": "No one else in the role had 3h free that week.",
+    "severity": "medium",
+    "title": "Luis Ortega",
+    "week": "10/5/26",
+    "week_start": "2026-10-05"
+   },
+   {
+    "ask": "How do I keep Edgar Fuentes under 40 hours without leaving the dishwasher short?",
+    "dollars": 40.37,
+    "dollars_text": "$40",
+    "extra": 4.6,
+    "extra_text": "4.6",
+    "hours": 44.6,
+    "hours_text": "44.6",
+    "kind": "overtime",
+    "label": "overtime premium",
+    "mate": {
+     "hours_text": "14.4",
+     "name": "Mateo Quintero"
+    },
+    "role": "Dishwasher",
+    "say": "Mateo Quintero (dishwasher) worked 14.4h that week — room at straight time.",
+    "severity": "medium",
+    "title": "Edgar Fuentes",
+    "week": "10/5/26",
+    "week_start": "2026-10-05"
+   },
+   {
+    "ask": "How do I keep Andre Kimura under 40 hours without leaving the sous chef short?",
+    "dollars": 38.87,
+    "dollars_text": "$39",
+    "extra": 3.4,
+    "extra_text": "3.4",
+    "hours": 43.4,
+    "hours_text": "43.4",
+    "kind": "overtime",
+    "label": "overtime premium",
+    "mate": null,
+    "role": "Sous Chef",
+    "say": "No one else in the role had 3.4h free that week.",
+    "severity": "medium",
+    "title": "Andre Kimura",
+    "week": "10/19/26",
+    "week_start": "2026-10-19"
+   },
+   {
+    "ask": "How do I keep Andre Kimura under 40 hours without leaving the sous chef short?",
+    "dollars": 36.8,
+    "dollars_text": "$37",
+    "extra": 3.2,
+    "extra_text": "3.2",
+    "hours": 43.2,
+    "hours_text": "43.2",
+    "kind": "overtime",
+    "label": "overtime premium",
+    "mate": null,
+    "role": "Sous Chef",
+    "say": "No one else in the role had 3.2h free that week.",
+    "severity": "medium",
+    "title": "Andre Kimura",
+    "week": "10/12/26",
+    "week_start": "2026-10-12"
+   },
+   {
+    "ask": "How do I keep Luis Ortega under 40 hours without leaving the kitchen manager short?",
+    "dollars": 36.23,
+    "dollars_text": "$36",
+    "extra": 2.7,
+    "extra_text": "2.7",
+    "hours": 42.7,
+    "hours_text": "42.7",
+    "kind": "overtime",
+    "label": "overtime premium",
+    "mate": null,
+    "role": "Kitchen Manager",
+    "say": "No one else in the role had 2.7h free that week.",
+    "severity": "medium",
+    "title": "Luis Ortega",
+    "week": "10/12/26",
+    "week_start": "2026-10-12"
+   },
+   {
+    "ask": "How do I keep Luis Ortega under 40 hours without leaving the kitchen manager short?",
+    "dollars": 31.97,
+    "dollars_text": "$32",
+    "extra": 2.4,
+    "extra_text": "2.4",
+    "hours": 42.4,
+    "hours_text": "42.4",
+    "kind": "overtime",
+    "label": "overtime premium",
+    "mate": null,
+    "role": "Kitchen Manager",
+    "say": "No one else in the role had 2.4h free that week.",
+    "severity": "medium",
+    "title": "Luis Ortega",
+    "week": "10/19/26",
+    "week_start": "2026-10-19"
+   },
+   {
+    "ask": "How do I keep Andre Kimura under 40 hours without leaving the sous chef short?",
+    "dollars": 29.29,
+    "dollars_text": "$29",
+    "extra": 2.5,
+    "extra_text": "2.5",
+    "hours": 42.5,
+    "hours_text": "42.5",
+    "kind": "overtime",
+    "label": "overtime premium",
+    "mate": null,
+    "role": "Sous Chef",
+    "say": "No one else in the role had 2.5h free that week.",
+    "severity": "medium",
+    "title": "Andre Kimura",
+    "week": "10/5/26",
+    "week_start": "2026-10-05"
+   }
+  ],
+  "summary": {
+   "at_stake": 299.54,
+   "at_stake_text": "$300",
+   "biggest": {
+    "dollars_text": "$45",
+    "label": "overtime premium",
+    "title": "Andre Kimura"
+   },
+   "dollars_withheld": null,
+   "ot": 299.54,
+   "ot_text": "$300",
+   "over": 0,
+   "over_text": "$0",
+   "quick": {
+    "kind": "overtime",
+    "title": "Edgar Fuentes",
+    "why": "move 4.6h to Mateo Quintero"
+   },
+   "withheld_text": null
+  }
+ },
+ "target": 28.0,
+ "total_sales": 337376.05,
+ "understaffed_days": [
+  {
+   "date": "10/2/26",
+   "day": "Friday",
+   "labor_pct": 24.3,
+   "sales": 15800.3
+  },
+  {
+   "date": "10/3/26",
+   "day": "Saturday",
+   "labor_pct": 24.9,
+   "sales": 17203.8
+  },
+  {
+   "date": "10/4/26",
+   "day": "Sunday",
+   "labor_pct": 20.4,
+   "sales": 18554.85
+  },
+  {
+   "date": "10/9/26",
+   "day": "Friday",
+   "labor_pct": 23.6,
+   "sales": 13848.69
+  },
+  {
+   "date": "10/10/26",
+   "day": "Saturday",
+   "labor_pct": 24.4,
+   "sales": 17408.15
+  },
+  {
+   "date": "10/11/26",
+   "day": "Sunday",
+   "labor_pct": 20.1,
+   "sales": 17366.43
+  },
+  {
+   "date": "10/17/26",
+   "day": "Saturday",
+   "labor_pct": 24.8,
+   "sales": 17577.6
+  },
+  {
+   "date": "10/18/26",
+   "day": "Sunday",
+   "labor_pct": 19.8,
+   "sales": 18104.13
+  },
+  {
+   "date": "10/22/26",
+   "day": "Thursday",
+   "labor_pct": 23.3,
+   "sales": 14633.4
+  },
+  {
+   "date": "10/23/26",
+   "day": "Friday",
+   "labor_pct": 24.1,
+   "sales": 15055.9
+  }
+ ],
+ "week_projection_accuracy": {
+  "available": false,
+  "beats_naive": null,
+  "bias_pct": null,
+  "kind": "revenue_week",
+  "mean_error_pct": null,
+  "n_periods": 0,
+  "n_skill": 0,
+  "n_weeks": 0,
+  "reading": null,
+  "reason": "not enough scored forecasts yet to say how accurate these are — 0 closed weeks scored, needs 4",
+  "scored": 0,
+  "skill": null,
+  "skill_pct": null,
+  "skill_vs_last": null,
+  "skill_vs_mean": null,
+  "withheld": false
+ }
+}

@@ -1,0 +1,29 @@
+{
+ "behind": 0,
+ "below_minimum": {
+  "action": {
+   "can_edit": true,
+   "kind": "profile",
+   "label": "Confirm your profile",
+   "suggestion": "We think you're a sports bar — is that right?"
+  },
+  "reason": "unconfirmed",
+  "text": "Your restaurant profile isn't confirmed yet, so no other restaurant is compared with you, and not enough of your own history to compare against — no current figure for this restaurant yet.",
+  "why_not": "this restaurant's profile isn't confirmed, so there is no like-for-like group — confirm it in Account → Restaurant profile"
+ },
+ "empty": "No fair comparison for average rating (30 days) yet — this restaurant's profile isn't confirmed, so there is no like-for-like group — confirm it in Account → Restaurant profile.",
+ "module": "reviews",
+ "ok": true,
+ "rows": [],
+ "scope": "module",
+ "strength": null,
+ "unmeasured": 3,
+ "who": {
+  "as_of": null,
+  "groups": 0,
+  "inferred": false,
+  "kind": null,
+  "n": null,
+  "text": null
+ }
+}

@@ -1,0 +1,120 @@
+{
+ "colleagues": [],
+ "coworkers": [
+  {
+   "name": "Rosa Arellano",
+   "role": "Prep Cook",
+   "shift_end": "3:00 PM",
+   "shift_start": "8:00 AM",
+   "station": null
+  },
+  {
+   "name": "Luis Ortega",
+   "role": "Kitchen Manager",
+   "shift_end": "6:00 PM",
+   "shift_start": "9:00 AM",
+   "station": null
+  },
+  {
+   "name": "Marcus Bell",
+   "role": "Manager",
+   "shift_end": "5:00 PM",
+   "shift_start": "10:00 AM",
+   "station": null
+  },
+  {
+   "name": "Rafael Montoya",
+   "role": "Line Cook",
+   "shift_end": "4:30 PM",
+   "shift_start": "10:00 AM",
+   "station": null
+  },
+  {
+   "name": "Chris Kowalczyk",
+   "role": "Bartender",
+   "shift_end": "5:00 PM",
+   "shift_start": "10:30 AM",
+   "station": null
+  },
+  {
+   "name": "Edgar Fuentes",
+   "role": "Dishwasher",
+   "shift_end": "4:00 PM",
+   "shift_start": "10:30 AM",
+   "station": null
+  },
+  {
+   "name": "Nate Ferraro",
+   "role": "Server",
+   "shift_end": "3:30 PM",
+   "shift_start": "10:45 AM",
+   "station": null
+  },
+  {
+   "name": "Caleb Ostrowski",
+   "role": "Server",
+   "shift_end": "10:00 PM",
+   "shift_start": "4:00 PM",
+   "station": null
+  },
+  {
+   "name": "Danielle Wu",
+   "role": "Bartender",
+   "shift_end": "12:45 AM",
+   "shift_start": "4:00 PM",
+   "station": null
+  },
+  {
+   "name": "Hector Galindo",
+   "role": "Line Cook",
+   "shift_end": "11:00 PM",
+   "shift_start": "4:00 PM",
+   "station": null
+  },
+  {
+   "name": "Kofi Asante",
+   "role": "Dishwasher",
+   "shift_end": "12:30 AM",
+   "shift_start": "4:00 PM",
+   "station": null
+  },
+  {
+   "name": "Priya Raman",
+   "role": "Manager",
+   "shift_end": "12:45 AM",
+   "shift_start": "4:00 PM",
+   "station": null
+  },
+  {
+   "name": "Sofia Lindqvist",
+   "role": "Server",
+   "shift_end": "10:00 PM",
+   "shift_start": "4:00 PM",
+   "station": null
+  },
+  {
+   "name": "Tomas Villanueva",
+   "role": "Line Cook",
+   "shift_end": "11:00 PM",
+   "shift_start": "4:00 PM",
+   "station": null
+  },
+  {
+   "name": "Javier Solis",
+   "role": "Busser",
+   "shift_end": "10:30 PM",
+   "shift_start": "5:00 PM",
+   "station": null
+  },
+  {
+   "name": "Jasmine Thornton",
+   "role": "Bartender",
+   "shift_end": "11:00 PM",
+   "shift_start": "6:00 PM",
+   "station": null
+  }
+ ],
+ "date": "2026-10-26",
+ "ok": true,
+ "posted": true
+}
