@@ -96,9 +96,12 @@ def test_the_gate_runs_every_check_the_release_depends_on():
     assert "postgres" in wf["jobs"]["gate"].get("services", {})
     boot = _steps_text(wf["jobs"]["gate-boot"])
     for needle in ("scripts/boot_check.py", "boot_check.py --production", "--partitioned", "boot_check.py --gunicorn",
-                   "scripts/upgrade_boot_check.py", "upgrade_boot_check.py --database-url"):
+                   "scripts/upgrade_boot_check.py --database-url"):
         assert needle in boot, needle
     assert wf["jobs"]["gate-boot"]["services"]["postgres"]["image"] == "postgres:16"
+    # The upgrade boot builds the previous release from history.
+    checkout = next(s for s in wf["jobs"]["gate-boot"]["steps"] if "actions/checkout" in str(s.get("uses", "")))
+    assert str(checkout["with"]["fetch-depth"]) == "0"
 
 
 def test_no_gate_check_passes_by_finding_nothing_to_run():

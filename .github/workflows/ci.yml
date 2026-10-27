@@ -179,13 +179,13 @@ jobs:
       - name: The app under gunicorn as railway.json starts it (queue worker beside it), then SIGTERM
         run: python scripts/boot_check.py --gunicorn
 
-      - name: The new code boots on the previous release's schema and data
-        # scripts/upgrade_boot_check.py: the release Railway would replace,
-        # booted first, then this tree on its database.
-        run: |
-          python scripts/upgrade_boot_check.py
-          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_upgrade')"
-          python scripts/upgrade_boot_check.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_upgrade
+      - name: The new code boots on the previous release's schema and data (SQLite and Postgres 16)
+        # scripts/upgrade_boot_check.py (RF6): the previous release booted
+        # and seeded, then this tree twice on its database, then the previous
+        # release again (a rollback). SQLite always; with --database-url it
+        # creates and drops its own database on the scratch server too. Needs
+        # the history (fetch-depth: 0 above); without it it exits 2 — a failure.
+        run: python scripts/upgrade_boot_check.py --database-url postgresql://postgres:postgres@localhost:5432/postgres
 
 
   gate-postgres:
