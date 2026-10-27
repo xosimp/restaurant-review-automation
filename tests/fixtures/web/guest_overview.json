@@ -1,0 +1,103 @@
+{
+ "accepted": 99.1,
+ "back_by_segment": {
+  "all": {
+   "campaigns": 3,
+   "pct": 15.2
+  }
+ },
+ "back_rate": {
+  "campaigns": 3,
+  "pct": 15.2
+ },
+ "can_publish": true,
+ "email_subscribers": 0,
+ "insights": [
+  {
+   "basis": "3 campaigns · a visit matched in your POS, not proof the text brought them",
+   "figure": "15.2%",
+   "kind": "back",
+   "text": "of texted guests came back within 14 days",
+   "tone": ""
+  }
+ ],
+ "join_url": "http://localhost/join/<volatile>",
+ "last_30": 16,
+ "last_campaign": {
+  "channel": "text",
+  "date": "2026-10-17",
+  "segment_label": "Everyone consented",
+  "sent": 220
+ },
+ "mailing_address_set": false,
+ "min_days_between": 3,
+ "ok": true,
+ "rate_min": 2,
+ "receipt_hint": "Most POS systems let you add a custom line to the receipt footer — that's where this link belongs. If yours doesn't, the QR code on a table tent or by the register works just as well.",
+ "sending_now": false,
+ "sms": {
+  "link_chars": 41,
+  "link_example": "https://dashboard.cavnar.ai/g/…",
+  "max": 300,
+  "prefix": "Halsted & Rye: ",
+  "sender": "",
+  "stop_chars": 28
+ },
+ "subscribers": 226,
+ "tap_by_segment": {},
+ "tap_rate": null,
+ "texts_failed_this_month": 4,
+ "texts_this_month": 440,
+ "today": 0,
+ "weekly": [
+  {
+   "joined": 1,
+   "week_start": "2026-08-10"
+  },
+  {
+   "joined": 9,
+   "week_start": "2026-08-17"
+  },
+  {
+   "joined": 1,
+   "week_start": "2026-08-24"
+  },
+  {
+   "joined": 7,
+   "week_start": "2026-08-31"
+  },
+  {
+   "joined": 3,
+   "week_start": "2026-09-07"
+  },
+  {
+   "joined": 7,
+   "week_start": "2026-09-14"
+  },
+  {
+   "joined": 6,
+   "week_start": "2026-09-21"
+  },
+  {
+   "joined": 6,
+   "week_start": "2026-09-28"
+  },
+  {
+   "joined": 8,
+   "week_start": "2026-10-05"
+  },
+  {
+   "joined": 2,
+   "week_start": "2026-10-12"
+  },
+  {
+   "joined": 0,
+   "week_start": "2026-10-19"
+  },
+  {
+   "joined": 0,
+   "week_start": "2026-10-26"
+  }
+ ],
+ "window": "8:00 AM and 9:00 PM"
+}

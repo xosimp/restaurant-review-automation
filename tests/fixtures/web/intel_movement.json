@@ -1,0 +1,252 @@
+{
+ "arrived": [],
+ "claim_kinds": {
+  "arrived": "measured",
+  "gone": "measured",
+  "market_history": "measured",
+  "movement": "measured",
+  "own_rating_history": "measured",
+  "review_stars": "measured",
+  "significant": "measured"
+ },
+ "compared_from": "2026-10-19",
+ "compared_to": "2026-10-27",
+ "days": 90,
+ "gone": [],
+ "market_history": [],
+ "movement": [
+  {
+   "confidence_z": 0.0,
+   "first_seen": "2026-10-05 06:00:00",
+   "last_seen": "2026-10-27 06:24:54",
+   "name": "Seventh Inning Social",
+   "place_id": "hr-comp-seventh",
+   "rating_change": 0.0,
+   "rating_now": 4.2,
+   "rating_then": 4.2,
+   "rating_trend_per_month": 0.0,
+   "reviews_added": 25,
+   "reviews_now": 1841,
+   "reviews_removed": 0,
+   "reviews_then": 1816,
+   "significant": false,
+   "snapshots": 4
+  },
+  {
+   "confidence_z": 0.0,
+   "first_seen": "2026-10-05 06:00:00",
+   "last_seen": "2026-10-27 06:24:54",
+   "name": "Northbound Alehouse",
+   "place_id": "hr-comp-northbound",
+   "rating_change": 0.0,
+   "rating_now": 4.4,
+   "rating_then": 4.4,
+   "rating_trend_per_month": 0.0,
+   "reviews_added": 31,
+   "reviews_now": 964,
+   "reviews_removed": 0,
+   "reviews_then": 933,
+   "significant": false,
+   "snapshots": 4
+  },
+  {
+   "confidence_z": 0.0,
+   "first_seen": "2026-10-05 06:00:00",
+   "last_seen": "2026-10-27 06:24:54",
+   "name": "Bleacher & Brine",
+   "place_id": "hr-comp-bleacher",
+   "rating_change": 0.0,
+   "rating_now": 4.0,
+   "rating_then": 4.0,
+   "rating_trend_per_month": 0.0,
+   "reviews_added": 24,
+   "reviews_now": 2311,
+   "reviews_removed": 0,
+   "reviews_then": 2287,
+   "significant": false,
+   "snapshots": 4
+  },
+  {
+   "confidence_z": 0.0,
+   "first_seen": "2026-10-05 06:00:00",
+   "last_seen": "2026-10-27 06:24:54",
+   "name": "Corner Kick Tavern",
+   "place_id": "hr-comp-cornerkick",
+   "rating_change": 0.0,
+   "rating_now": 4.3,
+   "rating_then": 4.3,
+   "rating_trend_per_month": 0.0,
+   "reviews_added": 28,
+   "reviews_now": 615,
+   "reviews_removed": 0,
+   "reviews_then": 587,
+   "significant": false,
+   "snapshots": 4
+  },
+  {
+   "confidence_z": 0.0,
+   "first_seen": "2026-10-05 06:00:00",
+   "last_seen": "2026-10-27 06:24:54",
+   "name": "Ashland Ember Grill",
+   "place_id": "hr-comp-ashland",
+   "rating_change": 0.0,
+   "rating_now": 4.5,
+   "rating_then": 4.5,
+   "rating_trend_per_month": 0.0,
+   "reviews_added": 29,
+   "reviews_now": 1122,
+   "reviews_removed": 0,
+   "reviews_then": 1093,
+   "significant": false,
+   "snapshots": 4
+  },
+  {
+   "confidence_z": 0.0,
+   "first_seen": "2026-10-05 06:00:00",
+   "last_seen": "2026-10-27 06:24:54",
+   "name": "Ivy Hall Taproom",
+   "place_id": "hr-comp-ivyhall",
+   "rating_change": 0.0,
+   "rating_now": 4.1,
+   "rating_then": 4.1,
+   "rating_trend_per_month": 0.0,
+   "reviews_added": 26,
+   "reviews_now": 432,
+   "reviews_removed": 0,
+   "reviews_then": 406,
+   "significant": false,
+   "snapshots": 4
+  }
+ ],
+ "ok": true,
+ "own_rating_history": {
+  "available": true,
+  "change": 0.0,
+  "first": {
+   "rating": 4.5,
+   "review_count": 869,
+   "source": "google",
+   "week": "2026-W41"
+  },
+  "latest": {
+   "rating": 4.5,
+   "review_count": 895,
+   "source": "google",
+   "week": "2026-W44"
+  },
+  "series": [
+   {
+    "rating": 4.5,
+    "review_count": 869,
+    "source": "google",
+    "week": "2026-W41"
+   },
+   {
+    "rating": 4.5,
+    "review_count": 878,
+    "source": "google",
+    "week": "2026-W42"
+   },
+   {
+    "rating": 4.5,
+    "review_count": 888,
+    "source": "google",
+    "week": "2026-W43"
+   },
+   {
+    "rating": 4.5,
+    "review_count": 895,
+    "source": "google",
+    "week": "2026-W44"
+   }
+  ],
+  "weeks": 4
+ },
+ "review_stars": {
+  "available": true,
+  "change": -0.32,
+  "prior": {
+   "avg": 4.44,
+   "n": 43
+  },
+  "recent": {
+   "avg": 4.12,
+   "n": 26
+  },
+  "reviews": 83,
+  "series": [
+   {
+    "avg": 5.0,
+    "n": 4,
+    "rolling": 5.0,
+    "rolling_n": 4,
+    "week": "2026-08-24"
+   },
+   {
+    "avg": 4.1,
+    "n": 10,
+    "rolling": 4.36,
+    "rolling_n": 14,
+    "week": "2026-08-31"
+   },
+   {
+    "avg": 4.5,
+    "n": 16,
+    "rolling": 4.43,
+    "rolling_n": 30,
+    "week": "2026-09-07"
+   },
+   {
+    "avg": 4.44,
+    "n": 9,
+    "rolling": 4.44,
+    "rolling_n": 39,
+    "week": "2026-09-14"
+   },
+   {
+    "avg": 4.25,
+    "n": 8,
+    "rolling": 4.35,
+    "rolling_n": 43,
+    "week": "2026-09-21"
+   },
+   {
+    "avg": 4.5,
+    "n": 10,
+    "rolling": 4.44,
+    "rolling_n": 43,
+    "week": "2026-09-28"
+   },
+   {
+    "avg": 4.22,
+    "n": 9,
+    "rolling": 4.36,
+    "rolling_n": 36,
+    "week": "2026-10-05"
+   },
+   {
+    "avg": 4.2,
+    "n": 10,
+    "rolling": 4.3,
+    "rolling_n": 37,
+    "week": "2026-10-12"
+   },
+   {
+    "avg": 3.67,
+    "n": 6,
+    "rolling": 4.2,
+    "rolling_n": 35,
+    "week": "2026-10-19"
+   },
+   {
+    "avg": 5.0,
+    "n": 1,
+    "rolling": 4.12,
+    "rolling_n": 26,
+    "week": "2026-10-26"
+   }
+  ],
+  "window": 4
+ },
+ "significant": []
+}

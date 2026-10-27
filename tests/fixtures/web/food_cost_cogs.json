@@ -1,0 +1,39 @@
+{
+ "asked_end": "2026-10-26",
+ "asked_start": "2026-09-29",
+ "basis": "Food on hand at one Back Office count, plus food bought, minus the next count. Divided by the POS's food sales for the same days.",
+ "closing": null,
+ "closing_date": null,
+ "cogs": null,
+ "counted": true,
+ "covers_asked": false,
+ "end": "2026-10-26",
+ "food_cost_target_label": "Cavnar AI's starting target",
+ "food_cost_target_source": "default",
+ "food_sales": null,
+ "label": null,
+ "last_delivery": null,
+ "missing": [
+  {
+   "component": "two inventory counts",
+   "why": "no inventory submitted in Back Office yet"
+  }
+ ],
+ "net_sales": null,
+ "ok": false,
+ "opening": null,
+ "opening_date": null,
+ "pct": null,
+ "purchase_events": 0,
+ "purchases": null,
+ "sales_basis": "food_sales",
+ "sales_estimate": null,
+ "source": "back_office",
+ "start": "2026-09-29",
+ "target": 30.0,
+ "theoretical": null,
+ "tone": null,
+ "unmeasured_line": "Comes with your second Back Office count",
+ "variance_pts": null,
+ "window_days": 28
+}

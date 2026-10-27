@@ -1,0 +1,41 @@
+{
+ "contacts": [],
+ "ok": true,
+ "owner": {
+  "name": "Will Demo",
+  "phone": ""
+ },
+ "settings": {
+  "al_1star_push": 1,
+  "al_2star_push": 1,
+  "al_5star_push": 1,
+  "al_health_push": 1,
+  "al_spike_push": 1,
+  "al_unres_push": 1,
+  "alert_1star": 1,
+  "alert_2star": 0,
+  "alert_5star": 0,
+  "alert_ai_visibility_drop": 0,
+  "alert_any_review": 0,
+  "alert_competitor_move": 1,
+  "alert_extra_emails": "",
+  "alert_food_waste": 0,
+  "alert_health": 1,
+  "alert_health_bypass_quiet": 0,
+  "alert_labor_over": 0,
+  "alert_max_per_day": 0,
+  "alert_neg_spike": 1,
+  "alert_negative_trend": 1,
+  "alert_no_response": 0,
+  "alert_quiet_end": null,
+  "alert_quiet_start": null,
+  "alert_rating_floor": 4.0,
+  "alert_rating_threshold": 0,
+  "alert_resp_approved": 0,
+  "digest_day": "monday",
+  "digest_enabled": 1,
+  "push_sound": 1,
+  "urgent_via_email": 1,
+  "urgent_via_sms": 0
+ }
+}

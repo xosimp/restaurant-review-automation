@@ -1,0 +1,92 @@
+{
+ "weeks": [
+  {
+   "basis": "ce97f11f52:rpower",
+   "comparable": true,
+   "complete": true,
+   "end": "2026-09-13",
+   "label": "9/7",
+   "labor": 25757.23,
+   "pct": 25.1,
+   "sales": 102463.73,
+   "start": "2026-09-07"
+  },
+  {
+   "basis": "ce97f11f52:rpower",
+   "comparable": true,
+   "complete": true,
+   "end": "2026-09-20",
+   "label": "9/14",
+   "labor": 25268.26,
+   "pct": 26.9,
+   "sales": 93898.22,
+   "start": "2026-09-14"
+  },
+  {
+   "basis": "ce97f11f52:rpower",
+   "comparable": true,
+   "complete": true,
+   "end": "2026-09-27",
+   "label": "9/21",
+   "labor": 24673.26,
+   "pct": 27.3,
+   "sales": 90501.1,
+   "start": "2026-09-21"
+  },
+  {
+   "basis": "ce97f11f52:rpower",
+   "comparable": true,
+   "complete": true,
+   "end": "2026-10-04",
+   "label": "9/28",
+   "labor": 25620.03,
+   "pct": 27.9,
+   "sales": 91716.85,
+   "start": "2026-09-28"
+  },
+  {
+   "basis": "ce97f11f52:rpower",
+   "comparable": true,
+   "complete": true,
+   "end": "2026-10-11",
+   "label": "10/5",
+   "labor": 23058.95,
+   "pct": 27.8,
+   "sales": 83008.86,
+   "start": "2026-10-05"
+  },
+  {
+   "basis": "ce97f11f52:rpower",
+   "comparable": true,
+   "complete": true,
+   "end": "2026-10-18",
+   "label": "10/12",
+   "labor": 23390.13,
+   "pct": 28.3,
+   "sales": 82584.27,
+   "start": "2026-10-12"
+  },
+  {
+   "basis": "ce97f11f52:rpower",
+   "comparable": true,
+   "complete": true,
+   "end": "2026-10-25",
+   "label": "10/19",
+   "labor": 23582.36,
+   "pct": 28.5,
+   "sales": 82723.77,
+   "start": "2026-10-19"
+  },
+  {
+   "basis": "ce97f11f52:rpower",
+   "comparable": false,
+   "complete": false,
+   "end": "2026-10-26",
+   "label": "10/26",
+   "labor": 2220.41,
+   "pct": 28.0,
+   "sales": 7918.8,
+   "start": "2026-10-26"
+  }
+ ]
+}

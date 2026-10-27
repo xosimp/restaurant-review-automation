@@ -1,0 +1,74 @@
+{
+ "auto_approve": {
+  "daily_cap": 5,
+  "earned": false,
+  "enabled": false,
+  "include_4star": false,
+  "paused": false,
+  "trust": {
+   "3": {
+    "approved": 3,
+    "autoposted_clean": 0,
+    "edit_rate": 0.0,
+    "edited": 0,
+    "needed": 7,
+    "retracted": 0,
+    "skipped": 0,
+    "trusted": false,
+    "weak_credit": 0.0
+   },
+   "4": {
+    "approved": 6,
+    "autoposted_clean": 0,
+    "edit_rate": 0.0,
+    "edited": 0,
+    "needed": 4,
+    "retracted": 0,
+    "skipped": 0,
+    "trusted": false,
+    "weak_credit": 0.0
+   },
+   "5": {
+    "approved": 22,
+    "autoposted_clean": 0,
+    "earned_at": "<volatile>",
+    "edit_rate": 0.0,
+    "edited": 0,
+    "needed": 0,
+    "retracted": 0,
+    "skipped": 0,
+    "trusted": true,
+    "weak_credit": 0.0
+   }
+  }
+ },
+ "data_retention_months": 0,
+ "deletion_requested_at": null,
+ "deletion_requested_on": "",
+ "hours": {
+  "can_edit": true,
+  "close": {
+   "Friday": "2:00am",
+   "Monday": "12:00am",
+   "Saturday": "2:00am",
+   "Sunday": "11:00pm",
+   "Thursday": "12:00am",
+   "Tuesday": "12:00am",
+   "Wednesday": "12:00am"
+  },
+  "closures": [],
+  "open": {
+   "Friday": "11:00am",
+   "Monday": "11:00am",
+   "Saturday": "10:00am",
+   "Sunday": "10:00am",
+   "Thursday": "11:00am",
+   "Tuesday": "11:00am",
+   "Wednesday": "11:00am"
+  }
+ },
+ "login_notify": false,
+ "marketing_emails_opt_out": false,
+ "monthly_review_enabled": true,
+ "ok": true
+}
