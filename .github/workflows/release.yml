@@ -54,7 +54,7 @@ jobs:
       - name: Smoke the live site
         env:
           SMOKE_TOKEN: ${{ secrets.SMOKE_TOKEN }}
-        run: python scripts/smoke.py "$PRODUCTION_URL" --expect-sha "${{ github.event.deployment.sha }}"
+        run: python scripts/smoke.py "$PRODUCTION_URL" --expect-sha "${{ github.event.deployment.sha }}" --expect-env production
 
   lag:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

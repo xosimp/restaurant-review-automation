@@ -56,8 +56,11 @@ def _json(body):
         return None
 
 
-def check_health(fetch, expect_sha=None, retries=HEALTH_RETRIES, pause=HEALTH_RETRY_SECONDS, sleep=time.sleep):
-    """(ok, detail). Retries while the answer is not yet the expected build."""
+def check_health(fetch, expect_sha=None, retries=HEALTH_RETRIES, pause=HEALTH_RETRY_SECONDS, sleep=time.sleep,
+                 expect_env=None):
+    """(ok, detail). Retries while the answer is not yet the expected build.
+    `expect_env`: the deployment must call itself that (production: anything
+    else means its scheduler and every send stand down — config.deploy_env)."""
     last = "no answer"
     for attempt in range(max(1, retries)):
         try:
@@ -71,6 +74,9 @@ def check_health(fetch, expect_sha=None, retries=HEALTH_RETRIES, pause=HEALTH_RE
                 last = "health names no build (a deploy that is not a commit — A05-13)"
             elif expect_sha and not (expect_sha.startswith(build) or build.startswith(expect_sha[:12])):
                 last = f"health says build {build}, expected {expect_sha[:12]}"
+            elif expect_env and str(data.get("env") or "") != expect_env:
+                return False, (f"health says env {data.get('env')!r}, expected {expect_env!r} — the scheduler and "
+                               "every send are off in a non-production environment (CAVNAR_ENV / Railway's name)")
             else:
                 return True, f"health {data.get('status')} build {build}" + (
                     f" problems {data.get('problems')}" if data.get("problems") else "")
@@ -118,10 +124,10 @@ def check_reads(fetch, token, mobile_token=None):
 
 
 def run(fetch, expect_sha=None, token=None, mobile_token=None, out=print, sleep=time.sleep,
-        retries=HEALTH_RETRIES):
+        retries=HEALTH_RETRIES, expect_env=None):
     """Every check; returns the exit status."""
     results = []
-    ok, detail = check_health(fetch, expect_sha, retries=retries, sleep=sleep)
+    ok, detail = check_health(fetch, expect_sha, retries=retries, sleep=sleep, expect_env=expect_env)
     results.append(("health", ok, detail))
     ok, detail, assets = check_login(fetch)
     results.append(("login", ok, detail))
@@ -144,8 +150,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("base_url")
     ap.add_argument("--expect-sha", default=os.getenv("EXPECTED_SHA") or None)
+    ap.add_argument("--expect-env", default=None, help="the deploy_env /health must report (e.g. production)")
     args = ap.parse_args(argv)
-    return run(http_fetch(args.base_url), expect_sha=args.expect_sha,
+    return run(http_fetch(args.base_url), expect_sha=args.expect_sha, expect_env=args.expect_env,
                token=(os.getenv("SMOKE_TOKEN") or "").strip() or None,
                mobile_token=(os.getenv("SMOKE_MOBILE_TOKEN") or "").strip() or None)
 

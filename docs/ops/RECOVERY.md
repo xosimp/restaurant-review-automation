@@ -220,7 +220,8 @@ out their lease and the next scheduler waits 4 minutes for the lease.
 
 **After every deploy** (`.github/workflows/release.yml`, on Railway's
 deployment-success event): `scripts/smoke.py` checks that `/health` names the
-deployed SHA (`build`, never `unknown`), `/login` renders, its static files
+deployed SHA (`build`, never `unknown`) and calls itself `production` (`env` —
+anything else would mean its scheduler and sends stand down), `/login` renders, its static files
 resolve, and — with the `SMOKE_TOKEN` secret, the smoke tenant's session token —
 one web read and one mobile read answer. A failure fails the run (GitHub emails
 Will) and prints the rollback step. Hourly, the same workflow fails when the

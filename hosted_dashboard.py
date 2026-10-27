@@ -182,6 +182,10 @@ def health():
     # smoke test (scripts/smoke.py) fails on.
     import config as _config_build
     payload["build"] = _config_build.build_label()
+    # Which deployment answered (config.deploy_env — release-safety audit
+    # 10/26/26 A05-06): the post-deploy smoke checks production says
+    # "production", or its scheduler and sends would be standing down.
+    payload["env"] = _config_build.deploy_env()
     return jsonify(**payload), status
 
 @app.template_filter("format_num")

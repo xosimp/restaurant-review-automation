@@ -51,6 +51,14 @@ def test_the_wrong_build_fails_with_the_rollback_step():
     assert out[-1] == smoke.ROLLBACK_HINT
 
 
+def test_production_must_say_it_is_production():
+    def h(env):
+        return 200, {}, json.dumps({"status": "ok", "build": SHA[:12], "env": env}).encode()
+    ok, detail = smoke.check_health(_fake({"/health": h("staging")}), SHA, retries=1, expect_env="production")
+    assert not ok and "send" in detail
+    assert smoke.check_health(_fake({"/health": h("production")}), SHA, retries=1, expect_env="production")[0]
+
+
 def test_an_unknown_build_fails():
     ok, detail = smoke.check_health(_fake({"/health": _health("unknown")}), None, retries=1)
     assert not ok and "no build" in detail
@@ -160,6 +168,7 @@ def test_release_workflow_smokes_each_production_deploy_and_checks_lag_hourly():
     assert smoke_job["timeout-minutes"] <= 15 and lag_job["timeout-minutes"] <= 15
     runs = " ".join(s.get("run", "") for s in smoke_job["steps"])
     assert "scripts/smoke.py" in runs and "--expect-sha" in runs and "github.event.deployment.sha" in runs
+    assert "--expect-env production" in runs
     assert any(s.get("env", {}).get("SMOKE_TOKEN") for s in smoke_job["steps"])
     assert "scripts/release_lag.py" in " ".join(s.get("run", "") for s in lag_job["steps"])
     assert wf["permissions"] == {"contents": "read", "deployments": "read"}
