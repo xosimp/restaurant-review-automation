@@ -212,6 +212,8 @@ def off_SCHEDULER_PROCESS(monkeypatch, db_path):
 def off_CAVNAR_CONN_POOL(monkeypatch, db_path):
     """0: every connection is opened and closed for real — no pooled handle
     is reused, and a closed one is closed."""
+    if os.getenv("CAVNAR_TEST_PG_URL"):
+        pytest.skip("reads the SQLite file itself: CAVNAR_CONN_POOL is the SQLite connection pool")
     monkeypatch.setenv("CAVNAR_CONN_POOL", "0")
     path = os.path.join(os.path.dirname(db_path), "pool_off.db")
     a = models.get_conn(path)
