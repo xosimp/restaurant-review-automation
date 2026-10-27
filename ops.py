@@ -3424,6 +3424,13 @@ def send_to_pager(key, subject, lines, action="trigger", severity="critical") ->
 # job_cursors (PAGER_OPEN_CURSOR), so a deploy does not forget them.
 PAGER_CONDITION_PREFIX = "sla:"
 PAGER_OPEN_CURSOR = "pager_open_conditions"
+# At most this many condition events go out with one page (the critical
+# ones first; the page's lines carry every problem), stopping at the first
+# the service refuses — a hung pager must not hold the supervisor for a
+# minute per condition. An open condition the service would not resolve for
+# this many days is forgotten (logged) rather than retried forever.
+PAGER_MAX_EVENTS = 8
+PAGER_OPEN_MAX_DAYS = 7
 
 
 def _pager_open_read() -> dict:
@@ -3470,9 +3477,15 @@ def pager_resolve_cleared(active) -> list:
     if not pager_configured():
         return []
     done = []
-    for key in sorted(set(_pager_open_read()) - set(active or ())):
+    opened = _pager_open_read()
+    stale = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - PAGER_OPEN_MAX_DAYS * 86400))
+    for key in sorted(set(opened) - set(active or ())):
         if send_to_pager(key, "Cleared", [], action="resolve"):
             done.append(key)
+        elif str(opened.get(key) or "") < stale:
+            log.error(f"pager condition {key} not resolved for {PAGER_OPEN_MAX_DAYS} days — forgotten; resolve it "
+                      "in the paging service")
+            _pager_open_note(key, opened=False)
     return done
 
 
@@ -3618,9 +3631,11 @@ def alert_will(subject, lines, key=None):
                 events = getattr(_page_local, "pager_events", None) if key is None else None
                 if events:
                     # One event per condition (its own incident, resolved
-                    # when it clears): taken when every one was accepted.
-                    channels["pager"] = all([bool(send_to_pager(k, summary, lines, severity=sev))
-                                             for k, summary, sev in events])
+                    # when it clears), the critical first: taken when every
+                    # one was accepted; the first refused stops the rest.
+                    ordered = sorted(events, key=lambda e: (e[2] != "critical", e[0]))[:PAGER_MAX_EVENTS]
+                    channels["pager"] = all(send_to_pager(k, summary, lines, severity=sev)
+                                            for k, summary, sev in ordered)
                 else:
                     channels["pager"] = bool(send_to_pager(key or getattr(_page_local, "key", None) or subject,
                                                            subject, lines))
