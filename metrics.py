@@ -15,6 +15,7 @@ that never happened.
 Windows are inclusive date strings (YYYY-MM-DD). Metric keys may carry a
 parameter after a colon: "weekday_sales:Tuesday", "complaints:service".
 """
+import logging
 from datetime import date, timedelta
 
 import models as _models_mod
@@ -72,7 +73,7 @@ def salary_share_for(rid, view=None, db_path=None) -> float:
         from models import get_restaurant, salaried_day_share
         return float(salaried_day_share(get_restaurant(rid, db_path) if db_path else get_restaurant(rid)) or 0)
     except Exception as e:
-        print(f"[metrics] salaried day share unreadable for {rid}: {e!r}")
+        logging.getLogger(__name__).warning(f"[metrics] salaried day share unreadable for {rid}: {e!r}")
         return 0.0
 
 

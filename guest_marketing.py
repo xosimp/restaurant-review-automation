@@ -29,6 +29,7 @@ A join is not a visit and neither is a YES: neither touches last_visit or
 visit_count. Every consent change is written to guest_consent_events, an
 append-only ledger that outlives the contact row.
 """
+import logging
 import hashlib
 import json
 import os
@@ -363,12 +364,12 @@ def init_guest_marketing(db_path=DB_PATH):
             try:
                 conn.execute(col_sql)
             except Exception as e:
-                print(f"[guest_marketing] boot data rewrite skipped: {e}")
+                logging.getLogger(__name__).warning(f"[guest_marketing] boot data rewrite skipped: {e}")
                 try:
                     import ops
                     ops.capture(e, job="guest_marketing_boot_rewrite", context=col_sql[:120])
                 except Exception as cap_e:
-                    print(f"[guest_marketing] could not record it: {cap_e}")
+                    logging.getLogger(__name__).warning(f"[guest_marketing] could not record it: {cap_e}")
             continue
         # Schema: "duplicate column" / "already exists" mean applied; anything
         # else fails the boot (release-safety audit 10/26/26 A05-07 — it was

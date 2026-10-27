@@ -52,7 +52,7 @@ def require_volume(environ=None, db_path=None):
         # the markers and backups have object storage, and no blob is kept
         # on local disk. Otherwise refused, as before.
         _volume_optional_ready(env)
-        print("VOLUME_OPTIONAL: running on Railway with no volume — database on Postgres, markers and "
+        logging.getLogger(__name__).warning("VOLUME_OPTIONAL: running on Railway with no volume — database on Postgres, markers and "
               "backups in object storage.")
         return None
     if not mount:

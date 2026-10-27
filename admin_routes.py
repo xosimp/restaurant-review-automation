@@ -4596,10 +4596,12 @@ def admin_api_rollout_set(current_user):
                                          deny=data.get("deny") or (), note=data.get("note"),
                                          by=current_user.get("username"))
     except rollout.RolloutError as e:
+        # RolloutError carries rollout's own sentence, never a provider's URL.
+        refusal = str(e)
         admin_events.record_admin_action(current_user, "rollout.set", target=f"rollout:{feature[:64]}",
                                          after={"request": {k: data.get(k) for k in ("percent", "allow", "deny")},
-                                                "refused": str(e)}, result="refused")
-        return jsonify(ok=False, error=str(e)), 400
+                                                "refused": refusal}, result="refused")
+        return jsonify(ok=False, error=refusal), 400
     admin_events.record_admin_action(current_user, "rollout.set", target=f"rollout:{feature}", before=before,
                                      after=after, summary=f"{feature} rollout set to {after['percent']}% by "
                                                           f"{current_user.get('username')}")

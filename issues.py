@@ -17,6 +17,7 @@ at a location that has a manager routed. Loss-prevention signals are NEVER
 auto-routed to a manager — the approving manager may be the subject of one.
 Anything else is created by the owner, from the app or from Ask.
 """
+import logging
 import hashlib
 import re
 import config
@@ -416,7 +417,7 @@ def _hold_as_sent(issue_id, restaurant_id, which, db_path=DB_PATH):
         finally:
             conn.close()
     except Exception as e:
-        print(f"[issues] could not record an unknown text outcome on issue {issue_id}: {e!r}")
+        logging.getLogger(__name__).warning(f"[issues] could not record an unknown text outcome on issue {issue_id}: {e!r}")
 
 
 def texts_on(restaurant_id) -> bool:

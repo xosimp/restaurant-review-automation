@@ -322,6 +322,9 @@ def test_boot_blanks_a_legacy_row_nobody_ever_measured(db_path):
     real = _exec(db_path, "INSERT INTO marketing_content_log (restaurant_id, topic, post_id, reach) VALUES (?,?,?,?)",
                  (rid, "Measured", "ig_real", 50))
     assert _row(db_path, "SELECT reach FROM marketing_content_log WHERE id=?", (zero,))["reach"] == 0
+    # The rewrite runs once per database (audit #25 A05-08): this database
+    # stands in for one that has not had it yet.
+    _exec(db_path, "DELETE FROM data_migrations WHERE name=?", ("marketing_unmeasured_null_mb7",))
     models.init_db(db_path=db_path)
     assert _row(db_path, "SELECT reach, likes FROM marketing_content_log WHERE id=?", (zero,)) == \
         {"reach": None, "likes": None}

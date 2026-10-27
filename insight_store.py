@@ -23,6 +23,7 @@ insight (Reviews, Food Cost, Marketing):
 
 Pure SQL plus rec_ledger; no model, no network.
 """
+import logging
 import hashlib
 import json
 import re
@@ -104,7 +105,7 @@ def salary_kind(kind) -> str:
         from models import viewer_sees_salaries
         return kind if viewer_sees_salaries() else kind + HOURLY_SUFFIX
     except Exception as e:
-        print(f"[insight_store] salary view unreadable, kept hourly: {e!r}")
+        logging.getLogger(__name__).warning(f"[insight_store] salary view unreadable, kept hourly: {e!r}")
         return kind + HOURLY_SUFFIX
 
 

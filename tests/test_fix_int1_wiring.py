@@ -137,7 +137,7 @@ def test_the_worker_checks_the_volume_and_configures_logging_before_anything():
     import inspect
     import worker
     src = inspect.getsource(worker.main)
-    assert src.index("logging_setup.configure()") < src.index("models.require_volume()") < src.index("init_db()")
+    assert src.index("logging_setup.configure()") < src.index("models.require_volume()") < src.index("models.boot_schema()")
     assert "basicConfig" not in inspect.getsource(worker)
 
 

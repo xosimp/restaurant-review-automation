@@ -44,6 +44,7 @@ actually there:
 Read-only against the database except `weekly_snapshot`, `diagnose` and the
 forecast functions, which say so in their names.
 """
+import logging
 import json
 from datetime import date, datetime, timedelta
 
@@ -1117,7 +1118,7 @@ def _dsr_measured_hourly(restaurant_id, start, end, db_path=DB_PATH) -> dict:
                 "AND value IS NOT NULL AND business_date BETWEEN ? AND ?",
                 (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()}
         except Exception as e:
-            print(f"[food_cost_intelligence] nightly labor unreadable for {restaurant_id}: {e!r}")
+            logging.getLogger(__name__).warning(f"[food_cost_intelligence] nightly labor unreadable for {restaurant_id}: {e!r}")
             labor = {}
         archive = {}
         if labor:

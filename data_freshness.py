@@ -28,6 +28,7 @@ Simple EJ's runs on — was read by none of them (CA3 F1/F2/F6/F9/F15, CA6).
 
 Never raises: an unreadable source is `unknown` with pct 0.
 """
+import logging
 from datetime import date, datetime, timedelta, timezone
 
 import models as _models_mod
@@ -578,7 +579,7 @@ def sales_consistency(restaurant_id, days=SALES_CONSISTENCY_DAYS, db_path=None, 
             today = restaurant_now_by_id(restaurant_id).date()
         since = (today - timedelta(days=int(days))).isoformat()
     except Exception as e:
-        print(f"[data_freshness] sales consistency window unreadable for {restaurant_id}: {e!r}")
+        logging.getLogger(__name__).warning(f"[data_freshness] sales consistency window unreadable for {restaurant_id}: {e!r}")
         return out
     try:
         c = get_conn(db_path) if own else conn
@@ -771,7 +772,7 @@ def same_basis_recheck(r):
             return None
         return "rerun" if _dsr_store.pos_sync_same_basis(name) else "reported_only"
     except Exception as e:
-        print(f"[data_freshness] sales recheck basis unreadable: {e!r}")
+        logging.getLogger(__name__).warning(f"[data_freshness] sales recheck basis unreadable: {e!r}")
         return None
 
 

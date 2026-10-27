@@ -24,6 +24,7 @@ Cavnar, all types") — "restaurants like yours" only for a like-for-like
 group of this restaurant's own type — and the Response Validation Layer's
 B1 and P2 rules hold every answer to that.
 """
+import logging
 import hashlib
 import json
 import re
@@ -386,7 +387,7 @@ def _recent_days_lines(restaurant_id):
         finally:
             conn.close()
     except Exception as e:
-        print(f"[ask] recent days unreadable for {restaurant_id}: {e!r}")
+        logging.getLogger(__name__).warning(f"[ask] recent days unreadable for {restaurant_id}: {e!r}")
         return []
     if not rows:
         return []
@@ -396,7 +397,7 @@ def _recent_days_lines(restaurant_id):
         fig = _metrics_rd.labor_figures(restaurant_id, str(rows[-1]["date"])[:10], str(rows[0]["date"])[:10],
                                         final_only=False)
     except Exception as e:
-        print(f"[ask] recent days labor unreadable for {restaurant_id}: {e!r}")
+        logging.getLogger(__name__).warning(f"[ask] recent days labor unreadable for {restaurant_id}: {e!r}")
         fig = {"by_day": {}, "includes_salaries": False}
     words = "labor with salaries" if fig.get("includes_salaries") else "labor"
     # These come from a different table than the shift analysis above and can

@@ -40,6 +40,7 @@ cursor — models.ensure_tracker_change_stamps keeps the stamp — so a night
 re-reads only the trackers that changed (and the others on the same number,
 for the one-result-per-window rule), never every tracker ever written.
 """
+import logging
 import json
 import re
 import sqlite3
@@ -286,7 +287,7 @@ def _has_column(conn, table, column) -> bool:
     try:
         return column in {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     except sqlite3.Error as e:
-        print(f"[intelligence.feedback] columns of {table} unreadable: {e}")
+        logging.getLogger(__name__).warning(f"[intelligence.feedback] columns of {table} unreadable: {e}")
         return False
 
 

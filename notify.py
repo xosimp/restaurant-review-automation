@@ -3,6 +3,7 @@ notify.py — alert system via Twilio (SMS) and Resend (email).
 Both channels use the same 6 alert toggles; delivery is controlled
 by urgent_via_sms and urgent_via_email per restaurant.
 """
+import logging
 import os
 import re
 import sqlite3
@@ -677,7 +678,7 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             # A read timeout (a connect timeout is a ConnectionError, above)
             # or an answer cut off mid-read: Twilio had the request, and
             # may have sent it (A06-11). Never retried here.
-            print(f"[notify] SMS send outcome unknown: {e}")
+            logging.getLogger(__name__).warning(f"[notify] SMS send outcome unknown: {e}")
             last = SmsResult(False, status=SMS_UNKNOWN_STATUS, error=f"{SMS_UNKNOWN_NOTE} ({str(e)[:200]})",
                              uncertain=True)
             break

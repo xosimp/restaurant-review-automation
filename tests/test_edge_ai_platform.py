@@ -294,12 +294,16 @@ def test_a_refusal_is_still_recorded_in_the_ledger(db_path):
 
 # ── AI-33: Stripe calls are bounded ─────────────────────────────────────────
 
-def test_the_stripe_http_client_is_configured_with_a_short_timeout():
-    found = []
-    for name in os.listdir(ROOT):
-        if not name.endswith(".py"):
-            continue
-        src = open(os.path.join(ROOT, name), encoding="utf-8").read()
-        for m in re.finditer(r"stripe\.default_http_client\s*=\s*[^\n]*timeout\s*=\s*([\d.]+)", src):
-            found.append(float(m.group(1)))
-    assert found and max(found) <= 15
+def test_the_stripe_http_client_is_configured_with_a_short_timeout(monkeypatch):
+    """Behaviour, not source text (audit #25): config.stripe_api installs the
+    real SDK's RequestsClient with a timeout of 15 s or less."""
+    import config
+    import stripe
+    monkeypatch.setattr(stripe, "_cavnar_bounded", False, raising=False)
+    monkeypatch.setattr(stripe, "default_http_client", None, raising=False)
+    config.stripe_api("sk_test_x")
+    client = stripe.default_http_client
+    assert client is not None
+    timeout = getattr(client, "_timeout", None)
+    assert timeout is not None and float(timeout) <= 15
+    assert config.STRIPE_TIMEOUT_SECONDS <= 15
