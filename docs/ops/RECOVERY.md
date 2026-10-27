@@ -203,7 +203,7 @@ post to them directly.
 **The flow.** Work is pushed to `main`. The Railway `production` service
 deploys the `production` branch (once Will points it there — until then it
 deploys `main`): a release is a fast-forward of `production` to a `main` SHA
-whose CI gate passed (`gate` and `gate-postgres`), through the promote
+whose CI gate passed (`gate`, `gate-postgres`, `gate-boot`), through the promote
 workflow, 9am–3pm CT, after a nightly that ran on that very SHA is green
 (scripts/promote.py dispatches one when there is none) and, for a promotion
 carrying an `ios/` change, a green iOS run on it (`--emergency` skips the
@@ -213,13 +213,14 @@ the season-refresh bot's commits wait for the next promotion; until then
 they deploy at once, which is why the bot runs at 14:00 UTC (9am CT).
 
 **The switch, in order (Will; record the date each was verified here).**
-1. Push the merged round to `main` and wait for green `gate` and
-   `gate-postgres`; run nightly.yml and ios.yml once by hand on it.
+1. Push the merged round to `main` and wait for green `gate`,
+   `gate-postgres` and `gate-boot`; run nightly.yml and ios.yml once by
+   hand on it.
 2. Create `production` at the SHA production runs now
    (`git push origin <deployed sha>:refs/heads/production`).
 3. Point Railway's production service at the `production` branch.
-4. Protect `main` and `production`: require the `gate` and `gate-postgres`
-   checks; on `production` let only GitHub Actions push.
+4. Protect `main` and `production`: require the `gate`, `gate-postgres` and
+   `gate-boot` checks; on `production` let only GitHub Actions push.
 5. Set the repository variable `PROMOTION_LIVE=true`: ci.yml's interim
    full-suite jobs on every push to main stop, and the nightly's
    `containment` check turns from a warning into an error.

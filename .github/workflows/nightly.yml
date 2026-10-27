@@ -342,7 +342,7 @@ jobs:
           protected=$(gh api "repos/$GITHUB_REPOSITORY/branches/production" --jq .protected 2>/dev/null)
           if [ "$protected" = "true" ]; then echo "production is protected"; exit 0; fi
           state="missing"; [ "$protected" = "false" ] && state="not protected"
-          msg="the production branch is $state: require gate and gate-postgres on it and let only Actions push (docs/ops/RECOVERY.md)"
+          msg="the production branch is $state: require gate, gate-postgres and gate-boot on it and let only Actions push (docs/ops/RECOVERY.md)"
           if [ "$LIVE" = "true" ]; then echo "::error::$msg"; exit 1; fi
           echo "::warning::$msg (PROMOTION_LIVE is not set: main still deploys)"
 

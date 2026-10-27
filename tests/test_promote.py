@@ -1,6 +1,6 @@
 """scripts/promote.py's decision (audit #25 deployment strategy; A05-01, R2,
 R4; blind re-audit 10/27/26 B1 F3/F16, B2, B4, B5, B6): production moves
-only to a main SHA with a green gate and gate-postgres, inside the 9am-3pm
+only to a main SHA with a green gate, gate-postgres and gate-boot, inside the 9am-3pm
 Chicago weekday window, after a green (or fully, freshly quarantined)
 nightly THAT RAN ON THAT SHA — dispatched when it has not — and, when the
 promotion carries an ios/ change, a green iOS run on it; --emergency skips
@@ -25,7 +25,8 @@ TUE_11AM = datetime(2026, 10, 27, 11, 0, tzinfo=CHI)
 SHA = "a" * 40
 OLDER = "b" * 40
 GATE_OK = [{"name": "gate", "status": "completed", "conclusion": "success"},
-           {"name": "gate-postgres", "status": "completed", "conclusion": "success"}]
+           {"name": "gate-postgres", "status": "completed", "conclusion": "success"},
+           {"name": "gate-boot", "status": "completed", "conclusion": "success"}]
 GREEN = {"id": 9, "conclusion": "success", "summary": None, "tested_sha": SHA}
 
 
@@ -48,12 +49,13 @@ def test_a_sha_off_main_is_refused_even_in_an_emergency():
 
 @pytest.mark.parametrize("runs", [
     [],
-    [{"name": "gate", "status": "completed", "conclusion": "failure"}, GATE_OK[1]],
-    [{"name": "gate", "status": "in_progress", "conclusion": None}, GATE_OK[1]],
+    [{"name": "gate", "status": "completed", "conclusion": "failure"}, GATE_OK[1], GATE_OK[2]],
+    [{"name": "gate", "status": "in_progress", "conclusion": None}, GATE_OK[1], GATE_OK[2]],
     [{"name": "test", "status": "completed", "conclusion": "success"}],
-    # The SQLite gate alone: the slice never ran on Postgres.
+    # The SQLite gate alone: the slice never ran on Postgres, the app never booted.
     [GATE_OK[0]],
-    [GATE_OK[0], {"name": "gate-postgres", "status": "completed", "conclusion": "failure"}],
+    [GATE_OK[0], {"name": "gate-postgres", "status": "completed", "conclusion": "failure"}, GATE_OK[2]],
+    [GATE_OK[0], GATE_OK[1]],
 ])
 def test_no_green_gate_is_refused_even_in_an_emergency(runs):
     assert not _decide(check_runs=runs)["ok"]

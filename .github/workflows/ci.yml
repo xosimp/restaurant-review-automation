@@ -1,16 +1,17 @@
 name: CI
 
 # The deploy gate (audit #25: A01-02, A01-05, A04-01, A05-01, A05-17; R2, R5,
-# R17; blind re-audit 10/27/26 B1 F2-F7, B3, B4, B5, B6, B8). Two jobs in
+# R17; blind re-audit 10/27/26 B1 F2-F7, B3, B4, B5, B6, B8). Three jobs in
 # parallel, each in at most about ten minutes: `gate` (the lints, the
-# contract slice on SQLite, every template script parses, the app booted on
-# SQLite, on a partitioned Postgres, with production's markers and under
-# gunicorn, the upgrade boot, every statement PREPAREd) and `gate-postgres`
-# (the same contract slice on Postgres 16, production's database).
-# scripts/promote.py refuses a SHA without both green.
+# contract slice on SQLite, every template script parses, every statement
+# PREPAREd), `gate-postgres` (the same contract slice on Postgres 16,
+# production's database) and `gate-boot` (the app booted on SQLite, with
+# production's markers, on a partitioned Postgres, under gunicorn, and on
+# the previous release's data). scripts/promote.py refuses a SHA without all
+# three green.
 #
 # ONCE RAILWAY DEPLOYS THE `production` BRANCH (scripts/promote.py moves it;
-# docs/ops/RECOVERY.md, "Promotion"), both are the required status checks on
+# docs/ops/RECOVERY.md, "Deploys"), all three are the required status checks on
 # `main` and `production`, and a push to main deploys nothing. UNTIL THEN a
 # push to main still deploys at once, so while the repository variable
 # PROMOTION_LIVE is not "true" every push to main also runs the full SQLite
@@ -123,6 +124,46 @@ jobs:
       - name: Every inline script in the templates parses
         run: pytest tests/test_inline_scripts_parse.py -q -rs -p no:cacheprovider --timeout=300
 
+      - name: Every static statement and every statement the slice ran PREPAREs on Postgres
+        # Runs even when an unrelated test above failed (A01-05: with
+        # `needs: test` this check never ran once while production was on
+        # Postgres).
+        if: always() && steps.deps.outcome == 'success'
+        run: |
+          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
+          mkdir -p "${{ runner.temp }}/recorded-sql"
+          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit --recorded "${{ runner.temp }}/recorded-sql"
+
+  gate-boot:
+    # The app booted the way a deploy boots it (blind re-audit 10/27/26 B1
+    # F7, B5 "the gate never boots in production mode"), beside the slices:
+    # scripts/boot_check.py's children run with an allowlisted environment
+    # (no key, no .env) and no connection off the machine.
+    name: gate-boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # upgrade_boot_check.py builds the previous release from history.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+
       - name: The app boots twice on a fresh SQLite volume
         run: python scripts/boot_check.py
 
@@ -146,15 +187,6 @@ jobs:
           python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_upgrade')"
           python scripts/upgrade_boot_check.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_upgrade
 
-      - name: Every static statement and every statement the slice ran PREPAREs on Postgres
-        # Runs even when an unrelated test above failed (A01-05: with
-        # `needs: test` this check never ran once while production was on
-        # Postgres).
-        if: always() && steps.deps.outcome == 'success'
-        run: |
-          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
-          mkdir -p "${{ runner.temp }}/recorded-sql"
-          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit --recorded "${{ runner.temp }}/recorded-sql"
 
   gate-postgres:
     # The contract slice on Postgres 16, production's database (blind

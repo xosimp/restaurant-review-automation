@@ -5,7 +5,8 @@ name: Promote to production
 # (audit #25 deployment strategy; A05-01, R2, R4; blind re-audit 10/27/26).
 # Until that switch is made, a push to main still deploys and this only moves
 # the branch. scripts/promote.py fast-forwards `production` to a main SHA only
-# when it is on main, has green `gate` and `gate-postgres` checks, and —
+# when it is on main, has green `gate`, `gate-postgres` and `gate-boot`
+# checks, and —
 # unless `emergency` — it is 9:00-15:00 Chicago on a weekday, a nightly ran
 # on THAT SHA and is green (or its failures are all freshly quarantined at
 # that SHA), and, when the promotion carries an ios/ change, the iOS tests

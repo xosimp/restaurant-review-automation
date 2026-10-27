@@ -2,11 +2,12 @@
 A01-02, A01-05, A01-20, A05-01, A05-17; R2, R4, R17; blind re-audit 10/27/26
 B1 F2-F17, B5, B6, B8).
 
-- ci.yml has a `gate` job and a `gate-postgres` job (the contract slice on
-  Postgres 16), each finishing in at most 15 minutes, at UTC+14, cancelling
-  superseded runs, on main, `production`, pull requests and by hand; the
-  gate boots the app on SQLite, with production's markers, on a partitioned
-  Postgres, under gunicorn and on the previous release's data.
+- ci.yml has `gate`, `gate-postgres` (the contract slice on Postgres 16) and
+  `gate-boot` jobs in parallel, each finishing in at most 15 minutes, at
+  UTC+14, cancelling superseded runs, on main, `production`, pull requests
+  and by hand; `gate-boot` boots the app on SQLite, with production's
+  markers, on a partitioned Postgres, under gunicorn and on the previous
+  release's data.
 - No full-suite job blocks a push: the full suites are nightly.yml's — and,
   UNTIL Railway deploys `production` (repository variable PROMOTION_LIVE not
   "true"), also run on every push to main, never needed by the gate.
@@ -73,7 +74,7 @@ def _full_suite(job):
 
 def test_the_gate_jobs_exist_and_are_bounded():
     wf, _ = _load("ci.yml")
-    for name in ("gate", "gate-postgres"):
+    for name in ("gate", "gate-postgres", "gate-boot"):
         job = wf["jobs"][name]
         assert job.get("name", name) == name
         assert 0 < int(job["timeout-minutes"]) <= 15, name
@@ -90,18 +91,21 @@ def test_the_gate_runs_every_check_the_release_depends_on():
     text = _steps_text(wf["jobs"]["gate"])
     for needle in ("pip check", "py_compile", "check_colors.py", "check_timeouts.py", "check_silent_handlers.py",
                    "check_tenant_scope.py", "check_email_tokens.py", "check_labor_math.py", "pg_sql_audit.py --strict",
-                   '-m "contract and not quarantine"', "test_inline_scripts_parse.py", "scripts/boot_check.py",
-                   "boot_check.py --production", "--partitioned", "boot_check.py --gunicorn",
-                   "scripts/upgrade_boot_check.py", "upgrade_boot_check.py --database-url", "--recorded"):
+                   '-m "contract and not quarantine"', "test_inline_scripts_parse.py", "--recorded"):
         assert needle in text, needle
     assert "postgres" in wf["jobs"]["gate"].get("services", {})
+    boot = _steps_text(wf["jobs"]["gate-boot"])
+    for needle in ("scripts/boot_check.py", "boot_check.py --production", "--partitioned", "boot_check.py --gunicorn",
+                   "scripts/upgrade_boot_check.py", "upgrade_boot_check.py --database-url"):
+        assert needle in boot, needle
+    assert wf["jobs"]["gate-boot"]["services"]["postgres"]["image"] == "postgres:16"
 
 
 def test_no_gate_check_passes_by_finding_nothing_to_run():
     """The inline-script step used to pass silently when its test file was
     missing (`if [ -f … ]`, B1 F17)."""
     wf, _ = _load("ci.yml")
-    for name in ("gate", "gate-postgres"):
+    for name in ("gate", "gate-postgres", "gate-boot"):
         for step in wf["jobs"][name]["steps"]:
             assert "if [ -f" not in str(step.get("run", "")), (name, step.get("name"))
 

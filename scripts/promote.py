@@ -10,8 +10,8 @@ main still deploys at once and this script only moves the branch. Promotion
 fast-forwards `production` to a SHA, and refuses unless:
 
   1. the SHA is on main (an ancestor of origin/main);
-  2. the SHA has successful `gate` AND `gate-postgres` check runs
-     (.github/workflows/ci.yml);
+  2. the SHA has successful `gate`, `gate-postgres` and `gate-boot` check
+     runs (.github/workflows/ci.yml);
   and, unless --emergency:
   3. it is 9:00-15:00 America/Chicago, Monday to Friday (no deploys during
      dinner service — 58% of deploys landed 5pm-2am CT before this);
@@ -56,7 +56,7 @@ WINDOW = (9, 15)                       # 9:00 <= local time < 15:00
 NIGHTLY_WORKFLOW = "nightly.yml"
 IOS_WORKFLOW = "ios.yml"
 SUMMARY_ARTIFACT = "nightly-summary"
-REQUIRED_CHECKS = ("gate", "gate-postgres")
+REQUIRED_CHECKS = ("gate", "gate-postgres", "gate-boot")
 # A quarantine is a deadline: a failure whose quarantine mark is older than
 # this is not excused (TESTING.md, "Markers").
 QUARANTINE_MAX_DAYS = 14
@@ -135,7 +135,7 @@ def decide(*, on_main, check_runs, now_local, emergency, nightly, quarantined, s
     if missing:
         reasons.append(f"the SHA has no successful {' / '.join('`%s`' % m for m in missing)} check run")
     else:
-        notes.append("gate and gate-postgres passed")
+        notes.append("gate, gate-postgres and gate-boot passed")
     if emergency:
         notes.append("emergency: the window, the nightly and the iOS run are skipped (never the gate)")
         return {"ok": not reasons, "reasons": reasons, "notes": notes}
@@ -438,8 +438,8 @@ def main(argv=None, run=_run, now=None):
         warnings.append("the `production` branch does not exist yet: this promotion creates it. Until Railway's "
                         "production service deploys it, a push to main still deploys (docs/ops/RECOVERY.md)")
     elif not prod["protected"]:
-        warnings.append("the `production` branch is not protected: require `gate` and `gate-postgres` and let "
-                        "only GitHub Actions push it (docs/ops/RECOVERY.md)")
+        warnings.append("the `production` branch is not protected: require `gate`, `gate-postgres` and "
+                        "`gate-boot` and let only GitHub Actions push it (docs/ops/RECOVERY.md)")
     if facts["ios"] and facts["ios"].get("unknown_base"):
         warnings.append("no `production` to compare with: the iOS run is required for this promotion")
 
