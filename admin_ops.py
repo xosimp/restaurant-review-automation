@@ -1371,7 +1371,10 @@ def _billing_for(r, d, mod_count):
     # DocuSign completion in admin_events), days in trial since signup.
     signed_raw = r.get("contract_signed_at") or _newest(*[v for k, v in ev.items() if k.startswith("contract.signed")])
     out["signed_at"] = _iso_z(signed_raw, "UTC") if signed_raw else None
-    out["days_since_signed"] = int(_age_days(signed_raw, "UTC")) if signed_raw else None
+    # An unreadable stamp ('10/1/26') is no age, not a crash of the whole
+    # fleet build (admin audit 10/27/26 F5).
+    signed_days = _age_days(signed_raw, "UTC") if signed_raw else None
+    out["days_since_signed"] = int(signed_days) if signed_days is not None else None
     created = _age_days(r.get("created_at"))
     out["days_in_trial"] = int(created) if (bs in ("trial", "pending", "") and created is not None) else None
     return out
@@ -2664,13 +2667,54 @@ def _annotate(issue, rec):
     return issue
 
 
+def _safe_row(r):
+    """The few identity fields of a restaurant row, type-checked — what a
+    stand-in record is built from when the row itself cannot be read."""
+    out = {"id": r.get("id")}
+    for k in ("name", "location_group", "location_name", "billing_status", "owner_email", "created_at"):
+        v = r.get(k)
+        out[k] = v if isinstance(v, str) else None
+    for k in ("is_demo", "exclude_from_learning"):
+        v = r.get(k)
+        out[k] = v if isinstance(v, int) else 0
+    return out
+
+
+def _location_record_guarded(r, d):
+    """location_record, isolated per restaurant (admin audit 10/27/26 F5):
+    one malformed row — a stamp no parser reads, a column of the wrong type
+    — took down every fleet page and every client page, because the whole
+    build raised. The failure is recorded (the payload's `errors`, so the
+    page says the build is incomplete, and no resolution is retired on it)
+    and the restaurant reads as a stand-in record with one critical issue
+    naming the failure, built from its identity fields alone."""
+    try:
+        return location_record(r, d)
+    except Exception as e:
+        rid = r.get("id")
+        _note_failure(f"location_record:{rid}", e)
+        try:
+            rec = location_record(_safe_row(r), d)
+        except Exception as e2:
+            _note_failure(f"location_record:{rid}:stand-in", e2)
+            return None
+        issue = _make_issue(f"{rid}:record_unreadable", rid, "This restaurant's record couldn't be read", "critical",
+                            detail=(f"{type(e).__name__}: {str(e)[:160]}. Every figure on this account is a "
+                                    "stand-in until the row is fixed."),
+                            resolvable=False, action="Open client", action_kind="link", action_href=f"#client/{rid}",
+                            segment=rec.get("segment") or "customer")
+        rec.update(issues=[issue], issues_resolved=[], health="critical", record_unreadable=True,
+                   record_error=f"{type(e).__name__}: {str(e)[:200]}")
+        return rec
+
+
 def _records(d=None):
     """(recs, d), built fresh — every payload reads it through
     _records_cached. Issues are annotated here, once, so no payload looks a
     record up per issue (the quadratic scan, SCALE-17)."""
     d = d or _load_everything()
     d["raw_issue_keys"] = set()
-    recs = [location_record(r, d) for r in d["rests"]]
+    recs = [rec for rec in (_location_record_guarded(r, d) for r in d["rests"]) if rec is not None]
     # Duplicate brand names across separate accounts (not multi-location groups).
     seen = {}
     for rec in recs:
