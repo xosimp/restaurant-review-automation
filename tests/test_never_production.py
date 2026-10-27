@@ -150,8 +150,10 @@ def test_a_connection_off_this_machine_is_refused_before_it_is_made():
         assert s.connect_ex(("17.188.0.1", 443)) != 0             # an APNs address
     finally:
         s.close()
-    assert [h for _w, h in conftest._NET_BLOCKED[before:]] == ["203.0.113.7:443", "17.188.0.1:443"]
-    del conftest._NET_BLOCKED[before:]     # tripped on purpose; not ones to list at the end of the run
+    mine = [e for e in conftest._NET_BLOCKED[before:] if e[1] in ("203.0.113.7:443", "17.188.0.1:443")]
+    assert [h for _w, h in mine] == ["203.0.113.7:443", "17.188.0.1:443"]
+    for e in mine:                         # tripped on purpose; not ones to list at the end of the run
+        conftest._NET_BLOCKED.remove(e)
 
 
 def test_requests_to_an_unlisted_provider_fail_as_an_unreachable_network():
@@ -160,10 +162,13 @@ def test_requests_to_an_unlisted_provider_fail_as_an_unreachable_network():
     # Not on the old denylist (APNs, RPOWER, Meta, Google OAuth were not):
     # refused at the socket, and requests reports a connection error, as
     # it would offline.
+    before = len(conftest._NET_BLOCKED)
     with pytest.raises(requests.exceptions.ConnectionError):
         requests.get("https://17.188.0.1/3/device/x", timeout=2)
-    assert conftest._NET_BLOCKED and conftest._NET_BLOCKED[-1][1] == "17.188.0.1:443"
-    conftest._NET_BLOCKED.pop()            # handled on purpose; not one to list at the end of the run
+    mine = [e for e in conftest._NET_BLOCKED[before:] if e[1] == "17.188.0.1:443"]
+    assert mine, conftest._NET_BLOCKED[before:]
+    for e in mine:                         # handled on purpose; not one to list at the end of the run
+        conftest._NET_BLOCKED.remove(e)
 
 
 def test_this_machine_is_still_reachable():

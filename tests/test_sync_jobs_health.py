@@ -872,8 +872,11 @@ def test_the_nightly_pos_fetches_overlap_and_the_write_section_is_serialized(tmp
             gauge[kind] -= 1
 
     def sync_restaurant(rid, **_k):
-        _enter("fetch")                 # the network-bound pull
-        _time.sleep(0.15)
+        _enter("fetch")                 # the network-bound pull: held until a second one is in flight
+        give_up = _time.monotonic() + 2.0
+        while gauge["fetch"] < 2 and _time.monotonic() < give_up:   # (or 2 s: a serial pool never overlaps)
+            _time.sleep(0.01)
+        _time.sleep(0.02)
         _leave("fetch")
         pos.save_synced_shifts(rid, "date,day,employee,role,shift_start,shift_end,scheduled_hours\n", "toast")
         return {"ok": True, "rows": 0}
