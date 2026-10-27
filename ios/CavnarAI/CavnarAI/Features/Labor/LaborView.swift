@@ -676,6 +676,9 @@ struct LaborView: View {
             analyticsViewModel.configureCaching(restaurantId: restaurantId)
             Task { await viewModel.revalidateWeek() }
         }
+        // A time-off approval held back for who runs the floor (blind
+        // re-audit B2).
+        .floorCoverAlert($viewModel.floorCover)
     }
 
     /// The Overview's five-second answer (iOS readability round, 10/8/26):
@@ -2750,6 +2753,10 @@ private struct LaborSetupSheet: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .sheet(item: $focusPerson) { target in PersonSheet(target: target) }
+        // An availability save held back for who runs the floor (blind
+        // re-audit B2) — asked here, over the sheet that saved it.
+        .floorCoverAlert(Binding(get: { viewModel.availabilityFloorCover },
+                                 set: { viewModel.availabilityFloorCover = $0 }))
     }
 
     private func reveal(_ id: String, _ proxy: ScrollViewProxy) {

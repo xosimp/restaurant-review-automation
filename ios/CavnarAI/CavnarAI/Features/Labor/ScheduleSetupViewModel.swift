@@ -1256,6 +1256,9 @@ final class ScheduleSetupViewModel {
         /// Works doubles: yes, never, or from their history — sent as true,
         /// false or "auto" (LOGIC-19).
         var doubles: FloorManagerChoice? = nil
+        /// Who runs the floor, when the change leaves a published minute
+        /// with no manager (409 needs_cover, blind re-audit B2).
+        var coveredBy: String? = nil
 
         /// Yes, no, or back to automatic — sent as true, false or "auto".
         enum FloorManagerChoice: Equatable {
@@ -1285,6 +1288,7 @@ final class ScheduleSetupViewModel {
             case standingShifts = "standing_shifts"
             case closesFor = "closes_for"
             case doubles
+            case coveredBy = "covered_by"
         }
 
         private struct Empty: Encodable {}
@@ -1316,6 +1320,7 @@ final class ScheduleSetupViewModel {
             case .end?: try c.encode(Empty(), forKey: .trainee)
             case nil: break
             }
+            try c.encodeIfPresent(coveredBy, forKey: .coveredBy)
             try c.encodeIfPresent(closesFor, forKey: .closesFor)
             switch doubles {
             case .yes?: try c.encode(true, forKey: .doubles)
@@ -1331,6 +1336,10 @@ final class ScheduleSetupViewModel {
         let settings: RosterSettings?
         let error: String?
     }
+
+    /// A roster change the server held back: it leaves a minute of a
+    /// published week with no manager on the floor (FloorCoverAsk).
+    var floorCover: FloorCoverAsk?
 
     /// Writes the change into the local row first and rolls it back on a
     /// refusal — this sheet is a run of switches and pickers, and a spinner
@@ -1387,6 +1396,16 @@ final class ScheduleSetupViewModel {
             settingsToast = r.error ?? "Couldn't save that."
         } catch let error as APIClient.APIError {
             rollBack(to: previous)
+            if let gap = error.floorGap {
+                // Nothing saved: it lands only with who runs the floor.
+                floorCover = FloorCoverAsk(gap: gap) { [weak self] who in
+                    var named = patch
+                    named.coveredBy = who
+                    await self?.updateSettings(named)
+                }
+                Haptic.warning()
+                return false
+            }
             settingsToast = error.message
         } catch {
             rollBack(to: previous)

@@ -2682,12 +2682,16 @@ final class LaborViewModel {
         let availableDays: [String]
         let unavailableDays: [String]
         let notes: String?
+        /// Who runs the floor, when the change leaves a published minute
+        /// with no manager (409 needs_cover, blind re-audit B2).
+        var coveredBy: String? = nil
 
         enum CodingKeys: String, CodingKey {
             case employeeName = "employee_name"
             case availableDays = "available_days"
             case unavailableDays = "unavailable_days"
             case notes
+            case coveredBy = "covered_by"
         }
     }
 
@@ -2731,7 +2735,22 @@ final class LaborViewModel {
     /// Approved time off over a published shift, until it is handled
     /// (BUGSLIFE-5) — Waiting on you's "Post it open" rows.
     var timeOffFollowUps: [TimeOffFollowUp] = []
-    private struct TimeOffDecideBody: Encodable { let decision: String }
+    private struct TimeOffDecideBody: Encodable {
+        let decision: String
+        /// Who runs the floor, when approving leaves a published minute
+        /// with no manager (409 needs_cover, blind re-audit B2).
+        var coveredBy: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case decision
+            case coveredBy = "covered_by"
+        }
+    }
+
+    /// A time-off approval the server held back: it leaves a minute of a
+    /// published week with no manager on the floor (FloorCoverAsk).
+    var floorCover: FloorCoverAsk?
+    /// The same for an availability save, asked on the setup sheet.
+    var availabilityFloorCover: FloorCoverAsk?
     private struct TimeOffDecideResponse: Decodable {
         let ok: Bool
         let request: TimeOffRequest?
@@ -2751,13 +2770,13 @@ final class LaborViewModel {
         }
     }
 
-    func decideTimeOff(_ id: Int, approve: Bool) async {
+    func decideTimeOff(_ id: Int, approve: Bool, coveredBy: String? = nil) async {
         timeOffBusyId = id; timeOffError = nil; timeOffWarning = nil
         defer { timeOffBusyId = nil }
         do {
             let r: TimeOffDecideResponse = try await client.send(
                 "/mobile/api/labor/time-off/\(id)/decide", method: .post,
-                body: TimeOffDecideBody(decision: approve ? "approve" : "deny"))
+                body: TimeOffDecideBody(decision: approve ? "approve" : "deny", coveredBy: coveredBy))
             if r.ok, let updated = r.request {
                 if let i = timeOff.firstIndex(where: { $0.id == id }) {
                     // The decided row carries its "until 4:00pm" label now
@@ -2776,7 +2795,16 @@ final class LaborViewModel {
                 timeOffError = r.error ?? "Couldn't decide that."
             }
         } catch let error as APIClient.APIError {
-            timeOffError = error.message
+            if approve, let gap = error.floorGap {
+                // Not a failure: nothing changed, and it is approved only
+                // with who runs the floor instead.
+                floorCover = FloorCoverAsk(gap: gap, verb: "Approve") { [weak self] who in
+                    await self?.decideTimeOff(id, approve: true, coveredBy: who)
+                }
+                Haptic.warning()
+            } else {
+                timeOffError = error.message
+            }
         } catch {
             timeOffError = "Couldn't decide that."
         }
@@ -2786,7 +2814,8 @@ final class LaborViewModel {
     /// treats every unchecked day as explicitly unavailable — matches the
     /// web Availability Manager's own "checked = available, unchecked =
     /// unavailable" semantics (see saveAvailability() in dashboard.html).
-    func saveAvailability(employeeName: String, availableDays: [String], notes: String?) async {
+    func saveAvailability(employeeName: String, availableDays: [String], notes: String?,
+                          coveredBy: String? = nil) async {
         let name = employeeName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         isSavingAvailability = true
@@ -2798,7 +2827,8 @@ final class LaborViewModel {
                 "/mobile/api/labor/availability", method: .post,
                 body: AvailabilitySaveBody(
                     employeeName: name, availableDays: availableDays,
-                    unavailableDays: unavailable, notes: notes?.trimmingCharacters(in: .whitespaces)
+                    unavailableDays: unavailable, notes: notes?.trimmingCharacters(in: .whitespaces),
+                    coveredBy: coveredBy
                 )
             )
             if response.ok {
@@ -2808,7 +2838,17 @@ final class LaborViewModel {
                 availabilityError = response.error ?? "Couldn't save availability."
             }
         } catch let error as APIClient.APIError {
-            availabilityError = error.message
+            if let gap = error.floorGap {
+                // Nothing saved: it lands only with who runs the floor.
+                availabilityError = gap
+                availabilityFloorCover = FloorCoverAsk(gap: gap) { [weak self] who in
+                    await self?.saveAvailability(employeeName: name, availableDays: availableDays, notes: notes,
+                                                 coveredBy: who)
+                }
+                Haptic.warning()
+            } else {
+                availabilityError = error.message
+            }
         } catch {
             availabilityError = "Couldn't save availability."
         }

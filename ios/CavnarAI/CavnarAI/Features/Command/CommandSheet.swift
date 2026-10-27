@@ -90,6 +90,8 @@ struct CommandSheet: View {
         .sheet(item: $personKey) { target in
             PersonSheet(target: target)
         }
+        // An approval held back for who runs the floor (blind re-audit B2).
+        .floorCoverAlert($viewModel.floorCover)
     }
 
     // MARK: Field

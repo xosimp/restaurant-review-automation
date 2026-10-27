@@ -867,6 +867,9 @@ struct RosterDetailSheet: View {
         .sheet(isPresented: $showingPerson) {
             PersonSheet(target: PersonSheetTarget(key: nil, name: name))
         }
+        // A change held back for who runs the floor (blind re-audit B2):
+        // deactivating, who runs the floor, training, a weekday off.
+        .floorCoverAlert($viewModel.floorCover)
         .onAppear(perform: sync)
         .onChange(of: viewModel.settingsToast) { _, message in
             guard let message else { return }
