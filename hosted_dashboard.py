@@ -177,9 +177,11 @@ def health():
         payload, status = health_snapshot()
         _health_cache["at"], _health_cache["result"] = now, (payload, status)
     payload = dict(payload)
-    sha = os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or ""
-    if sha and status == 200:
-        payload["build"] = sha[:12]
+    # Always named (release-safety audit 10/26/26 A05-13): "unknown" for a
+    # deploy that is not a commit (`railway up`), which the post-deploy
+    # smoke test (scripts/smoke.py) fails on.
+    import config as _config_build
+    payload["build"] = _config_build.build_label()
     return jsonify(**payload), status
 
 @app.template_filter("format_num")
@@ -234,6 +236,18 @@ def add_security_headers(response):
     """Add security headers to every response (security_headers.py)."""
     import security_headers
     return security_headers.apply(response)
+
+
+@app.after_request
+def add_build_header(response):
+    """Every JSON response names the build that answered it (release-safety
+    audit 10/26/26 A06-13 / A05-13): an open tab compares it with the build
+    it loaded with, and a support screenshot or the smoke test can tell
+    which deploy said what."""
+    if response.mimetype == "application/json":
+        import config as _config_build
+        response.headers["X-Cavnar-Build"] = _config_build.build_label()
+    return response
 
 # Register blueprints
 from admin_routes import admin_bp
@@ -1398,6 +1412,10 @@ def _post_boot():
     # A crash loop pages Will (at most hourly) — off the boot path.
     threading.Thread(target=_pm_boot.page_if_crash_looping, args=(_BOOT_ID,), daemon=True,
                      name="boot-crash-check").start()
+    # A boot past 60 s, or 50% over the median of the last ten, pages once
+    # per build (release-safety audit 10/26/26 A05-09) — off the boot path.
+    threading.Thread(target=_pm_boot.page_if_slow_boot, args=(_BOOT_ID,), daemon=True,
+                     name="boot-slow-check").start()
     # The boot backfills init_db left for after the boot when it ran past
     # BOOT_BACKFILL_BUDGET_SECONDS (models._boot_backfill — blind re-audit
     # 10/20/26 R1-14), off the worker's boot path.

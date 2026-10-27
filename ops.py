@@ -2458,6 +2458,7 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or disk.get("state") == "critical"
                 or (out.get("pg_volume") or {}).get("state") == "critical"
                 or (out.get("requests") or {}).get("error_rate_over")
+                or (out.get("requests") or {}).get("error_floor_over")
                 or any(r.get("page") == "urgent" for r in out.get("rpower_rules") or [])
                 or not write_ok)
 
@@ -2675,6 +2676,16 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         problems.append(f"{rq['errors_5xx']} of {rq['requests']} customer requests failed with a 5xx in the last "
                         f"{rq['error_minutes']} minutes ({rq['error_rate'] * 100:.1f}%, alert past "
                         f"{rq['error_rate_alert'] * 100:g}%) — the routes are in the console's 5xx samples.")
+    if rq.get("error_floor_over") and not rq.get("error_rate_over"):
+        # The absolute floor (release-safety audit 10/26/26 A07-10): the rate
+        # rule's request floor is never reached at quiet hours.
+        problems.append(f"{rq['floor_errors']} customer requests failed with a 5xx on "
+                        f"{len(rq['floor_routes'])} routes in the last {rq['floor_minutes']} minutes "
+                        f"({', '.join(rq['floor_routes'][:4])}) — the 5xx samples are in the console.")
+    if rq.get("fresh_5xx_routes"):
+        warn_kinds.add("new_5xx_route")
+        problems.append(f"A 5xx since the last boot on route(s) with none in the 7 days before it: "
+                        f"{', '.join(rq['fresh_5xx_routes'][:4])} — likely the release; hold the next deploy.")
     if rq.get("latency_over"):
         warn_kinds.add("latency")
         problems.append(f"Customer requests are slow: p95 within {rq['p95_le_ms']} ms over the last "
