@@ -250,6 +250,43 @@ goes on and `/health` says `constraint_missing` / `index_missing` (degraded,
 with `indexes_missing`): dedupe (read-only count first) and redeploy, or build
 the index with the script.
 
+### Retiring the volume (Will's step; the code is ready — release-safety audit 10/26/26, P3)
+
+The volume is what makes every deploy an outage: with it attached Railway
+runs one deployment at a time. Since the Postgres cutover it holds only the
+local backup snapshots, the volume marker, the restore guard's files and the
+frozen pre-cutover `reviews.db`. With `VOLUME_OPTIONAL=1` the app runs
+without it: the markers live in object storage (`marker_store`, the blob
+bucket or else the backup bucket, under `cavnar-markers/`), the backup's local
+snapshot is scratch and the encrypted off-site copy is the backup (the run
+still FAILS when no off-site copy was made), and the monthly drill proves the
+off-site copy. `models.require_volume` refuses a volume-less boot unless the
+database is Postgres and object storage is configured, and never with
+`BLOB_STORE=local`.
+
+1. Confirm `/health` shows `backup.offsite` ok and the off-site drill passed
+   this month (Engineering → Restore drill). Download the frozen
+   `reviews.db` and the newest local snapshot from the volume to encrypted
+   storage of your own (the pre-cutover record; nothing reads them).
+2. Set `VOLUME_OPTIONAL=1` on the web service and redeploy WITH the volume
+   still attached: nothing changes yet (a mounted volume is still used), and
+   the boot proves the variable is accepted.
+3. Detach the volume from the web service in Railway, and redeploy. The boot
+   log says `VOLUME_OPTIONAL: running on Railway with no volume`; once the
+   boot is ready `cavnar-markers/.cavnar-volume.json` and, after the first
+   scheduler tick, `cavnar-markers/.restore_epoch` appear in the bucket (the
+   guard baselines on its first tick, never freezes).
+4. Railway can now overlap deployments. Before turning that on: every boot
+   statement commits on its own (A05-16) and no index is built at boot on an
+   existing table (A05-04) — both done — and `/health` must stay 200 through a
+   deploy.
+5. Rollback: re-attach the volume (mount path unchanged) and redeploy; unset
+   `VOLUME_OPTIONAL`.
+
+Limits: the backup bucket's lifecycle rule expires an object nothing
+refreshed — a restore freeze left unconfirmed past it lapses; give the
+marker prefix its own rule or use the blob bucket.
+
 ---
 
 ## Rolling back a release
