@@ -51,7 +51,9 @@ import tempfile
 import pytest
 
 # The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
-pytestmark = pytest.mark.contract
+# On Postgres it runs nightly, not in gate-postgres (`pg_nightly`); the crawl
+# is one module fixture, so its ceiling covers the whole crawl.
+pytestmark = [pytest.mark.contract, pytest.mark.pg_nightly, pytest.mark.timeout(900)]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MARKER = "ZQXBRAVOMARKERQZX"

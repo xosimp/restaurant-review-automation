@@ -119,7 +119,21 @@ def test_the_slice_also_runs_on_postgres_16():
     assert job["services"]["postgres"]["image"] == "postgres:16"
     assert job["env"]["CAVNAR_TEST_PG_URL"].startswith("postgresql://")
     runs = _pytest_runs(job)
-    assert any('-m "contract and not quarantine"' in r for r in runs), runs
+    assert any('-m "contract and not quarantine and not pg_nightly"' in r for r in runs), runs
+
+
+def test_what_the_postgres_gate_leaves_out_still_runs_nightly_on_postgres():
+    """`pg_nightly` keeps the crawl out of the 10-minute Postgres gate
+    (10/27/26); it must stay in the SQLite gate and the nightly Postgres run."""
+    wf, _ = _load("ci.yml")
+    assert not any("pg_nightly" in r for r in _pytest_runs(wf["jobs"]["gate"]))
+    nightly, _ = _load("nightly.yml")
+    pg_runs = [r for name, job in nightly["jobs"].items() if "postgres" in name.lower() or "pg" in name.lower()
+               for r in _pytest_runs(job)]
+    assert pg_runs and not any("pg_nightly" in r for r in pg_runs), pg_runs
+    marked = [f for f in os.listdir(os.path.join(ROOT, "tests"))
+              if f.endswith(".py") and "pytest.mark.pg_nightly" in open(os.path.join(ROOT, "tests", f), encoding="utf-8").read()]
+    assert sorted(marked) == ["test_ci_gate_config.py", "test_cross_tenant_crawl.py"], marked   # this file names it
 
 
 def test_every_pytest_run_names_a_per_test_timeout():

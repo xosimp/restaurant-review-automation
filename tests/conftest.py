@@ -311,6 +311,11 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "contract: the deploy-gate contract slice (pytest -m contract)")
     config.addinivalue_line("markers", "quarantine: known flaky; excluded from the gate, run and reported nightly")
     config.addinivalue_line("markers", "browser: a Playwright browser test (tests/browser/), nightly")
+    # `pg_nightly`: a contract test the SQLite gate runs but too slow for the
+    # 10-minute Postgres gate (the crawl: 140 s alone on a laptop, past 300 s
+    # on GitHub's 4 cores under -n 8, 10/27/26); the nightly full Postgres
+    # run carries it.
+    config.addinivalue_line("markers", "pg_nightly: contract test left out of gate-postgres; nightly on Postgres")
 
 
 # `contract`, or `contract and not <marker>...` (the gate's own expression,

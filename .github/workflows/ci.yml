@@ -221,7 +221,7 @@ jobs:
       - run: pip install --no-deps -r requirements-dev.txt
       - name: Contract slice on Postgres 16
         run: >-
-          pytest tests/ -m "contract and not quarantine" -n 8 --dist loadfile -q -rs -p no:warnings -p no:cacheprovider
+          pytest tests/ -m "contract and not quarantine and not pg_nightly" -n 8 --dist loadfile -q -rs -p no:warnings -p no:cacheprovider
           --timeout=300
 
   interim-full-sqlite:
