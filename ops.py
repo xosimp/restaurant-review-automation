@@ -1792,8 +1792,12 @@ def run_admin_task(kind, restaurant_id, name, fn, *args, context="", **kwargs):
         return job_id, True
     with _admin_pool_lock:
         if _admin_pool is None:
-            _admin_pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, ADMIN_TASK_WORKERS),
-                                                                thread_name_prefix="admin-task")
+            # ADMIN_TASK_WORKERS is the container's bound: each gunicorn
+            # web worker takes its share (pool_sizing; one worker: all of it).
+            import pool_sizing
+            _admin_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=pool_sizing.sized("admin_task", max(1, ADMIN_TASK_WORKERS)),
+                thread_name_prefix="admin-task")
     # Who asked, taken here on the request thread: in the pool thread the
     # request is gone, and every model call would read as 'system' (#148).
     try:

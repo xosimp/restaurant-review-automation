@@ -99,7 +99,12 @@ def _summarize_later(restaurant_id, conversation_id, user_id=None, correlation_i
         with _SUMMARY_POOL_LOCK:
             if _SUMMARY_POOL is None:
                 from concurrent.futures import ThreadPoolExecutor
-                _SUMMARY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ask-summary")
+                # One thread per process — a bound of 1 cannot be split
+                # between gunicorn workers (pool_sizing: the gateway is the
+                # fleet's ceiling on what summaries spend).
+                import pool_sizing
+                _SUMMARY_POOL = ThreadPoolExecutor(max_workers=pool_sizing.sized("ask_summary", 1),
+                                                   thread_name_prefix="ask-summary")
 
         def _run():
             try:

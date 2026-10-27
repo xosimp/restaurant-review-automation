@@ -501,7 +501,10 @@ def test_the_scrub_empties_the_tables_the_doc_names():
                                                 "user_totp",
                                                 # iOS parity #61 (10/7/26): Live Activity push
                                                 # tokens — live access, like device_tokens.
-                                                "live_activity_tokens"}
+                                                "live_activity_tokens",
+                                                # Audit #25 WS10: polled Ask events shared between
+                                                # web workers — transient, like async_jobs.
+                                                "ai_lane_events"}
     schema = _read("DATABASE_SCHEMA.md")
     assert all(f"`{t}`" in schema for t in offsite_backup.SCRUB_TABLES)
     # The backup email says what THIS run's scrub did, not a fixed sentence.

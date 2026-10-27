@@ -3911,7 +3911,12 @@ def _read_pool():
     with _READ_POOL_LOCK:
         if _READ_POOL is None:
             from concurrent.futures import ThreadPoolExecutor
-            _READ_POOL = ThreadPoolExecutor(max_workers=ASK_READ_WORKERS, thread_name_prefix="ask-read")
+            # The container's bound, split between gunicorn web workers
+            # (pool_sizing; one worker: all of it) — on Postgres each read
+            # thread holds a pooled connection.
+            import pool_sizing
+            _READ_POOL = ThreadPoolExecutor(max_workers=pool_sizing.sized("ask_read", ASK_READ_WORKERS),
+                                            thread_name_prefix="ask-read")
         return _READ_POOL
 
 

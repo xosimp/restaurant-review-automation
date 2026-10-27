@@ -339,6 +339,10 @@ if __name__ == "__main__":
         _ld(_pl.Path(__file__).parent / ".env")
     except Exception:
         pass
+    # One process of its kind, not one of gunicorn's web workers: its pools
+    # keep their whole bound (pool_sizing.web_workers), whatever
+    # CAVNAR_WEB_WORKERS it inherited from the master that started it.
+    os.environ["CAVNAR_PROCESS_ROLE"] = "queue" if "--queue" in sys.argv[1:] else "scheduler"
     if "--queue" in sys.argv[1:]:
         sys.exit(main_queue())
     if "--scheduler" in sys.argv[1:]:

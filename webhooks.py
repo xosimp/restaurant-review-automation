@@ -333,8 +333,11 @@ def _webhook_executor():
         with _executor_lock:
             if _executor is None:
                 from concurrent.futures import ThreadPoolExecutor
+                import pool_sizing
+                # WEBHOOK_MAX_WORKERS is the container's bound: each gunicorn
+                # web worker takes its share (one worker: all of it).
                 _executor = ThreadPoolExecutor(
-                    max_workers=_MAX_WEBHOOK_WORKERS, thread_name_prefix="webhook"
+                    max_workers=pool_sizing.sized("webhook", _MAX_WEBHOOK_WORKERS), thread_name_prefix="webhook"
                 )
     return _executor
 

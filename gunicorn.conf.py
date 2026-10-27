@@ -178,7 +178,21 @@ def _supervise_scheduler(log):
         time.sleep(pause)
 
 
+def publish_worker_count(server):
+    """The master's real web worker count (the start command's --workers),
+    in the environment every web worker inherits: each bounded pool takes
+    its share of the container's bound (pool_sizing.web_workers — audit #25
+    WS10). One worker, as today: every pool keeps its whole bound."""
+    try:
+        n = max(1, int(server.cfg.workers))
+    except (AttributeError, TypeError, ValueError):
+        n = 1
+    os.environ["CAVNAR_WEB_WORKERS"] = str(n)
+    return n
+
+
 def when_ready(server):
+    publish_worker_count(server)
     # Before the web worker forks, so it inherits it: the platform check
     # warns when the queue worker this master supervises goes silent
     # (ops.queue_problems — scale audit 10/19/26 INF-4).

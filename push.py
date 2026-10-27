@@ -1452,8 +1452,11 @@ def _push_executor():
         with _executor_lock:
             if _executor is None:
                 from concurrent.futures import ThreadPoolExecutor
+                import pool_sizing
+                # PUSH_MAX_WORKERS is the container's bound: each gunicorn
+                # web worker takes its share (one worker: all of it).
                 _executor = ThreadPoolExecutor(
-                    max_workers=_MAX_PUSH_WORKERS, thread_name_prefix="push"
+                    max_workers=pool_sizing.sized("push", _MAX_PUSH_WORKERS), thread_name_prefix="push"
                 )
     return _executor
 

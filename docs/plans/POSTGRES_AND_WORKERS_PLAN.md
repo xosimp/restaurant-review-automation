@@ -53,6 +53,16 @@ Built:
 - **`blob_store`** — model-call and quality blobs to object storage.
 - **Versions as differences from a snapshot** (SCALE-34) and the off-site
   copy in parts past 512 MiB (SCALE-20).
+**Status, 10/26/26 (release-safety audit #25, WS10 — the P3 multi-worker
+item).** Every bounded pool on the list below now sizes itself as its
+setting (the CONTAINER's bound) divided by the gunicorn web worker count
+(`pool_sizing.per_worker`; the master publishes its real `--workers` as
+`CAVNAR_WEB_WORKERS` from `gunicorn.conf.py`'s `when_ready`), and a polled
+Ask turn's events are shared through `ai_lane_events` when there is more
+than one worker — see *Multi-worker readiness* below for the pool-by-pool
+inventory and what still blocks `--workers 2`. With one worker (production)
+every pool is built exactly as before and nothing new is written.
+
 Updated 10/7/26 (AI cost audit #56) with the process-local state that round
 added — the interactive AI slots, the AI background pools, the route-override
 cache — and where each goes in the order of work; and again 10/7/26 (iOS
@@ -94,14 +104,14 @@ Process-local state a second worker would duplicate (the inventory:
 | AI breakers | `ai_utils._breakers` | **moved 10/10/26**: each process keeps its own counts, but every opening, closing and reset is the `ai_breakers` row, read back by every process within `AI_BREAKER_SYNC_SECONDS` | done |
 | AI budget cache, blocked-call merge | `ai_utils._budget_cache`, `_blocked_memo` | stale spend per worker; blocked rows merged per worker, not per minute | read-through with a generation stamp; merge on an `INSERT … ON CONFLICT` key |
 | The admin fleet memo | `admin_ops._fleet_state` | a write on one worker drops only its own memo: the other serves reads up to 45 s stale | **moved 10/11/26**: a generation counter in the database the memo checks (`job_cursors['admin_fleet_gen']`, moved by every admin write) |
-| Bounded pools | `ASK_MAX_CONCURRENT` (`client_api._ASK_SLOTS`), Ask's read pool (`ask_cavnar.ASK_READ_WORKERS`, 10/7/26), `ops.run_admin_task`, `admin_routes._submit_admin_job` (the one admin job pool; `_AdminJobs` was folded into it), the webhook and push delivery pools, `admin_ops.heavy_slot`, the schedule generation pool and its slots (**moved 10/10/26**: a generation is a `job_queue` row and its slot a count of claimed rows — `QUEUE_GENERATION_CONCURRENCY` across every process; since 10/11/26 the only path — `_GEN_SLOTS` and `JOB_QUEUE=0` are gone — and consumed by the queue worker process beside gunicorn, which recycles itself; a row waiting on the model holds no CPU slot), (`ASK_MAX_CONCURRENT` and `INTERACTIVE_AI_SLOTS` guard each process's own request threads: right per worker by design) the owner AI job pool (`ai_async`, `OWNER_AI_JOB_WORKERS`; AI cost audit 10/7/26 #57 — invoice and recipe-card reads, the Campaign Studio's drafts), Home's snapshot rebuild pool (`home_snapshots`; scale audit 10/19/26 FE-01 — **moved 10/20/26**: every Home block build is a `job_queue` row in the `home` group, `QUEUE_HOME_CONCURRENCY` across every process, consumed by the queue worker; `HOME_SNAPSHOT_WORKERS` is gone), the interactive lane (`ai_lane`, `AI_LANE_WORKERS`; scale audit 10/19/26 A4-01 — polled Ask turns; its turns' events are in the process's memory, so a second worker also needs the poll pinned to its process or the events in the database) | every bound becomes N × its value | the job queue below (a global bound is a count of claimed rows) |
+| Bounded pools | `ASK_MAX_CONCURRENT` (`client_api._ASK_SLOTS`), Ask's read pool (`ask_cavnar.ASK_READ_WORKERS`, 10/7/26), `ops.run_admin_task`, `admin_routes._submit_admin_job` (the one admin job pool; `_AdminJobs` was folded into it), the webhook and push delivery pools, `admin_ops.heavy_slot`, the schedule generation pool and its slots (**moved 10/10/26**: a generation is a `job_queue` row and its slot a count of claimed rows — `QUEUE_GENERATION_CONCURRENCY` across every process; since 10/11/26 the only path — `_GEN_SLOTS` and `JOB_QUEUE=0` are gone — and consumed by the queue worker process beside gunicorn, which recycles itself; a row waiting on the model holds no CPU slot), (`ASK_MAX_CONCURRENT` and `INTERACTIVE_AI_SLOTS` guard each process's own request threads: right per worker by design) the owner AI job pool (`ai_async`, `OWNER_AI_JOB_WORKERS`; AI cost audit 10/7/26 #57 — invoice and recipe-card reads, the Campaign Studio's drafts), Home's snapshot rebuild pool (`home_snapshots`; scale audit 10/19/26 FE-01 — **moved 10/20/26**: every Home block build is a `job_queue` row in the `home` group, `QUEUE_HOME_CONCURRENCY` across every process, consumed by the queue worker; `HOME_SNAPSHOT_WORKERS` is gone), the interactive lane (`ai_lane`, `AI_LANE_WORKERS`; scale audit 10/19/26 A4-01 — polled Ask turns; **since 10/26/26 (audit #25 WS10) its events are also written to `ai_lane_events` when there is more than one worker**, so a poll another worker serves reads them) | every bound becomes N × its value — **split since 10/26/26**: each worker takes bound // N (`pool_sizing`, *Multi-worker readiness*) | the job queue below (a global bound is a count of claimed rows) |
 | The in-memory telemetry | `http_layer` (`_samples`, `_inflight`, `_rollups`, `_sentry_last`) | each worker reports only its own "now"; persisted rollups add up correctly | nothing — label the live panels per worker |
 | Claim fallback and page memory | `ops._claim_fallback`, `ops._page_memory`, `ops._running_jobs` | fallbacks for a database that cannot be written; `is_running` sees one process (`running_elsewhere` reads the database) | acceptable as fallbacks; keep |
 | Refused-audit window | `admin_events._refused_window` | N × 20 rows per IP per 10 minutes | the table's own cap already bounds it |
 | Caches | `client_api._insight_cache`, `_aivis_cache`, `_city_cache`, `models._tenant_names_cache`, `intelligence.dashboard._build_cache`, `status_manager._schema_ok`, `labor._NOTE_CACHE` (a front cache over `insight_store`) | duplicated work, no wrong answer | keep |
 | The interactive AI slots (AI cost audit 10/7/26) | `ai_utils._INTERACTIVE_SLOTS` (`INTERACTIVE_AI_SLOTS`, default 2) | the "at most two owner-facing model calls in flight" bound becomes 2 × N, and the slot a waiting request is promised exists only on its own worker | a count of claimed rows (the job queue below), or `ai_rate_events`-style rows with a lease stamp |
-| The schedule model-call pool (scheduler fix round 10/10/26, C2) | `schedule_engine._call_pool` (`SCHEDULE_CALL_POOL_WORKERS`, default `SCHEDULE_GEN_WORKERS` x `SCHEDULE_PARALLEL_CALLS` = 6) — one pool per process for every generation's calls sent together (it was a new pool per batch, a bound per generation) | the "at most six schedule model streams at once" bound becomes 6 x N, one per worker | the model gateway's generation concurrency (`model_gateway.max_concurrent_generations`, claimed `jobs` rows) already bounds generations across processes; the streams per generation stay a per-process pool until calls are queue rows of their own |
-| The AI background pools (10/7/26) | Ask's read pool (`ask_cavnar._READ_POOL`, `ASK_READ_WORKERS`), Ask's summary pool (`client_api._SUMMARY_POOL`, one thread), the orchestrator's shadow-review pool (`ai_orchestrator._SHADOW_POOL`, one thread), the learner's scoring pool (`ai_learning._SCORE_POOL`, one thread) | each one-thread pool becomes N threads; the shadow review's sampling rate is per worker, so the share of runs reviewed holds but the spend bound is N × | the job queue (kinds `ask_summary`, `shadow_review`, `shadow_score`) |
+| The schedule model-call pool (scheduler fix round 10/10/26, C2) | `schedule_engine._call_pool` (`SCHEDULE_CALL_POOL_WORKERS`, default `SCHEDULE_GEN_WORKERS` x `SCHEDULE_PARALLEL_CALLS` = 6) — one pool per process for every generation's calls sent together (it was a new pool per batch, a bound per generation) | the "at most six schedule model streams at once" bound becomes 6 x N, one per worker — **not so (10/26/26, audit #25 WS10)**: a stream exists only for a claimed generation row and claimed rows are counted across every process, so the fleet's streams stay max_running x parallel calls; the pool keeps its whole size in each process (`pool_sizing.whole`) | the model gateway's generation concurrency (`model_gateway.max_concurrent_generations`, claimed `jobs` rows) already bounds generations across processes; the streams per generation stay a per-process pool until calls are queue rows of their own |
+| The AI background pools (10/7/26) | Ask's read pool (`ask_cavnar._READ_POOL`, `ASK_READ_WORKERS`), Ask's summary pool (`client_api._SUMMARY_POOL`, one thread), the orchestrator's shadow-review pool (`ai_orchestrator._SHADOW_POOL`, one thread), the learner's scoring pool (`ai_learning._SCORE_POOL`, one thread) | each one-thread pool becomes N threads; the shadow review's sampling rate is per worker, so the share of runs reviewed holds but the spend bound is N × (10/26/26: still one thread per worker — a bound of 1 cannot be split; nothing is dropped, so the total spend is unchanged and only its pace rises, which the gateway's tokens a minute holds when set) | the job queue (kinds `ask_summary`, `shadow_review`, `shadow_score`) |
 | The route-override cache (10/7/26) | `ai_orchestrator._OVERRIDES` (`OVERRIDE_CACHE_SECONDS`, 60) | an override applied or reverted in the console reaches the other workers up to 60 s later — the same window one worker already has | keep, or a generation stamp in `ai_route_overrides` the cache checks |
 | The generation watchers (iOS parity round 10/7/26) | was `schedule_engine._GEN_WATCHERS` (`watch_generation` / `take_generation_watchers`) — who pressed Generate for each running job, pushed `schedule_drafted` when it lands | **moved 10/10/26**: the `generation_watchers` table keyed on the async job id, taken (read and deleted in one transaction) when the job finishes, wherever it ran — a restart no longer forgets who was waiting | done |
 | The Studio's kept inputs (10/2/26; reviewed 10/10/26, SCALE-24: its key is `models.schedule_inputs_version`, read from the database, so a second worker can never serve a stale week — only re-sweep once) | `schedule_engine._studio_cache`, `_studio_live` (keyed on `models.schedule_inputs_version`; an LRU sized in bytes since 10/14/26 — `STUDIO_CACHE_BUDGET_MB` 512, each week measured as kept and its scorer as it fills, `studio_cache_stats()` its fill, hits, misses and evictions (blind re-audit 10/11/26 SCALE-22) — `STUDIO_CACHE_PER_RESTAURANT` 3, `STUDIO_CACHE_SECONDS` 900 as a backstop, one `_studio_lock` — scheduler audit 10/10/26 SCALE-8, BUGSLIFE-23), and each prepared week's last served answers for the re-score's deltas (`quality_payload`, SCALE-29) | each worker re-sweeps on its own first drag; the key moves the moment the inputs do, so nothing is stored stale; a delta's base another worker served is answered whole | keep (a cache) |
@@ -135,6 +145,45 @@ The PlatformSupervisor would also run once per worker: two SLA checks every
 five minutes (pages are de-duplicated by the cooldown row, so one page) and
 two telemetry flushes (additive upserts — correct). Make it elect itself with
 a lease like the scheduler's before running N workers.
+
+## Multi-worker readiness (audit #25 WS10, 10/26/26)
+
+`pool_sizing.py` is the one sizing rule: a pool's setting is the bound for
+the whole container; each web worker takes `bound // web_workers()`, never
+below 1; with one worker the bound is returned untouched. `web_workers()` is
+the master's own `server.cfg.workers` (written to `CAVNAR_WEB_WORKERS` before
+the workers fork), else `WEB_CONCURRENCY`, else 1 — and always 1 in
+`worker.py`, which marks itself `CAVNAR_PROCESS_ROLE=queue|scheduler` (one
+process of its kind). `pool_sizing.snapshot()` lists what this process built.
+Tests: `tests/test_ws10_pool_sizing.py`.
+
+| Pool | Setting (default) | With N web workers | The fleet's real ceiling |
+|---|---|---|---|
+| `ops.run_admin_task` | `ADMIN_TASK_WORKERS` (2) | bound // N, ≥ 1 | split (admin presses join per restaurant — `claim_async_job`) |
+| `admin_routes._submit_admin_job` | `ADMIN_JOB_WORKERS` (2, ≤ 4) | bound // N, ≥ 1; `ADMIN_JOB_QUEUE_MAX` stays per process (memory) | split |
+| webhook delivery (`webhooks._webhook_executor`) | `WEBHOOK_MAX_WORKERS` (4) | bound // N; `WEBHOOK_MAX_QUEUED` per process (memory; overflow stays queued in `webhook_outbox`) | split |
+| push delivery (`push._push_executor`) | `PUSH_MAX_WORKERS` (4) | bound // N; `PUSH_MAX_QUEUED` / overflow per process (memory) | split |
+| owner AI jobs (`ai_async`) | `OWNER_AI_JOB_WORKERS` (3), `OWNER_AI_JOB_PER_TENANT` (0 = none) | bound // N, ≥ 1; a per-tenant ceiling > 0 split too; queue bounds per process | split; spend also by the gateway's tokens a minute (`model_token_windows`) when set |
+| interactive lane (`ai_lane`) | `AI_LANE_WORKERS` (6), `AI_LANE_PER_TENANT` (2) | bound // N, ≥ 1, both | split; **the poll**: events also written to `ai_lane_events` when N > 1 (`ai_lane.shared_events`), so a poll on another worker reads them — same login and restaurant only; with N = 1 nothing is written |
+| Ask's read pool (`ask_cavnar._read_pool`) | `ASK_READ_WORKERS` (4) | bound // N, ≥ 1 | split (on Postgres each thread holds a pooled connection) |
+| staff translations (`staff_knowledge._translate_later`) | `STAFF_TRANSLATE_WORKERS` (2) | bound // N, ≥ 1 | split |
+| Ask's summary, the shadow review, the shadow scoring (`client_api._SUMMARY_POOL`, `ai_orchestrator._SHADOW_POOL`, `ai_learning._SCORE_POOL`) | 1 thread each | 1 each — a bound of 1 cannot be split, so N in all | nothing they queue is dropped, so the WORK and its spend are the same at any thread count, only the pace changes; the pace is held by the gateway's tokens a minute (database, every process) when `GATEWAY_ORG_OTPM` is set — set it before N > 1 if the pace matters |
+| schedule model calls (`schedule_engine._call_pool`) | `SCHEDULE_CALL_POOL_WORKERS` (max_running x parallel calls) | **not split** (`pool_sizing.whole`) | a stream exists only for a claimed generation row and claimed rows are counted across every process (`job_queue.max_running`), and the gateway's stream places; one process may hold every row, so each keeps the whole pool (threads are made only as calls are sent) |
+
+Per process BY DESIGN, unchanged (each guards that process's own request
+threads): `ASK_MAX_CONCURRENT`, `ai_utils._INTERACTIVE_SLOTS`
+(`INTERACTIVE_AI_SLOTS`), `admin_ops.heavy_slot` (`ADMIN_HEAVY_CONCURRENCY`
+— a heavy admin read on a request thread).
+
+**Still blocking `--workers 2`** (not done this round): the PlatformSupervisor
+elects nothing (two SLA checks and two telemetry flushes every five minutes —
+pages de-duplicate, flushes add up correctly; elect it with a lease first);
+`ai_utils._budget_cache` / `_blocked_memo` (stale spend per worker);
+`push._provider_alarms` (one capture an hour per reason per worker); the live
+telemetry panels report one worker's "now"; the CPU (`--threads 4` per worker
+on a container sized for one). Raise `--workers` only after those, in the start
+command (never with SIGTTIN, which `CAVNAR_WEB_WORKERS` would not see), and
+re-run the morning-burst scenario (`scripts/loadtest/README.md`) on staging.
 
 ## What blocks a second container or a separate worker service
 

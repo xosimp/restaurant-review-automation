@@ -6274,7 +6274,11 @@ def _admin_job_executor():
         with _admin_job_lock:
             if _admin_job_pool is None:
                 from concurrent.futures import ThreadPoolExecutor
-                _admin_job_pool = ThreadPoolExecutor(max_workers=ADMIN_JOB_WORKERS, thread_name_prefix="admin-job")
+                # The container's bound, split between gunicorn web
+                # workers (pool_sizing; one worker: all of it).
+                import pool_sizing
+                _admin_job_pool = ThreadPoolExecutor(max_workers=pool_sizing.sized("admin_job", ADMIN_JOB_WORKERS),
+                                                     thread_name_prefix="admin-job")
     return _admin_job_pool
 
 

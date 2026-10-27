@@ -686,7 +686,11 @@ def _score_async(fn):
     with _SCORE_LOCK:
         if _SCORE_POOL is None:
             from concurrent.futures import ThreadPoolExecutor
-            _SCORE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-shadow-arms")
+            # One thread per process — a bound of 1 cannot be split between
+            # gunicorn workers (pool_sizing: the gateway bounds the spend).
+            import pool_sizing
+            _SCORE_POOL = ThreadPoolExecutor(max_workers=pool_sizing.sized("shadow_score", 1),
+                                             thread_name_prefix="ai-shadow-arms")
     # Never "on a request" in the pool (platform re-audit 10/7/26 #3).
     _SCORE_POOL.submit(ai_utils.background_runner(fn))
 

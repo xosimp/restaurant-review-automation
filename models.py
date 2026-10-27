@@ -5052,6 +5052,10 @@ def init_db(db_path: str = DB_PATH):
     # index (blob_store — RM-14).
     from pg_shadow import init_pg_shadow
     init_pg_shadow(db_path)
+    # The interactive lane's shared copy of a polled turn's events, read by
+    # a poll another gunicorn worker serves (ai_lane, audit #25 WS10).
+    from ai_lane import init_ai_lane
+    init_ai_lane(db_path)
     # Home's slow blocks kept as per-restaurant read models (home_snapshots,
     # scale audit 10/19/26 FE-01).
     from home_snapshots import init_home_snapshots

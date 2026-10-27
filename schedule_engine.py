@@ -4616,7 +4616,16 @@ def _call_pool():
     with _CALL_POOL_LOCK:
         if _CALL_POOL is None:
             from concurrent.futures import ThreadPoolExecutor
-            _CALL_POOL = ThreadPoolExecutor(max_workers=call_pool_workers(), thread_name_prefix="sched-call")
+            # Not split between gunicorn workers (pool_sizing.whole): a
+            # stream exists only for a claimed generation row, and claimed
+            # rows are counted across every process — the fleet's ceiling
+            # is max_running x parallel_calls however many processes hold
+            # this pool, and one process may hold every row.
+            import pool_sizing
+            _CALL_POOL = ThreadPoolExecutor(
+                max_workers=pool_sizing.whole("schedule_call", call_pool_workers(),
+                                              "job_queue claimed generation rows x SCHEDULE_PARALLEL_CALLS"),
+                thread_name_prefix="sched-call")
         return _CALL_POOL
 
 

@@ -162,7 +162,17 @@ def test_the_admin_job_pool_is_bounded(admin, db_path, monkeypatch):
     monkeypatch.setattr(admin_routes, "ADMIN_JOB_QUEUE_MAX", 0)
     r = _post(admin, f"/admin/fetch-menu-from-url/{rid}", json={"url": "https://a.example/menu"})
     assert r.status_code == 503 and "busy" in r.get_json()["error"]
-    assert "ThreadPoolExecutor(max_workers=ADMIN_JOB_WORKERS" in open(os.path.join(ROOT, "admin_routes.py")).read()
+    # And bounded in threads: the pool is built at the container's bound
+    # (one gunicorn worker), never a thread per press (audit #25 WS10: the
+    # behaviour, not the source line).
+    monkeypatch.delenv("CAVNAR_WEB_WORKERS", raising=False)
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    monkeypatch.setattr(admin_routes, "_admin_job_pool", None)
+    pool = admin_routes._admin_job_executor()
+    try:
+        assert pool._max_workers == admin_routes.ADMIN_JOB_WORKERS <= 4
+    finally:
+        pool.shutdown(wait=False)
 
 
 def test_a_job_on_the_real_pool_finishes_and_a_raising_one_is_an_error(admin, db_path, monkeypatch):
