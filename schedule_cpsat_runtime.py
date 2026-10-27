@@ -20,6 +20,7 @@ that imports it back. schedule_cpsat re-exports every name. Layer S4 of the
 schedule modules (ARCHITECTURE_MANIFEST.md §3a); it imports no schedule
 module. Kill switch: SCHEDULE_CPSAT_ISOLATE=0 (every solve in-process).
 """
+import logging
 import os
 import threading
 import time as _time
@@ -28,6 +29,8 @@ try:
     from ortools.sat.python import cp_model as _cp
 except Exception:          # OR-Tools missing: schedule_cpsat.available() is False and no solve starts
     _cp = None
+
+_log = logging.getLogger(__name__)
 
 
 def _env_float(name, default):
@@ -359,14 +362,33 @@ def _run_in_process(s, model):
     return st
 
 
+# A solve whose wall time reached this share of its wall cap was ended by the
+# clock (the emergency cap), not by its deterministic work budget.
+WALL_CAP_SHARE = 0.95
+
+
 def _wall_capped(solver, status) -> bool:
     """Whether the wall clock (the emergency cap), not the deterministic work
-    budget, ended a solve that did not prove its answer optimal."""
-    if status == _cp.OPTIMAL or not solver.parameters.max_deterministic_time:
+    budget, ended a solve that did not prove its answer: judged by the clock
+    alone — it ran to WALL_CAP_SHARE of max_time_in_seconds without proving
+    optimal or infeasible.
+
+    CP-SAT's reported deterministic time cannot say which limit ended a
+    multi-worker search: with interleaved workers it reports several times
+    the limit (Stage 1 of the (30,3) synthetic week: 9.65 against a 3.02
+    budget uncut; 5.56 and 6.28 when a 2.0 s wall cap cut it), so the old
+    "deterministic time under 95% of the budget" test never fired and a
+    clock-cut week was recorded as an ordinary deterministic one (release-
+    safety audit 10/26/26 A02-01). A budget-ended solve that took 95% of a
+    cap 4x its budget is reported too: the box was that close to cutting it."""
+    if _cp is None or status in (_cp.OPTIMAL, _cp.INFEASIBLE, _cp.MODEL_INVALID):
         return False
     try:
-        det = float(solver.response_proto.deterministic_time)
-    except Exception:
+        if not solver.parameters.max_deterministic_time:
+            return False                 # the wall clock IS the budget here, not an emergency cap
+        cap = float(solver.parameters.max_time_in_seconds)
+        wall = float(solver.wall_time)
+    except Exception as e:
+        _log.warning("solve's wall time unreadable (%r); not reported as cut", e)
         return False
-    return det < 0.95 * float(solver.parameters.max_deterministic_time) and \
-        float(solver.wall_time) >= 0.95 * float(solver.parameters.max_time_in_seconds)
+    return cap > 0 and wall >= WALL_CAP_SHARE * cap

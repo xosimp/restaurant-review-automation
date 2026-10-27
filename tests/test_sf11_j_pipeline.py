@@ -463,6 +463,25 @@ def test_a_resumed_answer_written_from_inputs_that_moved_is_said(db):
     assert schedule_resume.resume_facts() == {"resumed": False}
 
 
+def test_a_resumed_try_says_whether_its_week_is_the_one_the_dead_try_was_building(db):
+    """The resume's promise (the code stages rebuild the same week) holds
+    only when every solve ran to its work budget; a solve an emergency cap
+    cut — review.solve_capped, read by the clock alone since the release-
+    safety audit of 10/26/26 (A02-01) — may not: resumed_inputs says so."""
+    import schedule_resume
+    for capped, deterministic in ((["wall:draft"], False), ([], True)):
+        with schedule_resume.resuming("job-det"):
+            cand = sj.Candidate(spec=sj.PassSpec(kind="week"), rows=[], payload={}, timer=None,
+                                result={"review": {"lines": [], "lead_lines": [], "solve_capped": capped}})
+            sj._stage_inputs(cand)
+        assert cand.result["resumed_inputs"]["deterministic"] is deterministic
+    # a try that is not a resume makes no such claim
+    cand = sj.Candidate(spec=sj.PassSpec(kind="week"), rows=[], payload={}, timer=None,
+                        result={"review": {"lines": [], "lead_lines": [], "solve_capped": ["wall:draft"]}})
+    sj._stage_inputs(cand)
+    assert cand.result["resumed_inputs"] == {"resumed": False}
+
+
 def test_the_review_says_what_the_needs_cost_against_the_target_when_the_trim_cut():
     src = open(sj.__file__).read()
     body = src[src.index("# Why the trim had to cut"):src.index("for _line in _econ.trim_lines(")]
