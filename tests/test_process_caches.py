@@ -28,6 +28,7 @@ EXEMPT = {
     "hosted_dashboard._health_cache": "importing hosted_dashboard boots the app (database, demo seed, scheduler), "
                                       "so no test process imports it; a 5-second /health result with no tenant "
                                       "data",
+    "process_caches._PROCESS_CACHES": "the registry itself (name -> cache); clearing it would forget every cache",
 }
 # Module-level functools caches: pure in their arguments (or in files bundled
 # with the code), so no test can see another's entry.

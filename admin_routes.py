@@ -4572,6 +4572,41 @@ def admin_api_set_demo(restaurant_id, current_user):
 _PAYING_STATUSES = ("active", "past_due", "paused")
 
 
+@admin_bp.route("/admin/api/rollout", methods=["GET"])
+@admin_required
+def admin_api_rollout_list(current_user):
+    """Every cohort rollout flag (rollout.py): percent, allow and deny lists,
+    who set it, and any ROLLOUT_* environment override that wins over it."""
+    import rollout
+    return jsonify(ok=True, flags=rollout.list_flags())
+
+
+@admin_bp.route("/admin/api/rollout", methods=["POST"])
+@admin_required
+def admin_api_rollout_set(current_user):
+    """Set one feature's cohort: {feature, percent 0-100, allow: [rid],
+    deny: [rid], note}. Audited with the before and after state; refused
+    (and audited) when the setting is malformed."""
+    import admin_events
+    import rollout
+    data = request.get_json(silent=True) or {}
+    feature = str(data.get("feature") or "").strip().lower()
+    try:
+        before, after = rollout.set_flag(feature, data.get("percent", 0), allow=data.get("allow") or (),
+                                         deny=data.get("deny") or (), note=data.get("note"),
+                                         by=current_user.get("username"))
+    except rollout.RolloutError as e:
+        admin_events.record_admin_action(current_user, "rollout.set", target=f"rollout:{feature[:64]}",
+                                         after={"request": {k: data.get(k) for k in ("percent", "allow", "deny")},
+                                                "refused": str(e)}, result="refused")
+        return jsonify(ok=False, error=str(e)), 400
+    admin_events.record_admin_action(current_user, "rollout.set", target=f"rollout:{feature}", before=before,
+                                     after=after, summary=f"{feature} rollout set to {after['percent']}% by "
+                                                          f"{current_user.get('username')}")
+    env = rollout.parse_env(os.environ.get(rollout.env_name(feature)))
+    return jsonify(ok=True, feature=feature, flag=after, env_override=env)
+
+
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/delete-demo", methods=["POST"])
 @admin_required
 @recent_auth_required()

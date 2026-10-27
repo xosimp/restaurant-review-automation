@@ -70,9 +70,12 @@ def test_owner_web_and_staff_session_lifetimes():
 
 
 def test_the_staff_browser_portal_holds_cookie_writes_to_csrf():
+    import blueprints
     import staff_routes
-    src = _read("hosted_dashboard.py")
-    assert "app.before_request(staff_csrf_check)" in src
+    # hosted_dashboard registers through blueprints.register_all (audit #25
+    # A04-06); the booted app's hooks are checked against this plan by
+    # tests/test_cross_tenant_crawl.py.
+    assert ("before_request", staff_routes.staff_csrf_check) in blueprints.plan()
     assert staff_routes.STAFF_CSRF_BLUEPRINTS == {"staff", "staff_knowledge"}
     check = inspect.getsource(staff_routes.staff_csrf_check)
     assert 'startswith("Bearer ")' in check and 'request.cookies.get("staff_session")' in check
