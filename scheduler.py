@@ -240,6 +240,24 @@ def _remember_fetch_cursor(order, processed, key=_FETCH_CURSOR_KEY):
         log.warning(f"_remember_fetch_cursor failed: {e}")
 
 
+# The job run the current thread is inside (_PulsedOps.run_job / run_in_lane
+# set it in the job's own thread): {"only": frozenset of restaurant ids a
+# PARTIAL RETRY re-runs, or None; "swept": whether the run went through
+# resumable_sweep; "t0": when it began}. A partial retry re-runs only the
+# restaurants whose failures the first run captured — never the
+# model-spending or vendor-reading work that succeeded (re-audit B7 P3 /
+# B8 P3, 10/27/26: the retry re-ran the whole sweep).
+import contextvars as _cv_scope  # noqa: E402
+_RUN_SCOPE = _cv_scope.ContextVar("scheduler_run_scope", default=None)
+
+
+def retry_only():
+    """The restaurant ids the current run is a partial retry of (a
+    frozenset), or None for a full run."""
+    sc = _RUN_SCOPE.get()
+    return sc.get("only") if sc else None
+
+
 def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
     """Run `fn(rid)` over restaurant ids the run_daily_fetch way: rotated to
     start after job_cursors[key], a worker pool, a wall-clock bound — and the
@@ -259,8 +277,21 @@ def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
     a thread holding an older, shorter prefix could write last and leave
     the cursor behind restaurants already done — the next pass re-fetched
     them first. Seen as a flaky test on the six-worker review fetch.
+
+    Inside a partial retry (retry_only()) only the restaurants the first run
+    failed are run, and the cursor is left where the full pass put it; any
+    run through here marks itself as one a partial retry can narrow
+    (_PulsedOps._after retries only such runs).
     """
-    order = _fetch_order(list(ids), key=key)
+    sc = _RUN_SCOPE.get()
+    only = None
+    if sc is not None:
+        sc["swept"] = True
+        only = sc.get("only")
+    if only is not None:
+        order = [i for i in ids if i in only]
+    else:
+        order = _fetch_order(list(ids), key=key)
     if not order:
         return 0, False
     lock, write_lock = threading.Lock(), threading.Lock()
@@ -274,7 +305,7 @@ def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
                 p += 1
             advanced = p != state["prefix"]
             state["prefix"] = p
-        if advanced:
+        if advanced and only is None:
             # One writer at a time, and never backwards; the SQLite write
             # stays outside `lock` so workers finishing are not held up.
             with write_lock:
@@ -1438,6 +1469,11 @@ def run_pos_retry():
     from time_utils import restaurant_now
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
     lock = threading.Lock()
+    # The nightly sync's queue rows, as they ran (re-audit B7 P2): the 3am
+    # fan-out's run reads its stores' real outcomes, so its failure share,
+    # idle pass and SLA see a night the provider failed (ops.jobs_failing).
+    if pos.POS_SYNC_QUEUE:
+        _ops.settle_queue_fanout("pos_sync", "pos_sync")
     due = data_health.due_retries("pos")
     # The stores the 3am Chicago pass left for their own hour (blind
     # re-audit 10/20/26 R3-12: pos.sync_due_locally) — synced here once that
@@ -5299,6 +5335,16 @@ def _pulse_interval():
     return max(0.05, min(float(SCHEDULER_TICK_SECONDS), _ops.SCHEDULER_LEASE_STALE_SECONDS / 3.0))
 
 
+def _scoped_result(res, scope):
+    """A partial retry's result: what it was FOR is the restaurants it
+    retried, not the fleet — its `eligible` is dropped, so a narrowed run
+    that found nothing left to do never reads as an idle pass."""
+    if scope and scope.get("only") is not None and isinstance(res, dict) and "eligible" in res:
+        res = dict(res)
+        res.pop("eligible", None)
+    return res
+
+
 class _PulsedOps:
     """scheduler_loop's view of ops: every attribute is ops' own, except
     run_job, which runs the job with a pulse beside it, and claim_period,
@@ -5376,9 +5422,13 @@ class _PulsedOps:
             pass
         try:
             now_m, now_w = time.monotonic(), time.time()
+            scopes = _ops.pending_retry_scopes()
             with self._retry_lock:
                 for claim, period, attempt, at in _ops.pending_retries():
-                    self._retries[(claim, period)] = {"attempt": attempt, "at": now_m + max(0.0, at - now_w)}
+                    entry = {"attempt": attempt, "at": now_m + max(0.0, at - now_w)}
+                    if (claim, period) in scopes:
+                        entry.update(partial=True, only=scopes[(claim, period)])
+                    self._retries[(claim, period)] = entry
         except Exception as e:
             log.warning(f"pending retries not restored: {e}")
 
@@ -5487,6 +5537,19 @@ class _PulsedOps:
             if within and self._keeping_up():
                 _ops.ping_healthcheck()
 
+    def _run_scope(self, claim, period):
+        """The run scope (_RUN_SCOPE) of a job about to run for `period`: a
+        partial retry's restaurants, else a full run."""
+        retry = None
+        if period is not None:
+            with self._retry_lock:
+                retry = self._retries.get((claim, period))
+        only = retry.get("only") if retry and retry.get("partial") else None
+        # On the database's clock, which stamps the failures it is compared
+        # with (job_failures.created_at) — never the app's.
+        return {"only": frozenset(only) if only is not None else None, "swept": False,
+                "t0": _ops.db_now_stamp() or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}
+
     def _already_running(self, name, claim):
         for n in {name, claim or name}:
             if _ops.is_running(n):
@@ -5510,16 +5573,20 @@ class _PulsedOps:
                 self._claimed.pop(claim, None)
             return None
         spec = jobs_registry.spec(name)
-        outcome = {}
+        outcome = {"scope": self._run_scope(claim, period)}
         started, stop = threading.Event(), threading.Event()
 
         def body(*a, **k):
             started.set()
+            token = _RUN_SCOPE.set(outcome["scope"])
             try:
                 res = fn(*a, **k)
             except Exception:
                 outcome["raised"] = True
                 raise
+            finally:
+                _RUN_SCOPE.reset(token)
+            res = _scoped_result(res, outcome["scope"])
             outcome["result"] = res
             return res
         try:
@@ -5558,19 +5625,43 @@ class _PulsedOps:
         key = (claim, period)
         state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else None
         failed = outcome.get("raised") or state == _ops.RUN_FAILED
+        if (outcome.get("scope") or {}).get("only") is not None:
+            # This run WAS the one partial retry, narrowed to the restaurants
+            # that failed: however it ended, the period stays spent — a
+            # failed-retry backoff here would re-run the whole sweep, the
+            # restaurants that succeeded included (re-audit B7 P3).
+            with self._retry_lock:
+                self._retries.pop(key, None)
+            _ops.clear_retry(claim, period)
+            if failed or state == _ops.RUN_PARTIAL:
+                log.warning(f"{name}'s partial retry for {period} still failed; the period stays spent — the failures "
+                            "are in the job failures")
+            return
         retryable = spec.get("retry") and not spec.get("sends") and len(jobs_registry.jobs_for_claim(claim)) <= 1
-        partial_retry = False
+        partial_retry, only = False, None
         if not failed and state == _ops.RUN_PARTIAL and retryable:
             counts = _ops.standard_counts(outcome["result"]) or {}
             attempted, nfailed = int(counts.get("attempted") or 0), int(counts.get("failed") or 0)
             partial_retry = attempted > 0 and nfailed / float(attempted) >= jobs_registry.PARTIAL_RETRY_SHARE
+            scope = outcome.get("scope") or {}
+            if partial_retry and scope.get("only") is None and key not in self._retries:
+                # Only the restaurants that failed, and only for a run whose
+                # restaurants go through resumable_sweep (it honours the
+                # narrowing) — never a whole sweep again (re-audit B7 P3).
+                only = _ops.failed_restaurants((name, claim), scope.get("t0"))
+                if not scope.get("swept") or not only:
+                    log.warning(f"{name} was partial for {period} ({nfailed} of {attempted} failed); not retried: "
+                                + ("its run does not sweep restaurants through resumable_sweep"
+                                   if not scope.get("swept") else "no failed restaurant was captured"))
+                    partial_retry = False
         with self._retry_lock:
             if partial_retry and key not in self._retries:
                 wait = jobs_registry.PARTIAL_RETRY_MINUTES
-                self._retries[key] = {"attempt": 1, "at": time.monotonic() + wait * 60, "partial": True}
-                _ops.record_retry(claim, period, 1, time.time() + wait * 60)
-                log.warning(f"{name} was partial for {period} ({nfailed} of {attempted} failed); one retry in "
-                            f"{wait} minutes")
+                self._retries[key] = {"attempt": 1, "at": time.monotonic() + wait * 60, "partial": True,
+                                      "only": sorted(only)}
+                _ops.record_retry(claim, period, 1, time.time() + wait * 60, only=sorted(only))
+                log.warning(f"{name} was partial for {period} ({nfailed} of {attempted} failed); one retry of the "
+                            f"{len(only)} restaurant(s) that failed in {wait} minutes")
                 return
             if not failed:
                 if self._retries.pop(key, None) is not None:
@@ -5604,14 +5695,18 @@ class _PulsedOps:
         claim = kwargs.get("claim") or name
         period = self._claimed.get(claim)
         spec = jobs_registry.spec(name)
-        outcome = {}
+        outcome = {"scope": self._run_scope(claim, period)}
 
         def body(*a, **k):
+            token = _RUN_SCOPE.set(outcome["scope"])
             try:
                 res = fn(*a, **k)
             except Exception:
                 outcome["raised"] = True
                 raise
+            finally:
+                _RUN_SCOPE.reset(token)
+            res = _scoped_result(res, outcome["scope"])
             outcome["result"] = res
             return res
 

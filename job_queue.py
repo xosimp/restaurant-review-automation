@@ -261,6 +261,21 @@ RETRY_BACKOFF = (30, 120, 600)
 # A row of a kind this build has no handler for (an older process during a
 # deploy) that reached run_one anyway goes back for this long (defer_unknown).
 UNKNOWN_KIND_DEFER_SECONDS = 60
+# ...but a kind that NO build in service runs is not "a deploy in progress"
+# (re-audit B7 P2, 10/27/26: a renamed or removed kind's rows were kept
+# queued forever, their expire hooks never ran, and nothing named them). A
+# queued row of a kind this build has no handler for, older than this many
+# days, is expired (expire_unknown_kinds, from the minute duty, hourly) with
+# a capture — its RETIRED_KINDS hook run when the kind was retired on
+# purpose. Days, not minutes: a rollback or a slow deploy is never mistaken
+# for it; ops.queue_problems names such rows half an hour after a boot.
+UNKNOWN_KIND_EXPIRE_DAYS = float(os.getenv("QUEUE_UNKNOWN_KIND_EXPIRE_DAYS", "3") or 3)
+UNKNOWN_KIND_SWEEP_SECONDS = 3600
+# kind -> "module:function": the expire hook of a kind REMOVED from HANDLERS
+# (run on each of its rows expire_unknown_kinds expires — an auto-draft's
+# day handed back, the owner told). Move a kind's EXPIRE_HOOKS entry here
+# when its handler goes.
+RETIRED_KINDS = {}
 # Per-tenant token buckets: (burst, refill per hour) by class. The scheduled
 # class's bucket is per RESTAURANT, never per organization (SCALE-3: a
 # 40-location group shared one 2-token bucket and its auto-drafts expired
@@ -1512,6 +1527,39 @@ def complete(job_id, worker_id, result=None, db_path=None) -> bool:
         _slot_freed()
 
 
+# A handler whose work FAILED but must not be tried again (a generation is
+# never re-paid by a retry) returns dead_letter(result, error): the row ends
+# `failed` with its result kept, never `done` — so the dead-letter rules
+# (ops.queue_failed_kinds: a failed owner press or auto-draft is urgent) see
+# it (re-audit B7 P1, 10/27/26: both generation handlers swallowed the
+# failure, and 6 of 6 failed generations read failed_1h=0).
+DEAD_LETTER_KEY = "dead_letter"
+
+
+def dead_letter(result, error) -> dict:
+    """`result` marked as a failed run of its row (run_one: state
+    `failed`, not retried, the result kept), with `error` its reason."""
+    out = dict(result or {})
+    out[DEAD_LETTER_KEY] = str(error or "failed")[:500]
+    return out
+
+
+def finish_failed(job_id, worker_id, error, result=None, db_path=None) -> bool:
+    """A row whose handler returned dead_letter(): failed with its result,
+    no retry."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE jobs SET state='failed', error=?, result_json=?, finished_at=?, lease_owner=NULL, "
+                         "lease_until=NULL, phase=NULL WHERE id=? AND lease_owner=? AND state='running'",
+                         (str(error)[:500], json.dumps(result, default=str) if result is not None else None,
+                          time.time(), int(job_id), worker_id)).rowcount
+        conn.commit()
+        return n == 1
+    finally:
+        conn.close()
+        _slot_freed()
+
+
 def fail(job_id, worker_id, error, retry=True, db_path=None) -> str:
     """A try that raised: queued again after RETRY_BACKOFF while tries are
     left (and `retry`), else failed. Returns the new state. An error that
@@ -1920,7 +1968,14 @@ def run_one(job):
         handler = _resolve(HANDLERS[job["kind"]])
         with ctx:
             result = handler(job)
-        if not complete(job["id"], job["worker_id"], result if isinstance(result, (dict, list)) else None):
+        dead = result.get(DEAD_LETTER_KEY) if isinstance(result, dict) else None
+        if dead:
+            # Failed, and not to be tried again (dead_letter): the handler has
+            # captured its own error.
+            ended = finish_failed(job["id"], job["worker_id"], dead, result)
+        else:
+            ended = complete(job["id"], job["worker_id"], result if isinstance(result, (dict, list)) else None)
+        if not ended:
             log.warning("job %s (%s) finished after its lease was lost — its result is its reclaimer's to "
                         "write", job.get("id"), job.get("kind"))
         _settle_local(job["id"], result)
@@ -2052,6 +2107,65 @@ def tick(db_path=None) -> dict:
         prune_tenants(db_path=db_path)
     except Exception as e:
         log.warning("queue tenants not pruned: %s", e)
+    if time.monotonic() - _unknown_swept["at"] >= UNKNOWN_KIND_SWEEP_SECONDS:
+        _unknown_swept["at"] = time.monotonic()
+        expired = expire_unknown_kinds(db_path=db_path)
+        if expired:
+            out["unknown_expired"] = sum(expired.values())
+    return out
+
+
+_unknown_swept = {"at": 0.0}
+
+
+def expire_unknown_kinds(db_path=None, now=None, days=None) -> dict:
+    """{kind: rows expired}: queued rows of a kind this build has no handler
+    for, enqueued more than `days` (UNKNOWN_KIND_EXPIRE_DAYS) ago, are
+    expired — no build has run them since — each kind captured once
+    (ops.capture, with the count), its RETIRED_KINDS hook run on each row.
+    Bounded (CANDIDATES rows a pass). Never raises."""
+    now = time.time() if now is None else float(now)
+    days = UNKNOWN_KIND_EXPIRE_DAYS if days is None else float(days)
+    known, kinds = _known_clause()
+    unknown_sql = known.replace(" IN (", " NOT IN (", 1)
+    out, rows = {}, []
+    try:
+        conn = get_conn(db_path)
+        try:
+            for r in conn.execute("SELECT * FROM jobs WHERE state='queued' AND enqueued_at<?" + unknown_sql +
+                                  " ORDER BY id LIMIT ?", (now - days * 86400, *kinds, CANDIDATES)).fetchall():
+                n = conn.execute("UPDATE jobs SET state='expired', finished_at=?, error=? WHERE id=? "
+                                 "AND state='queued'",
+                                 (now, f"no build in service has a handler for kind {r['kind']!r} "
+                                       f"(queued over {days:g} days)", r["id"])).rowcount
+                if n == 1:
+                    rows.append(dict(r))
+                    out[r["kind"]] = out.get(r["kind"], 0) + 1
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("unknown-kind queue rows not expired: %s", e)
+        return out
+    for r in rows:
+        hook = RETIRED_KINDS.get(r["kind"])
+        if hook:
+            try:
+                _resolve(hook)(Job(dict(r, payload=_loads(r.get("payload_json")),
+                                        checkpoint=_loads(r.get("stage_checkpoint")))))
+            except Exception as e:
+                import ops
+                ops.capture(e, job="job_queue", context=f"retired kind hook {r['kind']} #{r['id']}")
+    for kind, n in out.items():
+        log.error("job_queue: expired %d queued row(s) of kind %r — no build in service has its handler", n, kind)
+        try:
+            import ops
+            ops.capture(RuntimeError(f"expired {n} queued row(s) of kind {kind!r}: no build in service has a "
+                                     f"handler for it after {days:g} days" + ("" if kind in RETIRED_KINDS else
+                                     " (a removed kind belongs in job_queue.RETIRED_KINDS with its expire hook)")),
+                        job="job_queue", context=f"unknown kind {kind}")
+        except Exception as e:
+            log.warning("unknown-kind expiry not captured: %s", e)
     return out
 
 
@@ -2254,11 +2368,14 @@ def reset_for_tests():
 
 # ── measures (the scale triggers: docs/plans/POSTGRES_AND_WORKERS_PLAN.md) ──
 
-def stats(window_seconds=3600, db_path=None) -> dict:
+def stats(window_seconds=3600, db_path=None, dead_letters=True) -> dict:
     """{groups: {grp: {queued, running, oldest_queued_seconds}}, wait_p95_seconds
     (enqueue to start, rows started in the window, interactive class),
     failed, consumers: {web, worker}} — the queue-wait p95 is one of the
-    triggers for the next scale stage."""
+    triggers for the next scale stage. `dead_letters` False (the /health
+    read-only call, re-audit B7 P3) skips the reads of finished rows — the
+    last day's failed, expired and done rows per kind, which only paging
+    needs — and leaves `failed` None."""
     now = time.time()
     conn = get_conn(db_path)
     try:
@@ -2276,7 +2393,7 @@ def stats(window_seconds=3600, db_path=None) -> dict:
             if waits else None
         out["wait_samples"] = len(waits)
         out["failed"] = int(conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE state='failed' AND finished_at>?",
-                                         (now - window_seconds,)).fetchone()["n"])
+                                         (now - window_seconds,)).fetchone()["n"]) if dead_letters else None
         out["consumers"] = {r["role"]: int(r["n"]) for r in conn.execute(
             "SELECT role, COUNT(*) AS n FROM job_workers WHERE heartbeat_at>? GROUP BY role",
             (now - WORKER_STALE_SECONDS,)).fetchall()}
@@ -2317,13 +2434,17 @@ def stats(window_seconds=3600, db_path=None) -> dict:
             if r["state"] == "queued" and r["ready"] is not None:
                 age = round(now - float(r["ready"]), 1)
                 k["oldest_ready_seconds"] = max(k["oldest_ready_seconds"] or 0, age)
-                g = out["groups"].setdefault(r["grp"], {"queued": 0, "running": 0, "oldest_queued_seconds": None})
-                g["oldest_ready_seconds"] = max(g.get("oldest_ready_seconds") or 0, age)
+                if known_kind(r["kind"]):
+                    # A kind no handler here runs is not a backlog more
+                    # slots would clear (unknown_kinds names it).
+                    g = out["groups"].setdefault(r["grp"], {"queued": 0, "running": 0,
+                                                            "oldest_queued_seconds": None})
+                    g["oldest_ready_seconds"] = max(g.get("oldest_ready_seconds") or 0, age)
         # ...and the last hour's dead letters against the rows that finished
         # (Audit #25 A07-07: ops.queue_failed_kinds pages them).
-        for r in conn.execute("SELECT kind, state, COUNT(*) AS n, SUM(CASE WHEN finished_at>? THEN 1 ELSE 0 END) "
-                              "AS n1h FROM jobs WHERE state IN ('failed','expired','done') AND finished_at>? "
-                              "GROUP BY kind, state", (now - 3600, now - 86400)).fetchall():
+        for r in (conn.execute("SELECT kind, state, COUNT(*) AS n, SUM(CASE WHEN finished_at>? THEN 1 ELSE 0 END) "
+                               "AS n1h FROM jobs WHERE state IN ('failed','expired','done') AND finished_at>? "
+                               "GROUP BY kind, state", (now - 3600, now - 86400)).fetchall() if dead_letters else ()):
             k = _kind(r["kind"], KINDS.get(r["kind"], ("bulk",))[0])
             if r["state"] != "done":
                 k[r["state"] + "_24h"] = int(r["n"])
@@ -2331,6 +2452,16 @@ def stats(window_seconds=3600, db_path=None) -> dict:
                 k["failed_1h"] = int(r["n1h"] or 0)
             if r["state"] in ("failed", "done"):
                 k["finished_1h"] += int(r["n1h"] or 0)
+        # Kinds this build has no handler for (re-audit B7 P2): named by
+        # ops.queue_problems once the boot is half an hour old.
+        for kind, k in out["kinds"].items():
+            k["known"] = known_kind(kind)
+        out["unknown_kinds"] = {}
+        for r in conn.execute("SELECT kind, COUNT(*) AS n, MIN(enqueued_at) AS oldest FROM jobs "
+                              "WHERE state='queued'" + _known_clause()[0].replace(" IN (", " NOT IN (", 1) +
+                              " GROUP BY kind", tuple(_known_clause()[1])).fetchall():
+            out["unknown_kinds"][r["kind"]] = {"queued": int(r["n"] or 0),
+                                               "oldest_seconds": round(now - float(r["oldest"] or now), 1)}
         # The queue worker process (INF-4): seconds since it last beat its
         # heartbeat (None: none on record), and since this web process booted.
         row = conn.execute("SELECT MAX(heartbeat_at) AS h FROM job_workers WHERE role='worker'").fetchone()

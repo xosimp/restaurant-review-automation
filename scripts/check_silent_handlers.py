@@ -25,8 +25,11 @@ event_intel/, brand/, ...), and three rules hold:
    of broad handlers that leave no trace, and of those the number around a
    write. "Broad" is `except Exception` / `except BaseException`, alone or
    in a tuple (`except (Exception, X)`). "No trace" is a body made only of
-   `pass`, `continue`, `...`, a docstring, or `return` of a constant or an
-   empty container — no log, no capture, no call at all. A file's counts
+   `pass`, `continue`, `...`, a docstring, `return` of a constant or an
+   empty container, or a `.debug(...)` log call — no capture, no call that
+   reaches production's logs at all: LOG_LEVEL is INFO there, so a debug
+   line is no trace (re-audit B7 P3, 10/27/26: 57 broad handlers were
+   invisible in production and counted as traced). A file's counts
    may only go down: a new silent handler fails unless the same commit
    lowers another in that file. `--update` lowers the baseline to what is
    there (it refuses to raise a count without `--allow-increase`, which
@@ -113,15 +116,23 @@ def _constant(value) -> bool:
             or (isinstance(value, ast.Dict) and not value.keys))
 
 
+def _debug_call(node) -> bool:
+    """`<anything>.debug(...)` — a log line production's INFO level drops."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "debug")
+
+
 def leaves_no_trace(body) -> bool:
-    """A handler body made only of pass, continue, ..., a docstring, or a
-    return of a constant or an empty container — nothing called."""
+    """A handler body made only of pass, continue, ..., a docstring, a
+    return of a constant or an empty container, or debug log calls —
+    nothing that reaches production's logs or the failure digest."""
     for stmt in body:
         if isinstance(stmt, (ast.Pass, ast.Continue)):
             continue
         if isinstance(stmt, ast.Return) and _constant(stmt.value):
             continue
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            continue
+        if isinstance(stmt, ast.Expr) and _debug_call(stmt.value):
             continue
         return False
     return True

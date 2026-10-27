@@ -298,27 +298,19 @@ def restore_frozen() -> bool:
     import sys
     if volume_optional() and not (os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip() and on_railway():
         # No volume (release-safety audit 10/26/26, P3): the freeze lives in
-        # object storage (marker_store), answered from a 30-second cache.
-        # A store that cannot answer reads as FROZEN (blind re-audit 10/27/26
-        # B5 P3): during an object-storage outage on the day of a restore,
-        # "no freeze" resumed briefs and alerts against a rewound database.
-        # Scheduling and sends wait until the store answers; serving does not.
+        # object storage (marker_store), answered from a 30-second cache. A
+        # read that fails is the freeze as last read, else frozen — never
+        # "lifted" on a storage blip during a restore (re-audit B7 P3).
         try:
             import marker_store
-            return marker_store.exists(".restore_freeze", strict=True)
+            return marker_store.exists(".restore_freeze", when_unreadable=True)
         except Exception as e:
-            import time as _t_rf
-            if _t_rf.monotonic() - _freeze_unreadable_logged[0] > 60:
-                _freeze_unreadable_logged[0] = _t_rf.monotonic()
-                logging.getLogger("config").error("restore freeze unreadable in object storage (%s): scheduling "
-                                                  "and sends held until it can be read", e)
+            import logging
+            logging.getLogger("config").error("restore freeze unreadable in object storage — held: %s", e)
             return True
     models = sys.modules.get("models")
     path = getattr(models, "DB_PATH", None) or os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
     return os.path.exists(os.path.join(os.path.dirname(os.path.abspath(path)) or ".", ".restore_freeze"))
-
-
-_freeze_unreadable_logged = [-1e9]   # restore_frozen's error line, at most once a minute
 
 
 def volume_optional() -> bool:

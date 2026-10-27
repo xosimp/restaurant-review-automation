@@ -323,7 +323,7 @@ def test_the_platform_check_pages_an_auth_wave_as_urgent(db_path, monkeypatch):
     out = ops.check_platform_sla(send=True, db_path=db_path, write_ok=True)
     assert any(r["key"] == "rpower_auth_wave" for r in out["rpower_rules"])
     assert any("refused 3 stores' tokens" in p for p in out["problems"])
-    assert pages and pages[-1][0] == "platform_sla_alert"
+    assert pages and pages[-1][0] == "platform_sla_alert:rpower_auth_wave"     # keyed on its condition (RF4)
 
 
 # ── the owner told once (A6-10) ─────────────────────────────────────────────

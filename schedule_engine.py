@@ -725,6 +725,57 @@ def generation_memory_mb(restaurant_id) -> float:
     return _jq_mem.generation_memory_mb(n)
 
 
+# How each generation that failed in THIS process failed (schedule_job._fail
+# and run_queued_generation record it; the queue handlers take it): whether
+# it is the platform's failure — the operator's to hear about through the
+# queue's dead-letter rule — or the owner's to act on (their data, their
+# week, their AI budget, their Stop), which is never a dead letter
+# (re-audit B7 P1, 10/27/26).
+_GEN_FAILURES = {}
+_GEN_FAILURES_LOCK = threading.Lock()
+_GEN_FAILURES_MAX = 500
+import process_caches as _pc_gen  # noqa: E402 (registered beside each cache, A04-13)
+_pc_gen.register("schedule_engine._GEN_FAILURES", _GEN_FAILURES)
+
+
+def generation_failure_is_platform(exc) -> bool:
+    """Whether a generation that ended on `exc` failed on the platform's
+    side: a code error, the provider, a timeout, a save that failed, the
+    model refusing — not the owner's Stop, an owner-facing refusal
+    (ScheduleGenerationError: closed every day, no team, the week taken,
+    data out of date — except the time-out and save-failed sentences), an
+    AI budget stop or data that isn't ready."""
+    if isinstance(exc, ScheduleStopped):
+        return False
+    if isinstance(exc, ScheduleGenerationError):
+        return str(exc) in (_TIMED_OUT_MESSAGE, _SAVE_FAILED_MESSAGE)
+    return _failure_kind(exc) not in ("budget", "data")
+
+
+def record_generation_failure(job_id, exc) -> None:
+    """Note how generation `job_id` failed, for its queue handler (never
+    raises)."""
+    if not job_id:
+        return
+    try:
+        entry = {"platform": generation_failure_is_platform(exc), "kind": _failure_kind(exc),
+                 "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    except Exception as e:                          # the classification must never sink the failure path
+        log.warning(f"generation failure of {job_id} not classified: {e!r}")
+        entry = {"platform": True, "kind": "other", "error": type(exc).__name__}
+    with _GEN_FAILURES_LOCK:
+        if len(_GEN_FAILURES) >= _GEN_FAILURES_MAX:
+            _GEN_FAILURES.pop(next(iter(_GEN_FAILURES)))
+        _GEN_FAILURES[str(job_id)] = entry
+
+
+def take_generation_failure(job_id):
+    """How generation `job_id` failed in this process ({platform, kind,
+    error}), forgotten once read; None when it did not (or not here)."""
+    with _GEN_FAILURES_LOCK:
+        return _GEN_FAILURES.pop(str(job_id), None)
+
+
 def run_queued_generation(job):
     """job_queue's handler for `schedule_generate`: the owner's generation,
     as submit_generation's pool thread ran it — the slot is the claimed row
@@ -734,7 +785,10 @@ def run_queued_generation(job):
     runs again reading the answers that try already paid for
     (schedule_resume). The job reports its own failures into its async row;
     the queue row is done either way (a failed generation is never re-paid
-    by a retry)."""
+    by a retry) — but a generation that FAILED on the platform's side
+    (record_generation_failure) ends its row as a dead letter
+    (job_queue.dead_letter), so the queue's urgent rule for a failed owner
+    press sees it; one the owner can act on, or stopped, stays done."""
     import schedule_resume as _sres
     p = job.payload
     job_id, restaurant_id = p.get("job_id"), p.get("restaurant_id")
@@ -759,6 +813,7 @@ def run_queued_generation(job):
                 _run_schedule_job(job_id, restaurant_id, **(p.get("kwargs") or {}))
     except Exception as e:
         _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
+        record_generation_failure(job_id, e)
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
     finally:
         # A copy whose queue lease was lost (job_queue.LeaseLost, blind
@@ -771,7 +826,12 @@ def run_queued_generation(job):
             notify_generation_watchers(job_id, restaurant_id)
     state = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
     res = state.get("result") if isinstance(state.get("result"), dict) else {}
-    return {"status": state.get("status"), "history_id": res.get("history_id"), "resumed": bool(resumed)}
+    out = {"status": state.get("status"), "history_id": res.get("history_id"), "resumed": bool(resumed)}
+    failure = take_generation_failure(job_id)
+    if state.get("status") == "error" and not res.get("stopped") and failure and failure.get("platform"):
+        import job_queue as _jq_dead
+        return _jq_dead.dead_letter(dict(out, failure=failure.get("kind")), failure.get("error"))
+    return out
 
 
 def on_queued_generation_expired(job):

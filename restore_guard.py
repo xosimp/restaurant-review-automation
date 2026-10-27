@@ -108,18 +108,15 @@ def _remove(path):
 
 
 def _read_json(path, strict=False):
-    """The file's JSON dict, or None. `strict` in object storage: an
-    unreadable store raises marker_store.MarkerUnreadable (the guard fails
-    closed — blind re-audit 10/27/26 B5 P3)."""
+    """The epoch or freeze record, None when there is none. A read that
+    fails is None too — unless `strict`, when it raises
+    marker_store.MarkerUnreadable so the guard takes its safe side (blind
+    re-audit 10/27/26 B5/B7 P3: an object-storage blip read as "no epoch",
+    and the tick then wrote a fresh one over the evidence of a restore)."""
+    import marker_store
     if _object_backed():
-        import marker_store
         return marker_store.read(os.path.basename(path), strict=strict)
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except (OSError, ValueError):
-        return None
+    return marker_store.read_file(path, strict=strict)
 
 
 def _write_json(path, data):
@@ -146,17 +143,15 @@ def _parse(value):
 
 def frozen() -> dict:
     """The freeze record (detected_at, db_seq, volume_seq, db_id), or None.
-    In object storage a store that cannot answer is a freeze too ({unreadable:
-    True, error}): "no freeze" there resumed briefs and alerts against a
+    A record that cannot be read (a store that cannot answer, a damaged
+    file) is a freeze too ({unreadable: True, error}): "no freeze" there resumed briefs and alerts against a
     rewound database during an outage (blind re-audit 10/27/26 B5 P3)."""
-    if _object_backed():
-        import marker_store
-        try:
-            return _read_json(freeze_path(), strict=True)
-        except marker_store.MarkerUnreadable as e:
-            log.error("restore guard: the freeze marker is unreadable (%s) - holding as frozen", e)
-            return {"unreadable": True, "error": str(e)[:200]}
-    return _read_json(freeze_path()) if os.path.exists(freeze_path()) else None
+    import marker_store
+    try:
+        return _read_json(freeze_path(), strict=True)
+    except marker_store.MarkerUnreadable as e:
+        log.error("restore guard: the freeze marker is unreadable (%s) - holding as frozen", e)
+        return {"unreadable": True, "error": str(e)[:200]}
 
 
 def _db_value(conn):
@@ -169,11 +164,19 @@ def check_and_stamp(db_path=None) -> dict:
     is the tick that found the database behind the volume (it writes the
     freeze and pages); `frozen` every tick after it until confirm(). Called
     by scheduler_loop at the top of each tick, before any job. Never raises
-    for a read or write it could not make (state 'error' — the tick goes on:
-    a guard that cannot read is no reason to stop the platform)."""
+    for a read or write it could not make (state 'error' — the tick goes on,
+    and an epoch it could not read is never written over). A freeze record
+    it cannot read holds the tick (state 'frozen', `unreadable`)."""
     if not active():
         return {"state": "off"}
-    held = frozen()
+    import marker_store
+    try:
+        held = frozen()
+    except marker_store.MarkerUnreadable as e:
+        # The freeze record cannot be read: the tick is held (its safe side —
+        # marker_store's docstring), never run as if no freeze were there.
+        log.error("restore guard: the freeze record is unreadable — the tick is held: %s", e)
+        return {"state": "frozen", "unreadable": True, "error": str(e)[:200]}
     if held is not None:
         return dict(held, state="frozen")
     try:

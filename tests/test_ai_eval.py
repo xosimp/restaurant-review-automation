@@ -43,10 +43,20 @@ REPLY_PROMPT = ("Write a reply to this review. Guest: Ann Smith (ann.smith@examp
                 "Review: The brisket was dry and the wait was 40 minutes. Our average ticket is $32.")
 
 
-def _keep(db_path, rid, run_id, prompt=REPLY_PROMPT, workflow="draft_response"):
+def _rendered(surface, value, part="prompt"):
+    """`value` rendered into the deployed template's first value (the rest
+    'x'), as production would have rendered a prompt from it: a frozen item
+    records the template it came from, and freeze leaves out any other."""
+    segs = ai_eval.template_parts(surface)[part]["segments"]
+    values = [value] + ["x"] * max(0, len(segs) - 2)
+    return "".join(seg + (values[i] if i < len(segs) - 1 else "") for i, seg in enumerate(segs))
+
+
+def _keep(db_path, rid, run_id, prompt=REPLY_PROMPT, workflow="draft_response", raw=False):
+    content = prompt if raw else _rendered("review_reply", prompt)
     ai_orchestrator._store_request(run_id, 1, workflow, rid, "T2",
-                                   {"model": "claude-sonnet-5-5", "max_tokens": 600, "system": "You reply to reviews.",
-                                    "messages": [{"role": "user", "content": prompt}]}, db_path=db_path)
+                                   {"model": "claude-sonnet-5-5", "max_tokens": 600,
+                                    "messages": [{"role": "user", "content": content}]}, db_path=db_path)
 
 
 # ── freeze ──────────────────────────────────────────────────────────────────
@@ -56,10 +66,12 @@ def test_freeze_copies_kept_requests_scrubbed_and_skips_demo_accounts(db):
     _keep(db, rid, "run:a")
     _keep(db, rid, "run:b")
     _keep(db, demo, "run:c")
+    _keep(db, rid, "run:old-prompt", raw=True)       # rendered from another prompt: not this one's measure
     out = ai_eval.freeze("review_reply", n=25, version="v-test")
-    assert out["frozen"] == 2 and out["skipped"]["not_eligible"] == 1
+    assert out["frozen"] == 2 and out["skipped"]["not_eligible"] == 1 and out["skipped"]["other_template"] == 1
     items = ai_eval.load_items("review_reply", version="v-test")
     assert {i["item_key"] for i in items} == {"run:run:a", "run:run:b"}
+    assert {i["reference"]["template"] for i in items} == {ai_eval.template_hash("review_reply")}
     text = json.dumps(items[0]["request"])
     assert "ann.smith@example.com" not in text and "brisket" in text, "re-scrubbed like the trace"
     # Freezing again adds nothing.
@@ -68,9 +80,11 @@ def test_freeze_copies_kept_requests_scrubbed_and_skips_demo_accounts(db):
 
 def test_freeze_reads_asks_final_calls_from_the_trace(db):
     import zlib
+    import ask_cavnar
     rid = _rid()
-    prompt = "[system]\nYou are Cavnar AI.\n\n[user]\nHow were sales last week?\n\n[assistant]\nLet me look.\n\n" \
-             "[user]\nTool result: net sales $12,400.\n\n[tools: 3] read_sales, read_labor, read_reviews"
+    prompt = "[system]\n" + ask_cavnar._SYSTEM_STATIC + "\nRestaurant: Harbor Grill\n\n[user]\nHow were sales last " \
+             "week?\n\n[assistant]\nLet me look.\n\n[user]\nTool result: net sales $12,400.\n\n[tools: 3] read_sales, " \
+             "read_labor, read_reviews"
     c = sqlite3.connect(db)
     try:
         c.execute("INSERT INTO ai_calls (call_id, restaurant_id, action, model, outcome, stop_reason, prompt_z) "
@@ -82,7 +96,7 @@ def test_freeze_reads_asks_final_calls_from_the_trace(db):
     assert ai_eval.freeze("ask", n=5, version="v1")["frozen"] == 1
     (item,) = ai_eval.load_items("ask", version="v1")
     req = item["request"]
-    assert req["system"] == "You are Cavnar AI."
+    assert req["system"].startswith(ask_cavnar._SYSTEM_STATIC) and req["system"].endswith("Restaurant: Harbor Grill")
     assert [m["role"] for m in req["messages"]] == ["user", "assistant", "user"]
     assert "[tools" not in req["messages"][-1]["content"] and "$12,400" in req["messages"][-1]["content"]
 
@@ -227,3 +241,51 @@ def test_the_smoke_budget_stops_before_the_next_call(db, monkeypatch):
     calls = []
     out = ai_eval.run_smoke_eval(send=lambda kw: calls.append(1) or _msg("Thanks for visiting."))
     assert len(calls) == 1 and out["hit_bound"] is True
+
+
+# ── the smoke sees what it used to read as clean (re-audit B7 P2) ───────────
+
+def _smoke_set(db, monkeypatch, tmp_path, n=3):
+    monkeypatch.setenv("AI_SMOKE_EVAL", "1")
+    monkeypatch.setenv("AI_SMOKE_EVAL_ITEMS", str(n))
+    monkeypatch.setattr(ai_eval, "BASELINE_DIR", str(tmp_path))
+    rid = _rid()
+    for i in range(n):
+        _keep(db, rid, f"run:{i}")
+    ai_eval.freeze("review_reply", n=n, version="v1")
+
+
+def _measured(model, refusal=0.0):
+    with open(ai_eval.baseline_path("review_reply", model), "w") as f:
+        json.dump({"surface": "review_reply", "model": model, "status": "measured",
+                   "scores": {"scored": 3, "refusal_rate": refusal, "figure_mismatch_rate": 0.0}}, f)
+
+
+def test_a_smoke_whose_every_call_fails_at_the_provider_is_a_failed_run_and_a_deviation(db, monkeypatch, tmp_path):
+    import ai_quality_watch
+    import ops
+    _smoke_set(db, monkeypatch, tmp_path)
+    _measured(ai_eval.production_model("review_reply"))
+
+    def send(kw):
+        raise RuntimeError("model not found: claude-retired")
+    out = ai_eval.run_smoke_eval(send=send)
+    assert out["attempted"] == 1 and out["failed"] == 1 and out["ok"] == 0 and out["deviated"] == 1
+    assert ops.run_outcome(out)[0] != ops.RUN_OK, "a pass that measured nothing is not a clean run"
+    dev = ai_eval.latest_runs("smoke")["review_reply"]["scores"]["deviations"]
+    assert "3 of 3 calls failed at the provider" in dev[0]
+    assert [d["surface"] for d in ai_quality_watch.eval_deviations()] == ["review_reply"]
+
+
+def test_a_production_model_moved_by_an_env_var_is_judged_against_the_code_models_baseline(db, monkeypatch, tmp_path):
+    _smoke_set(db, monkeypatch, tmp_path)
+    code = ai_eval.code_model("review_reply")
+    _measured(code, refusal=0.0)
+    monkeypatch.setenv("AI_TIER_T2_MODEL", "claude-sonnet-6")
+    moved = ai_eval.production_model("review_reply")
+    assert moved == "claude-sonnet-6" != code and ai_eval.read_baseline("review_reply", moved) is None
+    out = ai_eval.run_smoke_eval(send=lambda kw: _msg("", stop="refusal"))
+    assert out["deviated"] == 1 and out["ok"] == 1
+    dev = ai_eval.latest_runs("smoke")["review_reply"]["scores"]["deviations"]
+    assert any("no baseline for the model in force (claude-sonnet-6)" in d for d in dev)
+    assert any("refusal rate 100.0%" in d for d in dev), "compared with the code model's baseline"

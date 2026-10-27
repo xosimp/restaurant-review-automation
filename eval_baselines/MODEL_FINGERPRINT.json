@@ -2,27 +2,37 @@
   "baselines": {
     "ask": {
       "model": "claude-sonnet-5-5",
-      "status": "pending first run"
+      "set_version": null,
+      "status": "pending first run",
+      "template": "44c3b3ae219451f1"
     },
     "dsr_narrative": {
       "model": "claude-sonnet-5-5",
-      "status": "pending first run"
+      "set_version": null,
+      "status": "pending first run",
+      "template": "078b234610df15ea"
     },
     "invoice_extract": {
       "model": "claude-opus-5-5",
-      "status": "pending first run"
+      "set_version": null,
+      "status": "pending first run",
+      "template": "6a4d8921338a934a"
     },
     "review_analysis": {
       "model": "claude-haiku-5-5",
-      "status": "pending first run"
+      "set_version": null,
+      "status": "pending first run",
+      "template": "4391d153172ff25f"
     },
     "review_reply": {
       "model": "claude-sonnet-5-5",
-      "status": "pending first run"
+      "set_version": null,
+      "status": "pending first run",
+      "template": "058e1de09a0952b1"
     }
   },
   "bootstrap": true,
-  "hash": "afbaeb3e0004ae34",
+  "hash": "4517dbd6d93b9d24",
   "models": {
     "ask_cavnar": "claude-sonnet-5-5",
     "ask_summary": "claude-haiku-5-5",
@@ -55,6 +65,13 @@
   },
   "previous": {
     "T1": "claude-haiku-4-5-20251001"
+  },
+  "templates": {
+    "ask": "44c3b3ae219451f1",
+    "dsr_narrative": "078b234610df15ea",
+    "invoice_extract": "6a4d8921338a934a",
+    "review_analysis": "4391d153172ff25f",
+    "review_reply": "058e1de09a0952b1"
   },
   "tiers": {
     "T1": {

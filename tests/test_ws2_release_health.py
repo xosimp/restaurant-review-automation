@@ -18,13 +18,22 @@ def _ts(dt):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _boot(db, build, started, ok=1, boot_ms=20000, previous_exit=None):
+def _boot(db, build, started, ok=1, boot_ms=20000, previous_exit=None, deployment=None):
     conn = sqlite3.connect(db)
-    cur = conn.execute("INSERT INTO boot_events (started_at, ready_at, build, ok, boot_ms, previous_exit) "
-                       "VALUES (?,?,?,?,?,?)", (_ts(started), _ts(started), build, ok, boot_ms, previous_exit))
+    cur = conn.execute("INSERT INTO boot_events (started_at, ready_at, build, ok, boot_ms, previous_exit, "
+                       "deployment_id) VALUES (?,?,?,?,?,?,?)",
+                       (_ts(started), _ts(started), build, ok, boot_ms, previous_exit, deployment))
     conn.commit()
     conn.close()
     return cur.lastrowid
+
+
+def _authed_5xx(db, at, route, rid, n=1, authed=True, klass="web_api"):
+    """`n` 5xx samples as http_layer records them: signed-in (authed) or
+    not, from restaurant `rid`."""
+    import calendar
+    pm.persist_server_errors([{"at": calendar.timegm(at.timetuple()), "method": "GET", "route": route, "status": 500,
+                               "klass": klass, "restaurant_id": rid, "authed": authed} for _ in range(n)], db_path=db)
 
 
 def _rollup(db, at, requests, e5=0, route="/api/x", slow=0, klass="web_api"):
@@ -42,7 +51,7 @@ def two_builds(db_path, monkeypatch):
     """OLD served the hour before NEW's first boot, 20 minutes ago."""
     monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", NEW + "0000")
     for v in ("RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID", "CAVNAR_ENV",
-              "ALLOW_LOCAL_SCHEDULER"):
+              "ALLOW_LOCAL_SCHEDULER", "RAILWAY_DEPLOYMENT_ID"):
         monkeypatch.delenv(v, raising=False)
     start = NOW - timedelta(minutes=20)
     _boot(db_path, OLD, start - timedelta(hours=3))
@@ -70,8 +79,11 @@ def test_five_times_the_errors_is_a_regression_and_pages_once(two_builds, monkey
     db, start = two_builds
     _rollup(db, start + timedelta(minutes=2), 30, e5=4, route="/api/dsr")
     _rollup(db, start + timedelta(minutes=4), 30, e5=3, route="/mobile/api/home")
+    _authed_5xx(db, start + timedelta(minutes=2), "/api/dsr", rid=5, n=4)
+    _authed_5xx(db, start + timedelta(minutes=4), "/mobile/api/home", rid=6, n=3)
     res = pm.release_health(db_path=db, now=NOW)
-    assert res["verdict"] == "regressed" and any("7 customer 5xx on 2 routes" in u for u in res["urgent"])
+    assert res["verdict"] == "regressed"
+    assert any("7 signed-in customer 5xx on 2 routes from 2 restaurants" in u for u in res["urgent"]), res
     assert any("clean for 7 days" in w for w in res["warn"])
     pages = []
     import ops
@@ -105,28 +117,119 @@ def test_a_slower_p95_and_a_crashing_job_are_urgent(two_builds):
     assert any("job dsr_sweep crashed" in u for u in res["urgent"])
 
 
-def test_failed_queue_rows_ai_errors_and_failed_boots(two_builds):
+def _queue_rows(db, kind, state, n, at):
     import calendar
-    db, start = two_builds
-    t = float(calendar.timegm((start + timedelta(minutes=3)).timetuple()))
+    t = float(calendar.timegm(at.timetuple()))
     conn = sqlite3.connect(db)
-    for i in range(3):
+    for _ in range(n):
         conn.execute("INSERT INTO jobs (kind, grp, priority_class, state, enqueued_at, finished_at) "
-                     "VALUES ('strategy_learner', 'g', 'background', 'failed', ?, ?)", (t, t))
-    conn.execute("INSERT INTO jobs (kind, grp, priority_class, state, enqueued_at, finished_at) "
-                 "VALUES ('schedule_generate', 'g', 'interactive', 'failed', ?, ?)", (t, t))
+                     "VALUES (?, 'g', 'bulk', ?, ?, ?)", (kind, state, t, t))
+    conn.commit()
+    conn.close()
+
+
+def _provider(db, provider, state, at):
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO provider_health (provider, state, checked_at) VALUES (?,?,?)",
+                 (provider, state, _ts(at)))
+    conn.commit()
+    conn.close()
+
+
+def test_failed_queue_rows_are_judged_as_a_rate_against_the_deployment_before(two_builds):
+    """Re-audit B7 P2: 3 failed rows of any kind said ROLL BACK whatever the
+    kind's volume — 3 pos_archive rows of 1,500 on RPOWER's bad night."""
+    db, start = two_builds
+    during, before = start + timedelta(minutes=3), start - timedelta(minutes=20)
+    _queue_rows(db, "strategy_learner", "failed", 3, during)                  # 3 of 3: new with this deployment
+    _queue_rows(db, "pos_archive", "failed", 3, during)                       # 3 of 1,503: routine
+    _queue_rows(db, "pos_archive", "done", 1500, during)
+    _queue_rows(db, "home_snapshot", "failed", 4, during)                     # 4 of 5, but as before it
+    _queue_rows(db, "home_snapshot", "done", 1, during)
+    _queue_rows(db, "home_snapshot", "failed", 4, before)
+    _queue_rows(db, "home_snapshot", "done", 1, before)
+    _queue_rows(db, "schedule_generate", "failed", 1, during)
+    res = pm.release_health(db_path=db, now=NOW)
+    assert any(u.startswith("3 of 3 strategy_learner queue rows failed") for u in res["urgent"]), res
+    assert not any("pos_archive" in x for x in res["urgent"] + res["warn"]), res
+    assert not any("home_snapshot" in u for u in res["urgent"]) and any("home_snapshot" in w and "as before" in w
+                                                                        for w in res["warn"])
+    assert any("failed schedule generation" in w for w in res["warn"])
+
+
+def test_a_providers_outage_is_never_a_rollback(two_builds):
+    db, start = two_builds
+    during = start + timedelta(minutes=3)
+    _queue_rows(db, "pos_archive", "failed", 4, during)
+    _queue_rows(db, "pos_archive", "done", 2, during)
+    conn = sqlite3.connect(db)
     for i in range(10):
         conn.execute("INSERT INTO ai_usage (created_at, action, model, outcome) VALUES (?, 'x', 'm', ?)",
                      (_ts(start + timedelta(minutes=2)), "error" if i < 3 else "ok"))
     conn.commit()
     conn.close()
+    res = pm.release_health(db_path=db, now=NOW)
+    assert any("pos_archive" in u for u in res["urgent"]) and any("AI provider errors on 3 of 10" in u
+                                                                  for u in res["urgent"]), res
+    _provider(db, "rpower", "failing", start - timedelta(minutes=30))
+    _provider(db, "anthropic", "error", start + timedelta(minutes=5))
+    res = pm.release_health(db_path=db, now=NOW)
+    assert res["urgent"] == [], res["urgent"]
+    assert any("pos_archive" in w and "the provider, not the release" in w for w in res["warn"])
+    assert any("AI provider errors on 3 of 10" in w and "the provider, not the release" in w for w in res["warn"])
+
+
+def test_one_failed_boot_that_recovers_is_counted_once_and_never_a_rollback(two_builds):
+    """Re-audit B8 P2: the boot after a failed one was counted again through
+    its previous_exit, so one transient failure and a clean restart read
+    "2 failed boots — roll back" — and this test asserted it."""
+    db, start = two_builds
     _boot(db, NEW, start + timedelta(minutes=1), ok=0)
     _boot(db, NEW, start + timedelta(minutes=2), ok=1, previous_exit="boot_failed")
     res = pm.release_health(db_path=db, now=NOW)
-    assert any("3 failed queue rows of strategy_learner" in u for u in res["urgent"])
-    assert any("failed schedule generation" in w for w in res["warn"])
-    assert any("AI provider errors on 3 of 10" in u for u in res["urgent"])
-    assert any("failed boots" in u for u in res["urgent"])
+    assert not any("failed boots" in u for u in res["urgent"]), res["urgent"]
+    assert any("1 failed boot" in w for w in res["warn"])
+    _boot(db, NEW, start + timedelta(minutes=3), ok=0)
+    _boot(db, NEW, start + timedelta(minutes=4), ok=1, previous_exit="boot_failed")
+    res = pm.release_health(db_path=db, now=NOW)
+    assert any("2 failed boots of this deployment" in u for u in res["urgent"]), res["urgent"]
+
+
+# ── keyed on the deployment, the SHA alongside (re-audit B7 P2) ──────────────
+
+def test_a_config_redeploy_of_the_same_build_gets_its_own_window(db_path, monkeypatch):
+    """An env-var change redeploys the SAME SHA: keyed on the SHA, it was
+    judged on a window from days before and never checked."""
+    import ops
+    import scheduler
+    for v in ("RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID", "CAVNAR_ENV",
+              "ALLOW_LOCAL_SCHEDULER"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", NEW + "0000")
+    first = NOW - timedelta(days=3)
+    _boot(db_path, NEW, first, deployment="dep-1")
+    redeploy = NOW - timedelta(minutes=20)
+    _boot(db_path, NEW, redeploy, deployment="dep-2")
+    for m in range(5, 60, 5):
+        _rollup(db_path, redeploy - timedelta(minutes=m), 40)
+    _rollup(db_path, redeploy + timedelta(minutes=3), 30, e5=6, route="/api/dsr")
+    _authed_5xx(db_path, redeploy + timedelta(minutes=3), "/api/dsr", rid=5, n=3)
+    _authed_5xx(db_path, redeploy + timedelta(minutes=3), "/api/home/brief", rid=6, n=3)
+    monkeypatch.setenv("RAILWAY_DEPLOYMENT_ID", "dep-2")
+    assert pm.release_health(db_path=db_path, now=redeploy + timedelta(minutes=5))["verdict"] == "pending"
+    res = pm.release_health(db_path=db_path, now=NOW)
+    assert res["deployment_id"] == "dep-2" and res["previous_deployment"] == "dep-1"
+    assert res["window_start"] == _ts(redeploy) and res["verdict"] == "regressed", res
+    pages = []
+    monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: True)
+    monkeypatch.setattr(ops, "page_operator", lambda key, subject, lines, cooldown_minutes=0:
+                        pages.append((key, lines)) or {"sent": True})
+    assert pm.page_release_health(res) is True
+    key, lines = pages[0]
+    assert key == "release_health:dep-2" and "dep-2" in lines[0] and NEW in lines[0]
+    # The first deployment of that build is judged on its own window.
+    monkeypatch.setenv("RAILWAY_DEPLOYMENT_ID", "dep-1")
+    assert pm.release_health(db_path=db_path, now=NOW)["window_start"] == _ts(first)
 
 
 def test_no_scheduler_tick_after_the_boot_is_urgent_where_it_runs(two_builds, monkeypatch):
@@ -154,9 +257,11 @@ def test_no_build_named_is_unknown(db_path, monkeypatch):
 def test_six_5xx_of_twelve_requests_on_two_routes_page_below_the_rate_floor(db_path):
     _rollup(db_path, NOW - timedelta(minutes=3), 6, e5=3, route="/api/dsr")
     _rollup(db_path, NOW - timedelta(minutes=4), 6, e5=3, route="/api/home/brief")
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/api/dsr", rid=5, n=3)
+    _authed_5xx(db_path, NOW - timedelta(minutes=4), "/api/home/brief", rid=6, n=3)
     slo = pm.request_slo(db_path=db_path, now=NOW)
     assert slo["requests"] < pm.HTTP_5XX_ALERT_MIN_REQUESTS and slo["error_rate_over"] is False
-    assert slo["error_floor_over"] is True and slo["floor_errors"] == 6
+    assert slo["error_floor_over"] is True and slo["floor_errors"] == 6 and slo["floor_tenants"] == 2
     import ops
     assert ops._has_urgent({"requests": slo}, {}, write_ok=True) is True
 
@@ -164,7 +269,31 @@ def test_six_5xx_of_twelve_requests_on_two_routes_page_below_the_rate_floor(db_p
 def test_one_route_or_the_console_never_trips_the_floor(db_path):
     _rollup(db_path, NOW - timedelta(minutes=3), 10, e5=8, route="/api/dsr")
     _rollup(db_path, NOW - timedelta(minutes=3), 10, e5=8, route="/admin/x", klass="admin")
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/api/dsr", rid=5, n=8)
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/admin/x", rid=6, n=8, klass="admin")
     assert pm.request_slo(db_path=db_path, now=NOW)["error_floor_over"] is False
+
+
+def test_unauthenticated_traffic_or_one_tenant_never_trips_the_floor(db_path):
+    """Re-audit B8 P2: a crawler posting malformed bodies to two routes paged
+    urgently every hour."""
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/api/dsr", rid=5, n=4, authed=False)
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/mobile/api/client-errors", rid=None, n=4, authed=False)
+    assert pm.request_slo(db_path=db_path, now=NOW)["error_floor_over"] is False
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/api/dsr", rid=5, n=3)
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/api/home/brief", rid=5, n=3)
+    slo = pm.request_slo(db_path=db_path, now=NOW)
+    assert slo["floor_errors"] == 6 and slo["floor_tenants"] == 1 and slo["error_floor_over"] is False
+
+
+def test_the_floor_is_disarmed_where_the_rate_rule_rules(db_path):
+    """Re-audit B7 P2: 5 5xx in 20,000 requests is the rate rule's call —
+    0.03% — never an urgent page."""
+    _rollup(db_path, NOW - timedelta(minutes=3), 20000, e5=6, route="/api/dsr")
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/api/dsr", rid=5, n=3)
+    _authed_5xx(db_path, NOW - timedelta(minutes=3), "/api/home/brief", rid=6, n=3)
+    slo = pm.request_slo(db_path=db_path, now=NOW)
+    assert slo["error_rate_over"] is False and slo["error_floor_over"] is False
 
 
 def test_a_5xx_soon_after_a_boot_on_a_route_clean_for_a_week_warns(db_path):

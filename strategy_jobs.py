@@ -1963,6 +1963,14 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
         # an owner a draft is waiting when none was saved is worse than silence.
         state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
         if state.get("status") != "done":
+            # How it failed (schedule_engine.record_generation_failure): a
+            # platform failure is counted, and the queue row ends a dead
+            # letter the urgent rule reads (re-audit B7 P1); the owner's
+            # own refusals (no team, closed days, the budget) are not.
+            failure = _se.take_generation_failure(job_id)
+            res = state.get("result") if isinstance(state.get("result"), dict) else {}
+            if failure and failure.get("platform") and not res.get("stopped"):
+                _bump("failed")
             if _week_taken(r.id, _request.get("week_start")):
                 # The owner's own draft (or a sent week) is the week's
                 # schedule now (R5-01): nothing to retry, nobody to tell.
@@ -2295,6 +2303,13 @@ def run_queued_auto_draft(job):
     with ctx:
         _draft_one(r, DB_PATH, _se, _bump, period=p.get("period"), target=target, attempt=p.get("attempt"),
                    batch=bool(p.get("batch", True)) and not ans and not p.get("answers_job"))
+    if counts.get("failed"):
+        # The generation failed on the platform's side: the row is a dead
+        # letter (failed, not retried — the pass's next try is its own row),
+        # so a broken auto-draft pages like a broken press (re-audit B7 P1).
+        import job_queue as _jq_dead
+        return _jq_dead.dead_letter(counts, "the auto-draft's generation failed (its error is in the job failures, "
+                                            "schedule_generate)")
     return counts
 
 
