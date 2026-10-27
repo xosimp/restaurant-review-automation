@@ -100,6 +100,7 @@ if sha:
     os.environ["RAILWAY_GIT_COMMIT_SHA"] = sha
 else:
     os.environ.pop("RAILWAY_GIT_COMMIT_SHA", None)
+import dotenv; dotenv.load_dotenv = lambda *a, **k: False  # never production's .env (audit #25)
 import hosted_dashboard as h
 import auth, models
 from scripts import smoke

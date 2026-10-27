@@ -206,6 +206,7 @@ sqlite3.connect(os.path.join(vol, "reviews.db")).close()
 os.environ.update(RAILWAY_VOLUME_MOUNT_PATH=vol, RUN_SCHEDULER_IN_WEB="0", ANTHROPIC_API_KEY="",
                   RESEND_API_KEY="", TWILIO_AUTH_TOKEN="", SECRET_KEY="test-secret",
                   CAVNAR_PIN_PEPPER="test-pepper", HIBP_DISABLED="1", ADMIN_REQUIRE_2FA="0")
+import dotenv; dotenv.load_dotenv = lambda *a, **k: False  # never production's .env (audit #25)
 import hosted_dashboard as h
 import auth, models
 from models import Restaurant

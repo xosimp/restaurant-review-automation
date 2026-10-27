@@ -600,6 +600,7 @@ os.environ.update(RAILWAY_VOLUME_MOUNT_PATH=vol, RUN_SCHEDULER_IN_WEB="0", ANTHR
                   RESEND_API_KEY="", TWILIO_AUTH_TOKEN="", TWILIO_ACCOUNT_SID="", STRIPE_SECRET_KEY="",
                   DOCUSIGN_INTEGRATION_KEY="", GOOGLE_PLACES_API_KEY="", PERPLEXITY_API_KEY="",
                   SECRET_KEY="test-secret", CAVNAR_PIN_PEPPER="test-pepper", HIBP_DISABLED="1", ADMIN_REQUIRE_2FA="0")
+import dotenv; dotenv.load_dotenv = lambda *a, **k: False  # never production's .env (audit #25)
 import hosted_dashboard as h
 import auth, models, people, shift_facts
 from models import Restaurant

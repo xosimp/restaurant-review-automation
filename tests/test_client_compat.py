@@ -196,6 +196,7 @@ def _blocked(*a, **k):
     raise OSError("network blocked in test subprocess")
 socket.create_connection = _blocked
 socket.socket.connect = lambda self, *a, **k: _blocked()
+import dotenv; dotenv.load_dotenv = lambda *a, **k: False  # never production's .env (audit #25)
 import hosted_dashboard as h
 c = h.app.test_client()
 out = {
