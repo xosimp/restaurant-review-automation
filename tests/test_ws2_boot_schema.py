@@ -170,6 +170,7 @@ def _traced_boot(path, monkeypatch):
     return ran
 
 
+@pytest.mark.sqlite_only     # sqlite3's trace callback; the Postgres twin is test_ws2_pg_boot.py's WRITE_HOOKS test
 def test_a_second_boot_runs_no_unrecorded_rewrite(db_path, monkeypatch):
     """db_path is a copy of a booted template: booting it is a second boot."""
     names = {m["name"] for m in models.applied_migrations(db_path)}
