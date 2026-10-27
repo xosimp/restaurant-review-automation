@@ -83,9 +83,15 @@ def test_what_fails_a_boot():
 def test_the_base_ref_resolves():
     head = ubc._git(ROOT, "rev-parse", "HEAD")
     assert ubc.resolve_base_ref(ROOT, "HEAD") == head
-    base = ubc.resolve_base_ref(ROOT)                     # origin/production, the merge-base, or HEAD~1
-    assert len(base) == 40 and base != head or ubc._git(ROOT, "rev-parse", "--verify", "--quiet",
-                                                        "origin/production", check=False)
+    shallow = not ubc._git(ROOT, "rev-parse", "--verify", "--quiet", "HEAD~1", check=False)
+    has_base = shallow is False or bool(ubc._git(ROOT, "rev-parse", "--verify", "--quiet", "origin/production",
+                                                 check=False))
+    if has_base:
+        assert len(ubc.resolve_base_ref(ROOT)) == 40      # origin/production, the merge-base, or HEAD~1
+    else:
+        with pytest.raises(RuntimeError):                 # a shallow clone: the script says so (exit 2)
+            ubc.resolve_base_ref(ROOT)
+        assert ubc.main(["--no-rollback"]) == 2
     with pytest.raises(RuntimeError):
         ubc.resolve_base_ref(ROOT, "no-such-ref-rf6")
 
