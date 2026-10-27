@@ -227,6 +227,12 @@ http_layer.register(app)
 # immutable files (static_bundles, scheduler audit 10/10/26 SCALE-28).
 import static_bundles
 static_bundles.install(app)
+# The build every page was rendered by (config.build_id, "" locally): the
+# fetch wrapper (_csrf_fetch.html) compares it with each JSON answer's
+# X-Cavnar-Build and offers a reload once they differ — a tab left open
+# across a deploy otherwise runs the old JavaScript against the new routes
+# (audit 10/26/26 A06-13).
+app.context_processor(lambda: {"cavnar_build": config.build_id()})
 
 
 @app.after_request
