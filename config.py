@@ -129,9 +129,7 @@ def scheduling_allowed() -> bool:
         return False
     if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
         return True
-    # Railway sets all of these on every deploy; any one is enough.
-    if not any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
-                                       "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME")):
+    if not railway_marked():
         return False
     # ...and only the production environment schedules (release-safety audit
     # 10/26/26 A05-06): a staging copy made with "duplicate environment"
@@ -201,6 +199,31 @@ def build_label() -> str:
     a `railway up` deploy names no commit, and that must be visible)."""
     sha = build_sha()
     return sha[:12] if sha else "unknown"
+
+
+# Railway sets all of these on every deploy (and `railway run` / `railway
+# shell` inject them into a local command); any one is enough.
+RAILWAY_MARKERS = ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID", "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME")
+
+
+def railway_marked() -> bool:
+    """Whether any Railway marker is in this process's environment — the one
+    test scheduling_allowed and platform_database_url_allowed share."""
+    return any(os.getenv(v) for v in RAILWAY_MARKERS)
+
+
+def platform_database_url_allowed() -> bool:
+    """Whether DATABASE_URL (and SHADOW_DATABASE_URL) may route this
+    process's platform database to Postgres (audit #25 A01-06, R16). Only on
+    Railway — the same markers scheduling_allowed reads, which arrive with
+    DATABASE_URL itself in the container, a `railway ssh` session or a
+    `railway run` — unless ALLOW_LOCAL_PG=1 says a local Postgres is meant
+    (a scratch server, never production's). A shell that exported
+    production's URL for a psql session used to point a local app, or the
+    test suite, at production: boot DDL and the suite's per-test deletes."""
+    if (os.getenv("ALLOW_LOCAL_PG") or "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return railway_marked()
 
 
 def restore_frozen() -> bool:

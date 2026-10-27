@@ -21,7 +21,7 @@ import models
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DASHBOARD = os.path.join(ROOT, "templates", "dashboard.html")
-FIXTURE = os.path.join(ROOT, "tests", "fixtures", "bar_ejs_invoice_lines.json")
+FIXTURE = os.path.join(ROOT, "tests", "fixtures", "bar_invoice_lines.json")
 HEAD = ("Retailer Name,Vendor Name,Location ID,Invoice Number,Invoice Date,Invoice Total,Product Number,"
         "Product Description,U.P.C,Unit Of Measure,Item Quantity,Item Cost,Item Adjustment\n")
 TODAY = date(2026, 10, 1)
@@ -491,10 +491,12 @@ def test_a_long_name_wraps_to_two_lines_and_the_detail_says_it_in_full(full):
 
 
 def test_deal_endings_and_order_sizes_are_named_never_increases(db_path):
-    """EJ's own invoices (5/4–10/13/26): Son Cutrer's $174 is its usual price,
-    a $156 deal ended; it shows as a deal, not a red increase."""
+    """Six synthetic months of invoices (tests/fixtures/bar_invoice_lines.json,
+    scripts/make_bar_invoice_fixture.py): Sonoma-Cutrer's $168 is its usual
+    price, a $152 deal ended; it shows as a deal, not a red increase."""
     fx = json.load(open(FIXTURE))
-    rid = models.create_restaurant(models.Restaurant(name="EJ's", owner_email="o@x.test"), db_path=db_path)
+    refs = fx.get("ref_invoice_numbers") or {}
+    rid = models.create_restaurant(models.Restaurant(name="Lakeview Tap", owner_email="o@x.test"), db_path=db_path)
     conn = models.get_conn(db_path)
     inv = {}
     for n, r in enumerate(dict(zip(fx["columns"], row)) for row in fx["rows"]):
@@ -502,8 +504,9 @@ def test_deal_endings_and_order_sizes_are_named_never_increases(db_path):
         if k not in inv:
             inv[k] = conn.execute(
                 "INSERT INTO fintech_invoices (restaurant_id, distributor, invoice_number, invoice_date, total, "
-                "source_format, balanced, updated_at) VALUES (?,?,?,?,?,?,?,?) RETURNING id",
-                (rid, r["distributor"], r["invoice_number"], r["invoice_date"], 0, "export", 1, "2026-10-14 00:00:00")).fetchone()[0]
+                "source_format, balanced, updated_at, ref_invoice_number) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
+                (rid, r["distributor"], r["invoice_number"], r["invoice_date"], 0, "export", 1, "2026-10-14 00:00:00",
+                 refs.get(r["invoice_number"]))).fetchone()[0]
         conn.execute("INSERT INTO fintech_invoice_lines (invoice_id, line_no, item_code, description, upc, uom, qty, "
                      "unit_price, cost, deposit, adjustment, kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                      (inv[k], n + 1, r["item_code"], r["description"], r["upc"], r["uom"], r["qty"], r["unit_price"],

@@ -367,7 +367,7 @@ def distributor_key(name) -> str:
 
 def invoice_key(number) -> str:
     """An invoice number as one key: upper case, spaces and a leading '#'
-    out, leading zeros out ('0128850598' and '128850598' are one invoice).
+    out, leading zeros out ('0233150629' and '233150629' are one invoice).
     Separators stay significant (FC/Bar audit 10/16/26, ING-18): '1-2' and
     '12' are two invoices, so '12', '0012' and '1-2' no longer collapse into
     one. The old looser key is `loose_invoice_key` — a spelling the strict

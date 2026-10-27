@@ -25,7 +25,7 @@ CSRF = "intake-admin-csrf"
 EXPORT = (
     "Vendor Name,Invoice Number,Invoice Date,Invoice Total,Product Number,Product Description,U.P.C,"
     "Unit Of Measure,Item Quantity,Item Cost,Item Adjustment\n"
-    "Breakthru,0128850598,09/15/2026,$252.00,9637400,HIGH NOON VODKA SELTZER,085000000000,CA,6,$42.00,$0.00\n"
+    "Breakthru,0233150629,09/15/2026,$252.00,9637400,HIGH NOON VODKA SELTZER,085000000000,CA,6,$42.00,$0.00\n"
 )
 
 

@@ -28,6 +28,9 @@ import models
 import strategy_routes
 from models import create_restaurant, Restaurant
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture
 def db(db_path, monkeypatch):

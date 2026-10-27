@@ -8,11 +8,14 @@ UI-8    Generate joins a running generation only when it asks the same thing
         is being built, and nothing starts
 """
 import threading
+from datetime import timedelta
 
 from test_edge_data_async_jobs import _init, client, _restaurant, _token, _pending_job, _jobs  # noqa: F401
 import models
 import ops
 import schedule_engine as se
+from tests.clock import next_monday
+from time_utils import mdy
 
 
 def _set(db_path, job_id, **cols):
@@ -71,25 +74,31 @@ def test_generate_for_another_week_never_joins_a_running_redo(client, db_path, m
         started.append((job_id, k))
         release.wait(3)
     monkeypatch.setattr(se, "_run_schedule_job", slow)
-    hid = models.save_schedule_history(rid, "2026-10-12", "2026-10-18", 6.0, 0, 30,
+    # Weeks from the restaurant's clock, never literals: the week of 10/19/26
+    # was "already happened" from 10/26/26 on and the route refused it with a
+    # 400 before the join rule was reached (audit #25 A02-03).
+    monday = next_monday()
+    tuesday, sunday, other_week = monday + timedelta(days=1), monday + timedelta(days=6), monday + timedelta(days=7)
+    hid = models.save_schedule_history(rid, monday.isoformat(), sunday.isoformat(), 6.0, 0, 30,
                                        "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
-                                       "2026-10-13,Tuesday,Ana,Server,4:00pm,10:00pm,6,", [], db_path=db_path)
+                                       f"{tuesday.isoformat()},Tuesday,Ana,Server,4:00pm,10:00pm,6,", [],
+                                       db_path=db_path)
     try:
         redo = client.post("/mobile/api/labor/generate-schedule", headers=h,
-                           json={"dates": ["2026-10-13"], "history_id": hid}).get_json()
+                           json={"dates": [tuesday.isoformat()], "history_id": hid}).get_json()
         assert redo["ok"] and not redo.get("joined")
         other = client.post("/mobile/api/labor/generate-schedule", headers=h,
-                            json={"week_start": "2026-10-19", "instruction": "Patio closed"})
+                            json={"week_start": other_week.isoformat(), "instruction": "Patio closed"})
         body = other.get_json()
         # Nothing is started or joined for the other week. Since the parity
         # round (#15) the refusal names the RUNNING job so the phone can offer
         # "Watch it" — the redo's own id, never a new one.
-        assert other.status_code == 409 and body["busy"] is True and body["ok"] is False
+        assert other.status_code == 409 and body["busy"] is True and body["ok"] is False, body
         assert body.get("job_id") in (None, redo["job_id"]) and not body.get("joined")
-        assert "redoing Tuesday 10/13/26 of the week of 10/12/26" in body["error"]
+        assert f"redoing Tuesday {mdy(tuesday)} of the week of {mdy(monday)}" in body["error"]
         # The same redo pressed again joins it.
         again = client.post("/mobile/api/labor/generate-schedule", headers=h,
-                            json={"dates": ["2026-10-13"], "history_id": hid}).get_json()
+                            json={"dates": [tuesday.isoformat()], "history_id": hid}).get_json()
         assert again["joined"] is True and again["job_id"] == redo["job_id"]
     finally:
         release.set()

@@ -23,6 +23,7 @@ import food_cost_intelligence as fci
 import inventory
 import inventory_ledger as il
 import models
+from tests.clock import restaurant_today
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +70,7 @@ def _event(db_path, rid, iid, kind, qty, days_ago=1, source="manual"):
     conn.execute(
         "INSERT INTO ingredient_stock_events "
         "(restaurant_id, ingredient_id, event_type, qty, event_date, source) VALUES (?,?,?,?,?,?)",
-        (rid, iid, kind, qty, (date.today() - timedelta(days=days_ago)).isoformat(), source))
+        (rid, iid, kind, qty, (restaurant_today() - timedelta(days=days_ago)).isoformat(), source))
     conn.commit()
     conn.close()
 
@@ -80,7 +81,7 @@ def _snapshot(db_path, rid, days_ago, waste, inv_value=None, items=None):
         "INSERT INTO inventory_history (restaurant_id, waste_json, week_end, items_json, inv_value, source) "
         "VALUES (?,?,?,?,?,'scheduled')",
         (rid, json.dumps({"total_waste_cost": waste, "top_items": []}),
-         (date.today() - timedelta(days=days_ago)).isoformat(),
+         (restaurant_today() - timedelta(days=days_ago)).isoformat(),
          json.dumps(items) if items else None, inv_value))
     conn.commit()
     conn.close()
@@ -88,22 +89,39 @@ def _snapshot(db_path, rid, days_ago, waste, inv_value=None, items=None):
 
 # ── P0-1 · the history is written on a schedule, not on a page view ─────────
 
-def test_the_snapshot_writer_is_a_scheduled_job_not_a_page_render():
+def test_the_snapshot_writer_is_a_scheduled_job_not_a_page_render(db_path, monkeypatch):
     """inventory_history had exactly one writer in production: the AI insight
     function, on page render. The weekly waste series, the multi-week price
     trends, the price-spike alert and the opening/closing values behind food
     cost % all read that table — so all four were functions of whether the
     owner happened to open the tab, and a week nobody looked at is ABSENT
-    from the series rather than zero in it."""
+    from the series rather than zero in it.
+
+    Behaviour, not source text (audit #25 A03-11: this pinned
+    'claim_period("food_cost_snapshots"', "resumable_sweep(" and "except
+    Exception as e:" as strings). The scheduled job runs over every active
+    inventory restaurant; one failing never ends the sweep."""
+    import data_freshness
     import scheduler
-    src = inspect.getsource(scheduler)
-    assert 'claim_period("food_cost_snapshots"' in src
-    body = inspect.getsource(scheduler.run_food_cost_snapshots)
-    assert "weekly_snapshot" in body
-    # Every active restaurant, through the bounded, resumable sweep — this
-    # pinned a bare `for row in rows:` loop, the unbounded shape MOD-FC-19 removed.
-    assert "resumable_sweep(" in body
-    assert "except Exception as e:" in body, "one restaurant failing must not end the sweep"
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    a, b, c = _restaurant(db_path, 1), _restaurant(db_path, 2), _restaurant(db_path, 3, module_inventory=0)
+    monkeypatch.setattr(data_freshness, "depletion_behind", lambda r, **k: None)
+    seen = []
+
+    def snapshot(rid, db_path=None):
+        seen.append(rid)
+        if rid == a:
+            raise RuntimeError("one restaurant's stock read failed")
+        return {"ok": True}
+    monkeypatch.setattr(fci, "weekly_snapshot", snapshot)
+    monkeypatch.setattr(fci, "record_profitability_forecast", lambda rid: None)
+    monkeypatch.setattr(fci, "score_forecasts", lambda rid: {"scored": 0})
+    out = scheduler.run_food_cost_snapshots()
+    assert sorted(seen) == [a, b], "every inventory restaurant, and only those"
+    assert (out["written"], out["failed"], out["hit_bound"]) == (1, 1, False)
+    # The standard counts the job registry reads (ops.run_outcome).
+    assert {"attempted", "ok", "failed", "skipped", "hit_bound"} <= set(out)
 
 
 def test_the_snapshot_records_the_stock_value_cogs_needs(db_path, monkeypatch):
@@ -192,12 +210,15 @@ def test_a_page_render_never_moves_the_inventory_value_cogs_brackets_on(db_path,
                         lambda r: ([{"item": "X"}], True,
                                    {"total_waste_cost_week": 10.0, "waste_items": [],
                                     "total_stock_value": 7777.0}))
-    fci.weekly_snapshot(rid, db_path=db_path)
+    out = fci.weekly_snapshot(rid, db_path=db_path)
     conn = models.get_conn(db_path)
-    got = conn.execute("SELECT inv_value FROM inventory_history WHERE restaurant_id=?",
-                       (rid,)).fetchone()["inv_value"]
+    rows = conn.execute("SELECT week_end, inv_value FROM inventory_history WHERE restaurant_id=? ORDER BY id",
+                        (rid,)).fetchall()
     conn.close()
-    assert got == 7777.0
+    # The same (restaurant, week_end) row, upserted — not a second row beside
+    # it (an unordered read of two rows passed on SQLite and failed on
+    # Postgres, audit #25 A01-09).
+    assert [(r["week_end"], r["inv_value"]) for r in rows] == [(out["week_end"], 7777.0)]
 
 
 def test_the_insight_no_longer_runs_ddl_on_the_render_path():
@@ -267,7 +288,7 @@ def test_analysis_for_supplies_the_real_purchases_and_count_dates(db_path, monke
     _event(db_path, rid, iid, "receiving", 30, days_ago=2)
     conn = models.get_conn(db_path)
     conn.execute("UPDATE ingredients SET last_recount_at=? WHERE id=?",
-                 ((date.today() - timedelta(days=3)).isoformat(), iid))
+                 ((restaurant_today() - timedelta(days=3)).isoformat(), iid))
     conn.commit()
     conn.close()
     seen = {}
@@ -395,7 +416,7 @@ def test_the_variance_names_the_dishes_that_consume_the_ingredient(db_path):
     conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) "
                  "VALUES (?,?,?)", (mid, iid, 1.0))
     conn.execute("INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
-                 "VALUES (?,?,?,?)", (rid, mid, (date.today() - timedelta(days=2)).isoformat(), 80))
+                 "VALUES (?,?,?,?)", (rid, mid, (restaurant_today() - timedelta(days=2)).isoformat(), 80))
     conn.commit()
     conn.close()
     e = il.inferred_variance(rid)["material"][0]
@@ -542,8 +563,8 @@ def test_the_projection_is_labelled_a_forecast(db_path, monkeypatch):
                             "ok": True, "cogs": 18000.0, "pct": 30.0, "target": 28.0, "window_days": days, "start": (today - timedelta(days=days - 1)).isoformat(), "end": today.isoformat()})
     # A current labor period: prime cost now refuses an undated or stale
     # one (DH1-3), so the fixture carries the period the analysis covers.
-    _end = (date.today() - timedelta(days=1)).isoformat()
-    _start = (date.today() - timedelta(days=28)).isoformat()
+    _end = (restaurant_today() - timedelta(days=1)).isoformat()
+    _start = (restaurant_today() - timedelta(days=28)).isoformat()
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant",
                         lambda r: {"is_live": True, "total_sales": 60000.0,
                                    "overall_labor_pct": 30.0,
@@ -582,9 +603,9 @@ def test_a_concentrated_weekday_is_measured_against_a_seven_day_week(db_path):
     iid = _ingredient(db_path, rid, "Salmon", unit_cost=10.0)
     # Two weekdays only, one clearly dominant.
     thursdays = [d for d in range(1, 40)
-                 if (date.today() - timedelta(days=d)).strftime("%a") == "Thu"][:4]
+                 if (restaurant_today() - timedelta(days=d)).strftime("%a") == "Thu"][:4]
     fridays = [d for d in range(1, 40)
-               if (date.today() - timedelta(days=d)).strftime("%a") == "Fri"][:4]
+               if (restaurant_today() - timedelta(days=d)).strftime("%a") == "Fri"][:4]
     for d in thursdays:
         _event(db_path, rid, iid, "waste", 10, days_ago=d)
     for d in fridays:
@@ -603,9 +624,9 @@ def test_waste_on_a_couple_of_days_is_never_called_an_even_spread(db_path):
     rid = _restaurant(db_path)
     iid = _ingredient(db_path, rid, "Salmon", unit_cost=10.0)
     mondays = [d for d in range(1, 40)
-               if (date.today() - timedelta(days=d)).strftime("%a") == "Mon"][:3]
+               if (restaurant_today() - timedelta(days=d)).strftime("%a") == "Mon"][:3]
     tuesdays = [d for d in range(1, 40)
-                if (date.today() - timedelta(days=d)).strftime("%a") == "Tue"][:3]
+                if (restaurant_today() - timedelta(days=d)).strftime("%a") == "Tue"][:3]
     for d in mondays + tuesdays:
         _event(db_path, rid, iid, "waste", 5, days_ago=d)
     out = fci.weekday_waste(rid, db_path=db_path)
@@ -651,7 +672,7 @@ def test_a_forecast_is_stored_and_later_scored(db_path):
     rid = _restaurant(db_path)
     # Last week: closed, so scorable. (This used today's date, and the old
     # scorer scored a week still in progress against its partial figure.)
-    last_week = date.today() - timedelta(days=7)
+    last_week = restaurant_today() - timedelta(days=7)
     fci.record_forecast(rid, "waste_week", last_week.isoformat(), 400.0, basis="test", db_path=db_path)
     _snapshot(db_path, rid, days_ago=7, waste=500.0)
     # Waste was logged that week: a week with none is unscorable (DH3-15).
@@ -668,7 +689,7 @@ def test_a_forecast_is_stored_and_later_scored(db_path):
 
 def test_a_week_still_in_progress_is_never_scored(db_path):
     rid = _restaurant(db_path)
-    fci.record_forecast(rid, "waste_week", date.today().isoformat(), 400.0, basis="test", db_path=db_path)
+    fci.record_forecast(rid, "waste_week", restaurant_today().isoformat(), 400.0, basis="test", db_path=db_path)
     _snapshot(db_path, rid, days_ago=0, waste=500.0)
     assert fci.score_forecasts(rid, db_path=db_path)["scored"] == 0
 

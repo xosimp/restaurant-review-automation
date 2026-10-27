@@ -1425,11 +1425,20 @@ def boot_conn(db_path: str = DB_PATH):
 
 def _db_backend() -> str:
     """db_dialect.backend() without importing it on SQLite: "postgres" only
-    when DATABASE_URL is a postgres URL and DB_BACKEND does not pin sqlite."""
+    when DATABASE_URL is a postgres URL, DB_BACKEND does not pin sqlite, and
+    this process may use it — on Railway, or ALLOW_LOCAL_PG=1
+    (config.platform_database_url_allowed; audit #25 A01-06)."""
     url = os.getenv("DATABASE_URL") or ""
     if not url.startswith(("postgres://", "postgresql://")):
         return "sqlite"
-    return "sqlite" if (os.getenv("DB_BACKEND") or "").strip().lower() == "sqlite" else "postgres"
+    if (os.getenv("DB_BACKEND") or "").strip().lower() == "sqlite":
+        return "sqlite"
+    import config as _cfg_be
+    if not _cfg_be.platform_database_url_allowed():
+        import db_dialect
+        db_dialect.note_refused_url("DATABASE_URL")
+        return "sqlite"
+    return "postgres"
 
 
 def checkpoint(db_path: str = DB_PATH) -> None:

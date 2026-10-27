@@ -9,6 +9,31 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
+# ── Never production (audit #25 A01-06, A01-17, R16) ─────────────────────────
+# Before anything else is imported. Inside a Railway environment (`railway
+# run`, `railway shell`, a `railway ssh` session — what sets DATABASE_URL to
+# production's Postgres) the suite refuses to start: the default database's
+# boot DDL and the autouse ledger reset would run against production. Any
+# platform database URL is dropped, so a shell that exported one for a psql
+# session never reaches models.get_conn (which also ignores DATABASE_URL off
+# Railway — config.platform_database_url_allowed); a test that wants the
+# Postgres backend sets DATABASE_URL and ALLOW_LOCAL_PG=1 with monkeypatch.
+import config as _cfg_guard
+
+
+def _refuse(message):
+    """Stop the run before anything else is imported (exit status 3)."""
+    sys.stderr.write("\n" + message + "\n")
+    raise SystemExit(3)
+
+
+if _cfg_guard.railway_marked():
+    _refuse("Refusing to run the test suite inside a Railway environment (one of %s is set): it would run boot "
+            "migrations and per-test deletes against production. Run it from a plain local shell."
+            % ", ".join(_cfg_guard.RAILWAY_MARKERS))
+for _var in ("DATABASE_URL", "SHADOW_DATABASE_URL", "ALLOW_LOCAL_PG"):
+    os.environ.pop(_var, None)
+
 # The checkout's .env holds production keys (Anthropic, Resend, Twilio,
 # Stripe…). hosted_dashboard.py and scheduler.py call load_dotenv() at
 # import, so on a developer machine every test that imported either one
@@ -104,6 +129,94 @@ from models import init_db, ensure_columns, create_restaurant, save_reviews, Res
 _PG_BASE = (os.getenv("CAVNAR_TEST_PG_URL") or "").strip()
 
 
+def _is_local_host(host):
+    """localhost, a *.localhost name, or a loopback address (v4, v6, mapped)."""
+    import ipaddress
+    host = (host.decode() if isinstance(host, bytes) else str(host or "")).strip("[]").lower()
+    if host in ("localhost", "") or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback or ip.is_unspecified
+
+
+if _PG_BASE:
+    # The suite creates and DROPs databases on this server: a scratch one on
+    # this machine (or CI's service container), never anything remote.
+    from urllib.parse import urlsplit as _urlsplit
+    _pg_host = _urlsplit(_PG_BASE).hostname or ""
+    if not _is_local_host(_pg_host) and os.getenv("CAVNAR_TEST_PG_ALLOW_REMOTE") != "1":
+        _refuse(f"CAVNAR_TEST_PG_URL names a non-local server ({_pg_host}); the suite creates and drops databases "
+                "there. Use a scratch Postgres on localhost (CAVNAR_TEST_PG_ALLOW_REMOTE=1 to override "
+                "deliberately).")
+
+
+# ── The network guard (audit #25 A01-17) ─────────────────────────────────────
+# An allowlist at the socket, not a denylist of provider hosts (APNs, Google
+# OAuth, Meta, RPOWER, Untappd, Tock and R2 were all reachable before): a
+# connection to anything but this machine (loopback, a unix socket) or the
+# scratch Postgres raises NetworkBlocked — an OSError, so the code under
+# test meets an unreachable network exactly as it would offline — and the
+# attempt is listed at the end of the run so it gets stubbed. (Postgres
+# itself connects through libpq in C, below this guard; CAVNAR_TEST_PG_URL is
+# held to localhost above.)
+import socket as _socket
+
+
+class NetworkBlocked(ConnectionRefusedError):
+    """A test tried to open a connection off this machine."""
+
+
+_NET_BLOCKED = []
+_PG_GUARD_HOST = ""
+if _PG_BASE:
+    from urllib.parse import urlsplit as _urlsplit_net
+    _PG_GUARD_HOST = (_urlsplit_net(_PG_BASE).hostname or "").lower()
+
+
+def _connection_allowed(sock, address):
+    if getattr(_socket, "AF_UNIX", None) is not None and sock.family == _socket.AF_UNIX:
+        return True
+    if not isinstance(address, tuple) or not address:
+        return True
+    host = address[0]
+    host_s = (host.decode() if isinstance(host, bytes) else str(host or "")).lower()
+    return _is_local_host(host_s) or (bool(_PG_GUARD_HOST) and host_s == _PG_GUARD_HOST)
+
+
+def _note_blocked(address):
+    where = os.environ.get("PYTEST_CURRENT_TEST", "(collection)").rsplit(" (", 1)[0]
+    _NET_BLOCKED.append((where, "%s:%s" % (address[0], address[1] if len(address) > 1 else "")))
+
+
+_real_socket_connect = _socket.socket.connect
+_real_socket_connect_ex = _socket.socket.connect_ex
+
+
+def _guarded_connect(self, address):
+    if not _connection_allowed(self, address):
+        _note_blocked(address)
+        raise NetworkBlocked(f"test tried to open a network connection to {address!r} — only this machine "
+                                 "may be reached in the suite; stub the call (tests/conftest.py network guard)")
+    return _real_socket_connect(self, address)
+
+
+def _guarded_connect_ex(self, address):
+    if not _connection_allowed(self, address):
+        _note_blocked(address)
+        import errno
+        return errno.ECONNREFUSED
+    return _real_socket_connect_ex(self, address)
+
+
+_socket.socket.connect = _guarded_connect
+_socket.socket.connect_ex = _guarded_connect_ex
+
+
 def _pg_url(name):
     from urllib.parse import urlsplit, urlunsplit
     parts = urlsplit(_PG_BASE)
@@ -146,6 +259,31 @@ def _pg_drop(name):
 def pytest_configure(config):
     config.addinivalue_line("markers", "sqlite_only: reads the SQLite file itself (a snapshot, a query "
                             "plan, a PRAGMA); skipped in the Postgres mode")
+    # The release gate's tiers (audit #25, TESTING.md "Tiers"): `contract` is
+    # the deploy-gate slice (`pytest -m contract`, < 60 s, run before a push
+    # that touches a top-10 component); `quarantine` is a known-flaky test,
+    # left out of the gate and run and reported nightly (never a silent
+    # skip); `browser` is a Playwright test, nightly.
+    config.addinivalue_line("markers", "contract: the deploy-gate contract slice (pytest -m contract)")
+    config.addinivalue_line("markers", "quarantine: known flaky; excluded from the gate, run and reported nightly")
+    config.addinivalue_line("markers", "browser: a Playwright browser test (tests/browser/), nightly")
+
+
+def pytest_ignore_collect(collection_path, config):
+    """`pytest -m contract` (the gate's slice) imports only the files that
+    carry the marker: collecting all ~1,000 files to deselect them took most
+    of the slice's minute. Any other marker expression collects as usual."""
+    if (config.getoption("markexpr", "") or "").strip() != "contract":
+        return None
+    name = collection_path.name
+    if collection_path.suffix == ".py" and name.startswith("test_"):
+        try:
+            text = collection_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        if "mark.contract" not in text:
+            return True
+    return None
 
 
 # Whole files that cannot run in the Postgres mode, and why. Every entry is
@@ -331,6 +469,7 @@ if _RECORD_DIR and not _PG_BASE:
 
 
 def pytest_sessionfinish(session, exitstatus):
+    _enforce_expected_skips(session)
     if not (_RECORD_DIR and _RECORDED):
         return
     import json
@@ -338,6 +477,107 @@ def pytest_sessionfinish(session, exitstatus):
     with open(os.path.join(_RECORD_DIR, f"sql-{os.getpid()}.jsonl"), "w", encoding="utf-8") as out:
         for text, at in _RECORDED.items():
             out.write(json.dumps({"sql": text, "at": at}) + "\n")
+
+
+# ── Skips that say why, and only the expected ones (audit #25 A01-18) ───────
+# Every skip's reason is collected (on the xdist controller too: reports
+# arrive there). With CAVNAR_ENFORCE_SKIPS=1 (CI) a skip whose reason
+# matches no line of tests/expected_skips.txt fails the run: a data- or
+# permission-conditional skip there is a regression reporting itself as
+# SKIPPED. CI also passes -rs, so every reason is printed.
+_SKIPS = []
+_BLOCKED_BY_TEST = []
+
+
+def _skip_reason(report):
+    lr = report.longrepr
+    if isinstance(lr, tuple) and len(lr) == 3:
+        return str(lr[2]).replace("Skipped: ", "", 1)
+    return str(lr or "")
+
+
+def pytest_runtest_logreport(report):
+    if report.skipped and not hasattr(report, "wasxfail"):
+        _SKIPS.append((report.nodeid, _skip_reason(report)))
+    for name, value in getattr(report, "user_properties", ()) or ():
+        if name == "network_blocked" and report.when == "teardown":
+            _BLOCKED_BY_TEST.extend((report.nodeid, host) for host in value)
+
+
+def expected_skip_patterns():
+    import re
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "expected_skips.txt")
+    with open(path, encoding="utf-8") as fh:
+        return [re.compile(line.strip()) for line in fh
+                if line.strip() and not line.lstrip().startswith("#")]
+
+
+def unexpected_skips(skips):
+    """The (nodeid, reason) pairs no expected_skips.txt pattern explains."""
+    pats = expected_skip_patterns()
+    return [(nid, why) for nid, why in skips if not any(p.search(why) for p in pats)]
+
+
+def _enforce_expected_skips(session):
+    if hasattr(session.config, "workerinput") or os.getenv("CAVNAR_ENFORCE_SKIPS") != "1":
+        return
+    bad = unexpected_skips(_SKIPS)
+    if bad:
+        tr = session.config.pluginmanager.get_plugin("terminalreporter")
+        lines = ["UNEXPECTED SKIPS (no line of tests/expected_skips.txt explains them):"]
+        lines += [f"  {nid}: {why}" for nid, why in bad[:50]]
+        if tr is not None:
+            tr.write_line("\n".join(lines), red=True, bold=True)
+        else:
+            print("\n".join(lines))
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(autouse=True)
+def _network_attempts_reported(request):
+    """Hands the network guard's blocked connections for this test to its
+    report, so the xdist controller can list them at the end of the run."""
+    start = len(_NET_BLOCKED)
+    yield
+    hits = [host for _where, host in _NET_BLOCKED[start:]]
+    if hits:
+        request.node.user_properties.append(("network_blocked", hits))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    blocked = _BLOCKED_BY_TEST or [(where, host) for where, host in _NET_BLOCKED]
+    if blocked:
+        terminalreporter.section("network connections blocked (stub these calls)", yellow=True)
+        for nid, host in blocked[:40]:
+            terminalreporter.write_line(f"{nid} -> {host}")
+    # A change to the database layer, checked on SQLite only (audit #25
+    # A04-02): production runs on Postgres, and models.get_conn / db_dialect
+    # are where the two differ.
+    if not _PG_BASE and not os.getenv("CI"):
+        touched = _changed_files()
+        hit = sorted(f for f in touched if os.path.basename(f) in ("models.py", "db_dialect.py"))
+        if hit:
+            terminalreporter.section("Postgres not exercised", yellow=True)
+            terminalreporter.write_line(
+                f"This change touches {', '.join(hit)} and CAVNAR_TEST_PG_URL is unset, so none of these tests "
+                "ran on Postgres (production's database). Run the files that cover it again with "
+                "CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55433/postgres (Postgres 16, as production; TESTING.md, On Postgres).")
+
+
+def _changed_files():
+    """Files changed in the working tree or committed ahead of the upstream
+    branch — empty when git is unavailable."""
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = set()
+    for args in (["git", "diff", "--name-only", "HEAD"], ["git", "diff", "--name-only", "@{upstream}...HEAD"]):
+        try:
+            r = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=5)
+        except Exception:
+            continue
+        if r.returncode == 0:
+            out.update(line.strip() for line in r.stdout.splitlines() if line.strip())
+    return out
 
 
 def _build_default_schema():

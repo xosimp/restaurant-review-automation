@@ -34,6 +34,9 @@ import dsr
 from dsr import pipeline, store
 from models import Restaurant, create_restaurant, update_restaurant, get_restaurant
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 DAY = date(2026, 9, 22)
 RUN_AT = datetime(2026, 9, 23, 4, 10)
 ZONES = ("America/Chicago", "America/Los_Angeles", "America/New_York", "Pacific/Honolulu")

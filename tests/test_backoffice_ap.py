@@ -61,7 +61,7 @@ def _printout():
         f"{B}",
         f"BREAKTHRU BEVERAGE IL{NB} $1,330.00",
         f"{NB} CM Entry {NB} {_d(8)} {NB}$700.00 {NB} GL: 4370 {NB} HEFLIN, JIM{NB}",
-        f"{NB} 0128850598 {C} {_d(20)} {NB}$630.00 {NB} 0{NB} Debit/EFT{NB} {NB}",
+        f"{NB} 0233150629 {C} {_d(20)} {NB}$630.00 {NB} 0{NB} Debit/EFT{NB} {NB}",
         f"{B}BINNY'S BEVERAGE DEPOT{NB} $120.00",
         f"{NB} CM Entry {NB} {_d(6)} {NB}$100.00 {NB} GL: 4320 {NB} HEFLIN, JIM{NB}",
         f"{NB} CM Entry {NB} {_d(6)} {NB}$20.00 {NB} GL: 4380 {NB} HEFLIN, JIM{NB}",
@@ -123,11 +123,11 @@ def _fintech(db, rid):
     """Breakthru on Fintech: the $630 invoice Back Office itemizes by number,
     and a $700 one Back Office records as a check-mode entry 8 days ago
     (Fintech's is dated 30 days ago: paid weeks after delivery)."""
-    _invoice(db, rid, "Breakthru Beverage Illinois, LLC", "0128850598", (TODAY - timedelta(days=20)).isoformat(),
+    _invoice(db, rid, "Breakthru Beverage Illinois, LLC", "0233150629", (TODAY - timedelta(days=20)).isoformat(),
              [("9031", "TITOS VDK 1L", "CA", 3, 210.0)])
     _invoice(db, rid, "Breakthru Beverage Illinois, LLC", "128700001", (TODAY - timedelta(days=30)).isoformat(),
              [("9032", "KETEL ONE 1L", "CA", 2, 350.0)])
-    _invoice(db, rid, "Winebow Inc (CT, IL, NJ, NY)", "IL1138699", (TODAY - timedelta(days=60)).isoformat(),
+    _invoice(db, rid, "Winebow Inc (CT, IL, NJ, NY)", "IL1413531", (TODAY - timedelta(days=60)).isoformat(),
              [("W1", "WHITEHAVEN SAUV BL 750ML", "CA", 1, 180.0)])
 
 
@@ -250,11 +250,11 @@ def test_a_payment_net_of_a_credit_and_a_shortened_name_still_match_fintech(db):
     -$387.00 credit; 'SCHAMBERGER BROTHERS INC' is Fintech's 'Schamberger
     Bros., Inc.' - neither is alcohol bought outside Fintech."""
     rid = _rid(db)
-    _invoice(db, rid, "Winebow Inc (CT, IL, NJ, NY)", "IL1138699", (TODAY - timedelta(days=50)).isoformat(),
+    _invoice(db, rid, "Winebow Inc (CT, IL, NJ, NY)", "IL1413531", (TODAY - timedelta(days=50)).isoformat(),
              [("W1", "WHISPERING ANGEL ROSE 750ML", "CA", 1, 1646.34)])
-    _invoice(db, rid, "Winebow Inc (CT, IL, NJ, NY)", "IL1138940", (TODAY - timedelta(days=49)).isoformat(),
+    _invoice(db, rid, "Winebow Inc (CT, IL, NJ, NY)", "IL2112120", (TODAY - timedelta(days=49)).isoformat(),
              [("W1", "WHISPERING ANGEL ROSE 750ML", "CA", -1, 387.0)])
-    _invoice(db, rid, "Schamberger Bros., Inc.", "1000217253", (TODAY - timedelta(days=60)).isoformat(),
+    _invoice(db, rid, "Schamberger Bros., Inc.", "8632141000", (TODAY - timedelta(days=60)).isoformat(),
              [("S1", "REVOLUTION ANTI HERO 1/2BBL", "KE", 1, 201.5)])
     bo.read_file(rid, "coa.csv", COA.encode(), db_path=db)
     txt = "\n".join([
@@ -386,7 +386,7 @@ def test_invoices_read_from_back_office_pages_split_by_account_and_count_once(db
              "ext": "500.00"},
             {"sku": "162080", "name": "FOAM CUP 24 OZ", "gl": "4888 RESTAURANT SUPPLIES", "unit": "Case", "qty": "1.00",
              "amt": "400.00", "ext": "400.00"}]},
-        {"vendor": "BREAKTHRU BEVERAGE IL", "number": "129053835", "date": "2026-09-29", "total": "$26.31",
+        {"vendor": "BREAKTHRU BEVERAGE IL", "number": "352509892", "date": "2026-09-29", "total": "$26.31",
          "items": [{"sku": "9797344", "name": "BUCHANANS COCONUT", "gl": "4370 LIQUOR", "unit": "Bottle", "qty": "1.00",
                     "amt": "26.31", "ext": "26.31"}]}]}
     out = bo.save_invoice_book(rid, book, vendors=["Gordon Food Service"], db_path=db)

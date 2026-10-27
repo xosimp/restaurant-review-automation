@@ -20,6 +20,7 @@ import push
 import webhooks
 from auth import create_user, init_auth
 from models import Restaurant, create_restaurant, get_conn, update_restaurant
+from tests.clock import restaurant_today
 
 SHIFT_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes"
 
@@ -56,7 +57,7 @@ def _shifts_csv(days_back_first, days_back_last, sales_for):
     """One 8-hour server shift x5 per day; `sales_for(back)` → the day's sales
     ("" for none)."""
     rows = [SHIFT_HEADER]
-    t = date.today()
+    t = restaurant_today()
     for back in range(days_back_first, days_back_last - 1, -1):
         d = t - timedelta(days=back)
         for e in range(5):
@@ -95,7 +96,7 @@ def test_p6_the_demand_forecast_is_blind_when_sales_stopped_arriving(db_path):
     rid = _rid(db_path)
     c = get_conn(db_path)
     for back in range(1, 31):
-        d = (date.today() - timedelta(days=back)).isoformat()
+        d = (restaurant_today() - timedelta(days=back)).isoformat()
         # Rows from before the fix: 0, not NULL.
         c.execute("INSERT INTO labor_daily_history (restaurant_id, date, labor_pct, labor_cost, sales, total_hours) "
                   "VALUES (?,?,?,?,?,?)", (rid, d, 0.0 if back <= 20 else 20.0, 600, 0.0 if back <= 20 else 3000, 40))
@@ -106,7 +107,7 @@ def test_p6_the_demand_forecast_is_blind_when_sales_stopped_arriving(db_path):
 
 def test_a_later_sync_without_sales_never_erases_a_known_days_sales(db_path):
     rid = _rid(db_path)
-    d = (date.today() - timedelta(days=3)).isoformat()
+    d = (restaurant_today() - timedelta(days=3)).isoformat()
     models.save_labor_daily_history(rid, {d: {"sales": 4000.0, "actual": 40, "labor_cost": 800, "labor_pct": 20.0}},
                                     db_path=db_path)
     models.save_labor_daily_history(rid, {d: {"sales": None, "actual": 44, "labor_cost": 880, "labor_pct": None}},
@@ -187,7 +188,7 @@ def test_p1_labor_pct_28d_is_sales_weighted_and_skips_missing_days(db_path):
     from intelligence import features
     rid = _rid(db_path)
     c = get_conn(db_path)
-    today = date.today()
+    today = restaurant_today()
     # Seven slow days at 60% on $500, seven big days at 20% on $5,000 (14
     # costed days: features.MIN_MEASURED_DAYS, re-audit B3 #11), and two days
     # whose sales never arrived (legacy 0 and new NULL).
@@ -263,7 +264,7 @@ def test_p7_demo_restaurants_are_out_of_benchmarks_and_the_privacy_floor(db_path
         c = get_conn(db_path)
         for b in range(1, 15):
             c.execute("INSERT INTO labor_daily_history (restaurant_id, date, labor_pct, sales, total_hours) "
-                      "VALUES (?,?,?,?,?)", (rid, (date.today() - timedelta(days=b)).isoformat(), 20 + i * 3, 3000, 50))
+                      "VALUES (?,?,?,?,?)", (rid, (restaurant_today() - timedelta(days=b)).isoformat(), 20 + i * 3, 3000, 50))
         c.commit(); c.close()
     real = {r for r, d in ids if not d}
     assert {r.id for r in jobs.active_restaurants(db_path)} == real
@@ -361,15 +362,15 @@ def test_p9_admin_reads_inventory_age_from_the_last_count(db_path):
     c = get_conn(db_path)
     # The count date is written from the same clock the assertion reads:
     # SQLite's date('now') is UTC, so after 7pm Central it was a day ahead of
-    # date.today() and this test failed every evening.
-    counted = (date.today() - timedelta(days=40)).isoformat()
+    # the process's date and this test failed every evening.
+    counted = (restaurant_today() - timedelta(days=40)).isoformat()
     c.execute("INSERT INTO ingredients (restaurant_id, name, unit, par_level, current_stock, unit_cost, is_active, "
               "last_recount_at) VALUES (?,?,?,?,?,?,1,?)", (rid, "Salmon", "lb", 10, 5, 12, counted))
     c.commit(); c.close()
     rec = admin_ops.client_detail(rid)["client"]
     inv = next(m for m in rec["modules"] if m["key"] == "inventory")
     assert inv["state"] == "stale"
-    assert str(rec["freshness"]["inventory"])[:10] == (date.today() - timedelta(days=40)).isoformat()
+    assert str(rec["freshness"]["inventory"])[:10] == (restaurant_today() - timedelta(days=40)).isoformat()
 
 
 # ── G7 / CA3 F10: the status page's review staleness is on the slot clock ───
@@ -502,7 +503,7 @@ def test_the_live_pos_fallback_applies_the_coverage_rule(db_path, monkeypatch):
     import cogs
     import pos
     rid = _rid(db_path)
-    start, end = date.today() - timedelta(days=28), date.today() - timedelta(days=1)
+    start, end = restaurant_today() - timedelta(days=28), restaurant_today() - timedelta(days=1)
     thin = {(start + timedelta(days=i)).isoformat(): 3000.0 for i in range(0, 28, 3)}      # 10 of 28 days
     monkeypatch.setattr(pos, "fetch_business_days", lambda *a, **k: (thin, "square"))
     total, why = cogs.net_sales_in_window(rid, start.isoformat(), end.isoformat())
@@ -518,7 +519,7 @@ def test_food_cost_above_100_percent_is_refused_as_not_measurable(db_path, monke
     monkeypatch.setattr(cogs, "net_sales_in_window", lambda *a, **k: (1000.0, None))
     monkeypatch.setattr(cogs, "purchases_in_window", lambda *a, **k: (5000.0, 3))
     monkeypatch.setattr(cogs, "inventory_value_near",
-                        lambda weeks, day: ((4000.0, "2026-08-27") if day < date.today() - timedelta(days=5)
+                        lambda weeks, day: ((4000.0, "2026-08-27") if day < restaurant_today() - timedelta(days=5)
                                             else (2000.0, "2026-09-23")))
     monkeypatch.setattr("waste_trend.load_waste_history", lambda *a, **k: ([], 0))
     out = cogs.build_food_cost_pct(rid)
@@ -535,7 +536,7 @@ def test_negative_stock_is_a_count_discrepancy_not_critically_low(db_path):
                     "avg_daily_usage, is_active, last_recount_at) VALUES (?,?,?,?,?,?,?,1,date('now'))",
                     (rid, "Salmon", "lb", 10, 0, 12, 3))
     iid = cur.lastrowid
-    today = date.today().isoformat()
+    today = restaurant_today().isoformat()
     c.execute("INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, source) "
               "VALUES (?,?,?,?,?,?)", (rid, iid, "recount", 2, today, "manual"))
     c.execute("INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, source) "
@@ -573,7 +574,7 @@ def test_parse_stamp_never_calls_garbage_fresh():
 
 def test_a_three_day_old_forecast_row_says_it_is_stale(db_path, monkeypatch):
     import weather
-    periods = [{"startTime": (date.today() + timedelta(days=1)).isoformat() + "T06:00:00-05:00",
+    periods = [{"startTime": (restaurant_today() + timedelta(days=1)).isoformat() + "T06:00:00-05:00",
                 "isDaytime": True, "name": "Tomorrow", "temperature": 70, "shortForecast": "Sunny"}]
     rid = _rid(db_path, latitude=41.9, longitude=-87.6)
     update_restaurant(rid, {"weather_cache_json": json.dumps(periods),
@@ -582,7 +583,7 @@ def test_a_three_day_old_forecast_row_says_it_is_stale(db_path, monkeypatch):
     monkeypatch.setattr(weather, "_fetch_periods_ex", lambda lat, lon: ([], "transient"))
     monkeypatch.setattr(weather, "_geocode", lambda *a, **k: (41.9, -87.6))
     r = models.get_restaurant(rid, db_path=db_path)
-    row = weather.get_forecast_for_week(r, [(date.today() + timedelta(days=1)).isoformat()], db_path=db_path)[0]
+    row = weather.get_forecast_for_week(r, [(restaurant_today() + timedelta(days=1)).isoformat()], db_path=db_path)[0]
     assert row["stale"] is True and row["age_hours"] >= 59
 
 
@@ -606,7 +607,7 @@ def _labor_alert_rid(db_path, days):
     rid = _rid(db_path, name=f"Week One {days}")
     update_restaurant(rid, {"urgent_via_sms": 0, "urgent_via_email": 1, "alert_labor_over": 1,
                             "labor_target_pct": 25.0, "al_unres_push": 0, "al_unres_email": 0}, db_path=db_path)
-    end = date.today() - timedelta(days=1)
+    end = restaurant_today() - timedelta(days=1)
     models.save_labor_snapshot(rid, (end - timedelta(days=days - 1)).isoformat(), end.isoformat(),
                                48.0, 720, 1500, db_path=db_path)
     return rid

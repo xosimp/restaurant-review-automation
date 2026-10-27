@@ -154,9 +154,10 @@ def test_owner_facing_jobs_are_attempted_hourly_and_claimed_per_restaurant():
     for job in ("weekly_digest", "daily_alerts", "monthly_summary", "onboarding"):
         assert re.search(r'claim_period\("%s", f"\{today\}-\{now\.hour\}"\)' % job, body), job
     import scheduler, notify, inspect
-    assert "claim_key=\"weekly_digest\"" in inspect.getsource(scheduler.run_weekly_digests)
-    assert "claim_key=\"monthly_summary\"" in inspect.getsource(scheduler.run_monthly_summaries)
-    assert "claim_key=\"onboarding\"" in inspect.getsource(scheduler.run_onboarding_sequence)
+    # That each job sends ONCE however many hourly ticks see its window is
+    # behaviour, run for real in tests/test_owner_jobs_send_once.py (audit
+    # #25 A01-11: it was pinned here as `'claim_key="weekly_digest"' in
+    # inspect.getsource(...)`).
     assert "run_onboarding_sequence, local_hour=10" in body
     assert "local_hour=10" in inspect.getsource(scheduler.run_daily_alert_checks)
     for fn in (notify.check_daily_alerts, notify.check_extra_daily_alerts,

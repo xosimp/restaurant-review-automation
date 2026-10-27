@@ -62,8 +62,32 @@ import weakref
 
 
 def database_url(name="DATABASE_URL"):
+    """The Postgres URL in `name`, or None — None too when this process may
+    not use it: off Railway without ALLOW_LOCAL_PG=1
+    (config.platform_database_url_allowed; audit #25 A01-06), so a shell
+    holding production's URL never points a local app or the suite at it."""
     url = (os.getenv(name) or "").strip()
-    return url if url.startswith(("postgres://", "postgresql://")) else None
+    if not url.startswith(("postgres://", "postgresql://")):
+        return None
+    import config
+    if not config.platform_database_url_allowed():
+        note_refused_url(name)
+        return None
+    return url
+
+
+_REFUSED_NOTED = set()
+
+
+def note_refused_url(name):
+    """Say once per process that `name` was ignored, and why."""
+    if name in _REFUSED_NOTED:
+        return
+    _REFUSED_NOTED.add(name)
+    import logging
+    logging.getLogger(__name__).warning(
+        "%s names a Postgres but this process is not on Railway: ignored, the database stays SQLite. "
+        "Set ALLOW_LOCAL_PG=1 for a deliberate local Postgres (a scratch server, never production's).", name)
 
 
 def backend() -> str:

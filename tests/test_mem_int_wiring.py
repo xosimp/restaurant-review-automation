@@ -36,6 +36,9 @@ MANAGER = {"id": 22, "role": "manager", "is_admin": 0, "username": "dana"}
 # Harbor Grill's own date (America/Chicago), the day every surface reads -
 # the machine's is tomorrow after 7pm Central on a UTC host (CI, 9/30/26).
 from zoneinfo import ZoneInfo as _ZI
+
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
 TODAY = datetime.now(_ZI("America/Chicago")).date()
 
 

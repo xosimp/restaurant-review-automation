@@ -12,5 +12,10 @@ pyflakes==4.0.0
 pygments==2.21.0
     # via pytest
 pytest==9.1.1
+pyyaml==6.0.2
+    # tests/test_ci_gate_config.py reads .github/workflows
 pytest-xdist==3.8.0
     # parallel runs: pytest -n auto --dist loadfile
+time-machine==2.16.0
+    # a frozen clock in tests (tests/clock.py frozen()); needs python-dateutil,
+    # which the production lock already holds

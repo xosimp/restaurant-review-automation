@@ -1,6 +1,33 @@
 # Testing — Cavnar AI
 
-The suite's size is not typed here: `python3 -m pytest --collect-only -q | tail -1` (or `python3 scripts/repo_inventory.py --tests`) is the count. A full run in parallel takes several minutes (about 8 on a laptop at ~990 files, 10/20/26) and far longer serially — never run it without `-n auto`. **The full suite is not the default verification step for a normal task.** This file exists because running it on every single edit was costing many minutes per turn for changes it had no chance of catching anything new in — a template color tweak doesn't need thousands of tests re-run to prove it's safe.
+The suite's size is not typed here: `python3 -m pytest --collect-only -q | tail -1` (or `python3 scripts/repo_inventory.py --tests`) is the count. A full run in parallel takes a few minutes (about 3½ on a laptop, 10/24/26) and far longer serially — never run it without `-n auto`. **The full suite is not the default verification step for a normal task.** This file exists because running it on every single edit was costing many minutes per turn for changes it had no chance of catching anything new in — a template color tweak doesn't need thousands of tests re-run to prove it's safe.
+
+## Tiers: what runs where (audit #25, 10/26/26)
+
+The suite used to run in one place — CI, after Railway had already deployed the push, two hours late, red for clock reasons on 196 of 200 runs. It now runs in tiers, the fast one in front of production:
+
+| Tier | When | Budget | What | Blocks |
+|---|---|---|---|---|
+| 0 · Pre-push | You touched a top-10 component (below) or SQL | ≤ 60 s | `python3 -m pytest -m contract -n auto -q -p no:warnings tests/`; `scripts/pg_sql_audit.py --strict` after SQL; the targeted files as always | your push (habit) |
+| 1 · The gate | Every push to `main` and `production`, every PR (`.github/workflows/ci.yml`, job `gate`) | ≤ 10 min (timeout 15) | `pip check`, compile, the lints (colours, timeouts, silent handlers, tenant scope, email tokens, `pg_sql_audit --strict`), the contract slice, every inline template script parses, the app booted twice on a fresh SQLite volume and twice on Postgres 16 (`scripts/boot_check.py`), every static statement and every statement the slice ran PREPAREd on Postgres — all at `TZ=Pacific/Kiritimati` | promotion to production (a required check; `scripts/promote.py` refuses a SHA without it) |
+| 2 · Nightly | 07:00 UTC (`.github/workflows/nightly.yml`) and by hand | ≤ 45 min a job | the full suite on SQLite (UTC+14) and again at UTC-11, the full suite on Postgres in four shards (`scripts/shard_tests.py`), every recorded statement PREPAREd, the solver's determinism and benchmark files alone without xdist (more than one skipped case fails), the quarantined tests (reported, never failing), the Playwright smoke (`tests/browser/`) | the next promotion: red holds it until green or every failure is quarantined |
+| iOS | pushes touching `ios/**`, nightly, by hand (`.github/workflows/ios.yml`) | ≤ 40 min | `ios/CavnarAI/generate.sh`, `xcodebuild build-for-testing`, `test-without-building` on an iPhone simulator | — |
+
+**Promotion.** Railway's production tracks the `production` branch; pushing to `main` no longer deploys. `.github/workflows/promote.yml` (or `python3 scripts/promote.py --sha <sha> --dry-run` to see the verdict) fast-forwards `production` to a `main` SHA with a green `gate`, 9:00–15:00 Chicago on a weekday, after a green (or fully quarantined) nightly. `--emergency` skips the window and the nightly, never the gate.
+
+**The top-10 components** — a change here runs `pytest -m contract` before the push, whatever the task's size: `models.get_conn` / `db_dialect`; `models.get_restaurant` / `update_restaurant` / `has_module`; `auth.login_required` / `mobile_login_required`; `client_api._m` ↔ `mobile_api`; the labor % producers (`labor`, `metrics`); `time_utils`; `dsr/` payloads; `scheduler` / `jobs_registry` / `job_queue`; `permissions`; `templates/dashboard.html`. A file joins the slice with `pytestmark = pytest.mark.contract`; `tests/test_contract_slice_registry.py` fails when a component has no contract test that reaches it. `pytest -m contract` collects only files that carry the marker (tests/conftest.py), so it stays well under a minute.
+
+**Markers** (registered in tests/conftest.py): `contract` (the slice), `quarantine` (a known-flaky test: out of the gate and the nightly's main jobs, run and reported every night — quarantined the day it flakes, fixed or deleted soon after, never `skip`ped quietly), `browser` (Playwright, nightly), `sqlite_only` (reads the SQLite file itself; skipped on Postgres).
+
+## Rules that keep the signal trustworthy
+
+- **A fixed clock, always.** Take "today" the way the code does: `tests/clock.py` — `restaurant_today()`, `today_for(rid)`, `this_monday()`, `next_monday()`, `utc_now()`, and `frozen("2026-11-01 01:30", tz=…)` (time-machine) for a fixed instant. Never `date.today()` / `datetime.now(` / `utcnow(` in a test, and never a literal week that will one day be "already happened". `tests/test_test_ratchets.py` counts those reads per file against `tests/ratchets/wall_clock.json` and fails when one grows; CI runs at UTC+14, where a test that mixes the process's date with the restaurant's fails all day.
+- **Behaviour over source text.** No new `inspect.getsource` assertion for behaviour: run the job twice and count the sends, make the requests and read the 429, gauge the lock. The same ratchet holds `inspect.getsource` call sites per file to `tests/ratchets/getsource.json`. Lower a baseline when a count drops: `python3 tests/test_test_ratchets.py --update`.
+- **A skip says why, and only the expected ones pass CI.** CI prints every reason (`-rs`) and, with `CAVNAR_ENFORCE_SKIPS=1`, fails on a skip whose reason no line of `tests/expected_skips.txt` explains. A permission or data shape a test depends on is an `assert`, never a `pytest.skip`.
+- **No test can reach production or the internet.** The suite refuses to start inside a Railway environment, drops `DATABASE_URL` / `SHADOW_DATABASE_URL` before anything imports (and the app ignores them off Railway without `ALLOW_LOCAL_PG=1`), holds `CAVNAR_TEST_PG_URL` to this machine, and blocks every socket connection that is not loopback, a unix socket or the scratch Postgres (an `OSError`, as offline; the attempt is listed at the end of the run — stub it). DNS lookups are not blocked (webhook URL vetting resolves names).
+- **Production's configuration is tested too.** conftest flips switches production never flips (the model arm instead of the solver, Home built on the request, no request share, no password policy…). `tests/test_production_config_smoke.py` undoes every one and runs a solver generation, a Home load, logins under the policy and two-factor, and a burst; it fails when conftest gains a switch it does not undo.
+- **A Postgres-only failure is a production bug until shown otherwise** — triage it within a day, and say "prod-real" or "test-only" in the commit. A run that touched `models.py` or `db_dialect.py` without `CAVNAR_TEST_PG_URL` ends with a "Postgres not exercised" note.
+- **No customer's data in the repository** (it is public): fixtures are synthetic (`scripts/make_bar_invoice_fixture.py`); `tests/test_no_customer_data_in_repo.py` holds it.
 
 ## Default verification (most tasks)
 
@@ -13,7 +40,7 @@ The suite's size is not typed here: `python3 -m pytest --collect-only -q | tail 
 
 - After an **audit, re-audit or fix round**, or a **big code change / large batch of changes** (many files, a refactor, a new module).
 - When explicitly asked.
-- **Not** before every push, and **not** after a few tweaks — those get the targeted test files that cover them, then push (Will, 9/15/26 and 9/28/26: the 4-5 minute suite after small changes "stalls productivity"). Touching a widely shared file (`models.py`, `auth.py`, `dashboard.html`) is not by itself a trigger: run the files that cover the change.
+- **Not** before every push, and **not** after a few tweaks — those get the targeted test files that cover them, then push (Will, 9/15/26 and 9/28/26: the 4-5 minute suite after small changes "stalls productivity"). Touching a top-10 component (Tiers, above) runs `pytest -m contract` (under a minute) before the push, besides the files that cover the change; the full suite runs nightly.
 
 Even then: run it **once**, not once "to be sure" and again "just to double check." If it's green, it's green.
 
@@ -69,21 +96,22 @@ app's own `sqlite3.connect` calls are never redirected. Postgres enforces
 foreign keys SQLite's `PRAGMA foreign_keys=OFF` let a fixture skip: a
 fixture names real parent rows.
 
-What cannot run on Postgres is listed in ONE place, with its reason: a test
+The scratch server is Postgres 16, as production and CI (`scripts/check_workstation.sh` checks :55433): an older one fails statements 16 accepts. What cannot run on Postgres is listed in ONE place, with its reason: a test
 that reads the SQLite file itself (a snapshot, `EXPLAIN QUERY PLAN`, `PRAGMA
 query_only`, the file's bytes) is marked `@pytest.mark.sqlite_only`, and a
 whole such file goes in `PG_MODE_SKIP_FILES` in `tests/conftest.py`. A file
 that fails on Postgres for a reason production would meet is a bug to fix,
 never an entry. `tests/test_q2_postgres.py`'s live half (the boot twice in
 its own process, the copy then the boot, every static statement PREPAREd,
-the dialect's semantics) runs only in this mode. CI's `postgres` job runs
-EVERY test file this way (it was a hand-picked list of ~40, and the
-notification badge's Postgres-only failure sat outside it); locally:
+the dialect's semantics) runs only in this mode. The nightly `postgres` job
+runs EVERY test file this way, in four shards (it was a hand-picked list of
+~40, and the notification badge's Postgres-only failure sat outside it; then
+one ~2-hour job); locally:
 
 ```
-CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55432/postgres \
+CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55433/postgres \
     python -m pytest -q -p no:warnings -n 3 --dist loadfile tests/test_q2_postgres.py tests/test_models.py
-python scripts/pg_sql_audit.py --database-url postgresql://postgres@127.0.0.1:55432/scratch
+python scripts/pg_sql_audit.py --database-url postgresql://postgres@127.0.0.1:55433/scratch
 ```
 
 **The statements built at run time.** The source audit PREPAREs only SQL
@@ -92,8 +120,10 @@ SQLite run records every distinct statement the app executed through a
 models connection (f-string holes filled, IN lists folded to one shape) into
 `<dir>/sql-<pid>.jsonl`; `pg_sql_audit.py --database-url … --recorded <dir>`
 translates and PREPAREs each (`recorded_failed` must be empty; a table the
-boot does not build is listed apart as `recorded_unknown_table`). CI's
-`test` job records, and its `postgres-recorded-sql` job PREPAREs.
+boot does not build is listed apart as `recorded_unknown_table`). The gate
+records the contract slice's statements and PREPAREs them in the same job,
+even when a test failed (`if: always()`); the nightly does the same for the
+whole SQLite suite.
 
 ## A gotcha worth knowing about before you distrust a revert-check
 
@@ -101,7 +131,7 @@ Editing a `.py` file, running its tests, restoring the original content, and re-
 
 ## Tests that read source
 
-About 140 test sites read a template, a module or a doc as text (`open(...)`, `inspect.getsource`) — 24 files read `templates/dashboard.html`, 11 of them slicing it by position, and `docs/ops/RECOVERY.md`, `docs/app-store-submission.md` and `DESIGN_SYSTEM.md`'s Email section are pinned the same way. `tests/test_docs_controls.py` reads `docs/ops/SECURITY.md`, `RECOVERY.md` and `RAILWAY_SCHEDULER_SPLIT.md` sentence by sentence against the code, and `tests/test_architecture_manifest.py` reads `ARCHITECTURE_MANIFEST.md`'s module table. Before moving, splitting or renaming any of those, grep `tests/` for the path.
+Many tests read a template, a module or a doc as text — 768 `inspect.getsource` call sites in 208 files (10/26/26; the ratchet above only lets that fall) and about 200 files reading `templates/dashboard.html`, some slicing it by position, and `docs/ops/RECOVERY.md`, `docs/app-store-submission.md` and `DESIGN_SYSTEM.md`'s Email section are pinned the same way. `tests/test_docs_controls.py` reads `docs/ops/SECURITY.md`, `RECOVERY.md` and `RAILWAY_SCHEDULER_SPLIT.md` sentence by sentence against the code, and `tests/test_architecture_manifest.py` reads `ARCHITECTURE_MANIFEST.md`'s module table. Before moving, splitting or renaming any of those, grep `tests/` for the path.
 
 ## iOS request bodies against their routes (`tests/test_ios_request_body_parity.py`, parity audit #24)
 

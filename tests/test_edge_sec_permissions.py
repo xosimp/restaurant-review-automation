@@ -36,6 +36,9 @@ from auth import (create_session, create_user, get_session_user, init_auth,
 from models import (Restaurant, create_restaurant, get_restaurant,
                     update_restaurant)
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATES = os.path.join(ROOT, "templates")
 CSRF = {"X-CSRF": "edge-csrf"}
