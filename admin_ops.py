@@ -3683,38 +3683,71 @@ def budget_watch(conn=None):
     """Every restaurant at or past AI_BUDGET_WARN_PCT of one of its own
     ceilings today or this month — AI (by its tier) or Google Places — in
     one grouped read, never a per-restaurant loop (#122). Each row: {restaurant_id,
-    name, tier, scope (ai_day | ai_month | places_day | places_month),
+    name, tier, scope (ai_day | ai_month | schedule_day — a trial's schedule
+    allowance — | places_day | places_month),
     spend, budget, pct, over}. The console's "warn at 80%"."""
     import ai_utils as _ai
     own = conn is None
     conn = conn or get_conn()
+    ai_row = _ai._AI_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')
+    places_row = _ai._PLACES_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')
+    sched_actions = tuple(getattr(_ai, "SCHEDULE_ACTIONS", ()) or ("labor_schedule",))
+    sched_marks = ",".join("?" for _a in sched_actions)
     try:
         today, month = _utc_today() + " 00:00:00", _utc_month() + " 00:00:00"
         rows = _rows_dict(conn, f"""
             SELECT a.restaurant_id, r.name, r.billing_status, COALESCE(r.is_demo, 0) AS is_demo,
-                   SUM(CASE WHEN a.created_at >= ? AND {_ai._AI_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
+                   SUM(CASE WHEN a.created_at >= ? AND {ai_row}
                             AND COALESCE(a."trigger",'') <> 'admin' THEN a.cost_usd ELSE 0 END) AS ai_day,
-                   SUM(CASE WHEN {_ai._AI_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
+                   SUM(CASE WHEN a.created_at >= ? AND {ai_row} AND COALESCE(a."trigger",'') <> 'admin'
+                            AND a.action IN ({sched_marks}) THEN a.cost_usd ELSE 0 END) AS schedule_day,
+                   SUM(CASE WHEN {ai_row}
                             AND COALESCE(a."trigger",'') <> 'admin' THEN a.cost_usd ELSE 0 END) AS ai_month,
-                   SUM(CASE WHEN a.created_at >= ? AND {_ai._PLACES_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
+                   SUM(CASE WHEN a.created_at >= ? AND {places_row}
                             THEN a.cost_usd ELSE 0 END) AS places_day,
-                   SUM(CASE WHEN {_ai._PLACES_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
+                   SUM(CASE WHEN {places_row}
                             THEN a.cost_usd ELSE 0 END) AS places_month
             FROM ai_usage a JOIN restaurants r ON r.id = a.restaurant_id
             WHERE a.created_at >= ? GROUP BY a.restaurant_id, r.name, r.billing_status, r.is_demo""",
-            (today, today, month))
+            (today, today, *sched_actions, today, month))
+        # A restaurant's own ceilings where an admin set them (model_gateway
+        # .tenant_budget, which the gate applies) — one grouped read.
+        overrides = {int(o["restaurant_id"]): o for o in _rows_dict(
+            conn, "SELECT restaurant_id, daily_usd, monthly_usd FROM ai_tenant_budgets",
+            label="ai_tenant_budgets", optional=True) if o.get("restaurant_id") is not None}
     finally:
         if own:
             conn.close()
+    try:
+        sched_budget = float(_ai.trial_schedule_daily_budget() or 0)
+    except Exception:
+        sched_budget = 0.0
     out = []
     for r in rows:
         status = (r.get("billing_status") or "").strip().lower()
         tier = ("paid" if status in _ai._PAID_BILLING_STATES else
                 "trial" if status in _ai._TRIAL_BILLING_STATES and not r.get("is_demo") else "unpaid")
         daily, monthly = _ai._tier_budgets(tier)
-        for scope, spend, budget in (("ai_day", r["ai_day"], daily), ("ai_month", r["ai_month"], monthly),
-                                     ("places_day", r["places_day"], _ai.AI_PLACES_DAILY_BUDGET_USD),
-                                     ("places_month", r["places_month"], _ai.AI_PLACES_MONTHLY_BUDGET_USD)):
+        # The gate's own arithmetic (ai_utils.ai_budget_status; admin audit
+        # 10/27/26 K-02): a tenant override replaces the tier's ceiling, and
+        # a trial's schedule calls answer to their own day — the rest of its
+        # AI to the day without them. The watch re-derived both, and read a
+        # trial that ran one $5.50 schedule as "Paused: today's AI budget is
+        # spent" while the gate let it through.
+        ov = overrides.get(int(r["restaurant_id"])) or {}
+        if ov.get("daily_usd") is not None:
+            daily = float(ov["daily_usd"])
+        if ov.get("monthly_usd") is not None:
+            monthly = float(ov["monthly_usd"])
+        ai_day = float(r.get("ai_day") or 0)
+        scopes = []
+        if tier == "trial" and sched_budget > 0:
+            sched = float(r.get("schedule_day") or 0)
+            ai_day = max(0.0, ai_day - sched)
+            scopes.append(("schedule_day", sched, sched_budget))
+        for scope, spend, budget in [("ai_day", ai_day, daily), ("ai_month", r["ai_month"], monthly)] + scopes + [
+                ("places_day", r["places_day"], _ai.AI_PLACES_DAILY_BUDGET_USD),
+                ("places_month", r["places_month"], _ai.AI_PLACES_MONTHLY_BUDGET_USD)]:
             if not budget:
                 continue
             pct = round(100.0 * float(spend or 0) / budget, 1)
@@ -3829,6 +3862,7 @@ def ai_anomalies(days=7, conn=None):
 
 
 _BUDGET_SCOPE_WORDS = {"ai_day": "today's AI budget", "ai_month": "this month's AI budget",
+                       "schedule_day": "today's schedule AI allowance",
                        "places_day": "today's Google Places budget",
                        "places_month": "this month's Google Places budget"}
 

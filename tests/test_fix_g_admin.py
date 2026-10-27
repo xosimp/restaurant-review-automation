@@ -89,7 +89,10 @@ def test_the_ai_page_names_the_latest_error_not_the_alphabetically_greatest(clie
 def test_budget_watch_flags_a_client_at_eighty_percent_of_its_own_ceiling(client, monkeypatch, db_path):
     _as(monkeypatch)
     trial = _rid(db_path, "trial", name="Trial Co")
-    ai_utils.log_ai_usage(trial, "labor_schedule", "claude-sonnet-5", 0, int(4.1 / 10 * 1_000_000))
+    # Not a schedule action: a trial's schedule calls answer to their own day
+    # (the gate's arithmetic, which the watch reads since admin audit
+    # 10/27/26 K-02), so a $4.10 labor_schedule is not 80% of its AI day.
+    ai_utils.log_ai_usage(trial, "ask_cavnar", "claude-sonnet-5", 0, int(4.1 / 10 * 1_000_000))
     out = client.get("/admin/api/ai").get_json()
     (w,) = [w for w in out["budget_watch"] if w["restaurant_id"] == trial]
     assert (w["tier"], w["scope"], w["over"]) == ("trial", "ai_day", False) and w["pct"] >= 80

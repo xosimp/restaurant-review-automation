@@ -125,3 +125,32 @@ def test_k01_fetch_behind_leaves_out_restaurants_the_fetch_never_covers(db_path)
     assert not any(i["key"].endswith(":fetch_behind") for i in recs[b]["issues"])
     assert any(i["key"] == f"{c}:fetch_behind" for i in recs[c]["issues"])
     assert recs[a]["review_fetch_eligible"] is False and recs[c]["review_fetch_eligible"] is True
+
+
+# ── K-02: the AI-budget watch reads the gate's own arithmetic ──────────────
+
+def test_k02_a_trial_schedule_day_is_not_a_spent_ai_day(db_path):
+    rid = _rest(db_path, "Trial Kitchen", billing_status="trial")
+    ai_utils.log_ai_usage(rid, "labor_schedule", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=5.5)
+    gate = ai_utils.ai_budget_status(rid, db_path=db_path)
+    watch = [x for x in admin_ops.budget_watch() if x["restaurant_id"] == rid]
+    assert not gate["day"]["over"]
+    assert not any(x["scope"] == "ai_day" for x in watch)
+    rec = next(r for r in admin_ops.clients()["clients"] if r["id"] == rid)
+    assert not any(":ai_budget:" in i["key"] for i in rec["issues"])
+    # Past the schedule allowance itself, the watch says so in its own words.
+    ai_utils.log_ai_usage(rid, "labor_schedule", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=7.0)
+    ai_utils._budget_cache.clear()
+    sched = [x for x in admin_ops.budget_watch() if x["restaurant_id"] == rid and x["scope"] == "schedule_day"]
+    assert sched and sched[0]["over"] == ai_utils.ai_budget_status(rid, db_path=db_path)["schedule_day"]["over"]
+    assert admin_ops.ai_budget_issues(sched)[0]["title"] == "Paused: today's schedule AI allowance is spent"
+
+
+def test_k02_a_tenant_override_is_the_ceiling_the_watch_reads(db_path):
+    import model_gateway
+    rid = _rest(db_path, "Big Roster", billing_status="trial")
+    ai_utils.log_ai_usage(rid, "insights", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=6.0)
+    model_gateway.set_tenant_budget(rid, daily_usd=100.0, monthly_usd=1000.0, reason="t", set_by="t", db_path=db_path)
+    model_gateway._budget_memo.clear()
+    assert not ai_utils.ai_budget_status(rid, db_path=db_path)["day"]["over"]
+    assert not [x for x in admin_ops.budget_watch() if x["restaurant_id"] == rid]
