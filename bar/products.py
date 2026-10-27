@@ -368,6 +368,8 @@ _TRIPLE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d+(?:\.\d+)?)\s?(ML|M|LTR|L|OZ
 # and ML, so the unit has to be part of the pattern).
 _SLASH_RE = re.compile(r"\b(\d{1,2})/(\d+(?:\.\d+)?)\s?(ML|M|LTR|L|OZ|Z)?(?:PK)?\b(?!\s*(?:BBL|BL|BB|BARREL)\b)")
 _B_RE = re.compile(r"\b(\d{1,2})B\b")
+_CS_RE = re.compile(r"\b(\d{1,3})\s?(?:CS|CASE)\b")
+_BOTTLES_RE = re.compile(r"\b(\d{1,2})\s?(?:BOTTLES?|BTLS?)\b")
 _C_RE = re.compile(r"\bC(\d{1,2})\b")
 _COUNT_RE = re.compile(r"\b(\d{1,2})\s*(NR|CN|CANS?|LN|BTLS?|BOTTLES?|PK|PACK|LP)\b")
 _TWO_DIGIT_RE = re.compile(r"(?<![\d/.$])\b(\d{2})\b(?!\s*(?:ML|M|L|LTR|OZ|Z|PK|NR|CN|B)\b)(?![/.]\d)")
@@ -385,20 +387,29 @@ def _ml_of(n, unit):
     return None
 
 
-def parse_pack(description, uom=None, category=None) -> dict:
+def parse_pack(description, uom=None, category=None, ppc=None) -> dict:
     """What one purchase unit holds: {units_per_case, units_source
-    parsed|assumed|none, container_ml, container_oz, size_source
+    invoice|parsed|assumed|none, container_ml, container_oz, size_source
     parsed|assumed|none, keg_oz, keg_label, vintage, proof, each
     bottle|can|keg|unit}. Never a guess presented as read: what is assumed
     says so. A pure reading of the words, kept per (description, uom,
     category) — the price watch and variance read it once per invoice line,
     48k times at three years (V17) — and handed out as a fresh dict each
-    time, since callers lay the owner's pack over it."""
-    return dict(_parse_pack(str(description or ""), str(uom or ""), str(category or "")))
+    time, since callers lay the owner's pack over it.
+
+    `ppc` is the bottles a case holds as the invoice states it (Fintech's
+    export, fintech_invoice_lines.ppc): on a case it beats anything read
+    from the words or assumed (owner, 10/27/26: WhistlePig's 6-bottle case
+    was assumed 12, Sneaky Fox's 6 BOTTLE read as 24)."""
+    try:
+        ppc = int(ppc) if ppc not in (None, "") and 2 <= int(ppc) <= 240 else None
+    except (TypeError, ValueError):
+        ppc = None
+    return dict(_parse_pack(str(description or ""), str(uom or ""), str(category or ""), ppc))
 
 
 @functools.lru_cache(maxsize=8192)
-def _parse_pack(description, uom, category) -> dict:
+def _parse_pack(description, uom, category, ppc=None) -> dict:
     d = " " + re.sub(r"\s+", " ", str(description or "").upper()) + " "
     u = str(uom or "").upper()
     cat = str(category or "")
@@ -435,6 +446,12 @@ def _parse_pack(description, uom, category) -> dict:
         m = _B_RE.search(d) or _C_RE.search(d)
         if m:
             count = int(m.group(1))
+    if count is None and cat in ("liquor", "wine"):
+        # "6CS", "6 CASE", "6 BOTTLE", "12 BTL": a spirit's or wine's case
+        # count in words (owner, 10/27/26: PALOMO ... 6CS 1L was assumed 12).
+        m = _CS_RE.search(d) or _BOTTLES_RE.search(d)
+        if m:
+            count = int(m.group(1))
     if count is None:
         for m in _SLASH_RE.finditer(d):
             a, b, unit = int(m.group(1)), float(m.group(2)), m.group(3)
@@ -467,11 +484,13 @@ def _parse_pack(description, uom, category) -> dict:
             n = int(m.group(1))
             if n >= 15:
                 count = n
-            elif u in ("CA", "CS") and n in (4, 6, 8, 12):
+            elif u in ("CA", "CS") and n in (4, 6, 8, 12) and cat not in ("liquor", "wine"):
                 out["units_per_case"] = 24
-                out["units_source"] = "assumed"  # a 6NR / 12NR case is four sixes or two twelves
+                out["units_source"] = "assumed"  # a 6NR / 12NR case is four sixes or two twelves (beer only)
     if count:
         out["units_per_case"], out["units_source"] = count, "parsed"
+    if ppc and u in ("CA", "CS"):
+        out["units_per_case"], out["units_source"] = ppc, "invoice"
     if out["container_ml"] is None:
         for m in _SIZE_RE.finditer(d):
             ml = _ml_of(float(m.group(1)), m.group(2))
@@ -527,13 +546,13 @@ def pour_for(category, pack, pour=None) -> tuple:
     return None, "one " + (pack.get("each") or "unit"), 100.0
 
 
-def unit_costs(price, uom, description, category, override=None, pour=None) -> dict:
+def unit_costs(price, uom, description, category, override=None, pour=None, ppc=None) -> dict:
     """What one purchase unit's price comes to: {each, per_each, per_bottle,
     per_oz, per_pour, pour_oz, pour_label, units_per_case, container_oz,
     confidence high|medium|low, assumes [..]} or None for a non-product."""
     if price in (None, "") or float(price) <= 0 or category in ("fee", "deposit", "supplies", "other"):
         return None
-    pk = parse_pack(description, uom, category)
+    pk = parse_pack(description, uom, category, ppc=ppc)
     if override:
         if override.get("units_per_case"):
             pk.update(units_per_case=int(override["units_per_case"]), units_source="owner")

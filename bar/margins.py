@@ -177,6 +177,34 @@ def _series_for(analysis, key):
     return found[0][1] if found else None
 
 
+# The least a bottle of each costs: below it the line was misread.
+_FLOOR = {"liquor": 5.0, "wine": 2.5}
+_BUCKET_RE = re.compile(r"\bbucket\b", re.I)
+
+
+def bucket_size(restaurant_id, db_path=None, days=90):
+    """How many beers a bucket is at this restaurant: the beers rung as
+    "<beer>`Bucket" lines over the bucket price lines' quantity, rounded, in
+    the last `days` of the POS archive; None when it can't be read (no
+    buckets rung, or a count outside 2-12)."""
+    from datetime import date, timedelta
+    since = (date.today() - timedelta(days=days)).isoformat()
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT SUM(CASE WHEN item_name LIKE ? THEN qty ELSE 0 END), "
+            "SUM(CASE WHEN item_name NOT LIKE ? AND LOWER(item_name) LIKE ? THEN qty ELSE 0 END) "
+            "FROM pos_ticket_lines WHERE restaurant_id=? AND business_date>=? AND kind='sale'",
+            ("%`Bucket", "%`%", "%bucket%", int(restaurant_id), since)).fetchone()
+    finally:
+        conn.close()
+    beers, buckets = (float(row[0] or 0), float(row[1] or 0)) if row else (0.0, 0.0)
+    if buckets <= 0:
+        return None
+    n = round(beers / buckets)
+    return n if 2 <= n <= 12 else None
+
+
 def _brand_words(name) -> set:
     """The first two words of a product's name: on a distributor's invoice,
     its brand."""
@@ -190,6 +218,7 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
     menu = _menu(restaurant_id, db_path)
     mapped = {(m["provider"], str(m["item_id"])): m for m in drink_map(restaurant_id, db_path)}
     rows = []
+    bucket_n = None
     for k, m in mapped.items():
         item = menu.get(k)
         s = _series_for(analysis, m["product_key"])
@@ -202,24 +231,40 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
         # or no-pour 1:1 item is the whole bottle or can, a draft its stated
         # size — never a 5 oz glass of a bottle sold whole.
         from bar.variance import pour_target
-        mode, oz, _basis, assume = pour_target(l["category"], parse_pack(l["description"], l.get("uom"), l["category"]),
+        mode, oz, _basis, assume = pour_target(l["category"], parse_pack(l["description"], l.get("uom"), l["category"], ppc=l.get("ppc")),
                                                m.get("pour_oz"), item["name"], pour)
         if mode == "unknown":
             continue
         p = dict(pour or {})
         if mode == "oz":
             p.update(liquor_oz=oz, wine_oz=oz, draft_oz=oz)
-        now = unit_costs(st["reference"], l.get("uom"), l["description"], l["category"], pour=p)
+        now = unit_costs(st["reference"], l.get("uom"), l["description"], l["category"], pour=p, ppc=l.get("ppc"))
         if not now:
             continue
         cost_now = now["per_each"] if mode == "each" else now.get("per_pour")
         if cost_now is None:
             continue
+        # A bottle no spirit or wine is sold at is a misread line, never a
+        # cost to judge a price on (owner, 10/27/26: a $2.29 per-bottle
+        # charge stood as a bottle of Jameson Black Barrel).
+        if (l["category"] in _FLOOR and (now.get("container_oz") or 0) > 3.4
+                and (now.get("per_bottle") or now["per_each"]) < _FLOOR[l["category"]]):
+            continue
         label = f"one {now['each']}" if mode == "each" else now["pour_label"]
+        # A bucket is several of the product (EJ's: five beers a bucket, rung
+        # on their own lines after the bucket's price), never one (owner,
+        # 10/27/26: the $32.99 Surfside Bucket read as one can, 5.7%).
+        if mode == "each" and _BUCKET_RE.search(item["name"] or ""):
+            if bucket_n is None:
+                bucket_n = bucket_size(restaurant_id, db_path)
+            if not bucket_n:
+                continue
+            cost_now = cost_now * bucket_n
+            label = f"{bucket_n:g} {now['each']}s (a bucket)"
         before, changed = None, None
         ch = st.get("change")
         if ch:
-            b = unit_costs(ch["from"], l.get("uom"), l["description"], l["category"], pour=p) or {}
+            b = unit_costs(ch["from"], l.get("uom"), l["description"], l["category"], pour=p, ppc=l.get("ppc")) or {}
             before, changed = (b.get("per_each") if mode == "each" else b.get("per_pour")), ch["since"]
         mm = drink_margin(cost_now, item["price"], before)
         rows.append(dict(mm, provider=k[0], item_id=k[1], item=item["name"], level=item["level"],
@@ -237,7 +282,7 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
         l = v["line"]
         if l["category"] in ("liquor", "wine", "beer"):
             keg = is_keg(l["description"], l.get("uom"))
-            pk = parse_pack(l["description"], l.get("uom"), l["category"])
+            pk = parse_pack(l["description"], l.get("uom"), l["category"], ppc=l.get("ppc"))
             cont = pk.get("container_oz") if pk.get("size_source") == "parsed" and not keg else None
             products.setdefault(l["product_key"], (display_name(l["description"]), _words(l["description"]), keg, cont,
                                                       l["category"]))

@@ -625,7 +625,7 @@ def _line_units(l, packs, ck):
     """(pack, units, ounces) one item line bought — the owner's pack first;
     units None when the line has no unit of measure and its words state no
     count (BAR-CALC-04), ounces None when the size isn't known."""
-    pk = parse_pack(l["description"], l.get("uom"), l["category"])
+    pk = parse_pack(l["description"], l.get("uom"), l["category"], ppc=l.get("ppc"))
     ov = packs.get(l["product_key"]) or packs.get(ck) or {}
     uom = str(l.get("uom") or "").upper()
     if ov.get("units_per_case") and uom in ("CA", "CS"):
@@ -753,7 +753,7 @@ def successor_keys(lines, mapped, start, end, canon=None) -> dict:
         # an old one that stopped (below).
         same_only = o["in_span"] > 0 or o["last"] >= start
         ol = o["line"]
-        opk = parse_pack(ol["description"], ol.get("uom"), ol["category"])
+        opk = parse_pack(ol["description"], ol.get("uom"), ol["category"], ppc=ol.get("ppc"))
         ow = _succ_words(display_name(ol["description"]))
         cands = []
         for new, n in info.items():
@@ -762,7 +762,7 @@ def successor_keys(lines, mapped, start, end, canon=None) -> dict:
             nl = n["line"]
             if nl.get("category") != ol.get("category"):
                 continue
-            npk = parse_pack(nl["description"], nl.get("uom"), nl["category"])
+            npk = parse_pack(nl["description"], nl.get("uom"), nl["category"], ppc=nl.get("ppc"))
             if (opk or {}).get("each") != (npk or {}).get("each"):
                 continue
             oc, nc = (opk or {}).get("container_oz"), (npk or {}).get("container_oz")
@@ -912,7 +912,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         p = prods[ck]
         p.name = display_name(l["description"])
         p.category = l["category"]
-        p.pack = parse_pack(l["description"], l.get("uom"), l["category"])
+        p.pack = parse_pack(l["description"], l.get("uom"), l["category"], ppc=l.get("ppc"))
         ov = packs.get(l["product_key"]) or packs.get(ck)
         if ov:
             if ov.get("units_per_case") and str(l.get("uom") or "").upper() in ("CA", "CS"):
@@ -1295,7 +1295,7 @@ def pour_candidates(lines) -> dict:
         if l["product_key"] in out:
             continue
         keg = is_keg(d, l.get("uom"))
-        pk = parse_pack(d, l.get("uom"), l["category"])
+        pk = parse_pack(d, l.get("uom"), l["category"], ppc=l.get("ppc"))
         cont = pk.get("container_oz") if pk.get("size_source") == "parsed" and not keg else None
         out[l["product_key"]] = (display_name(d), _words(d), l["category"], keg, variants(d), cont)
     return out
