@@ -12,6 +12,7 @@ imports nothing of ours.
 Values read in ONE module stay in that module (models.DB_PATH, the Stripe
 and DocuSign secrets, ADMIN_USERNAME, …); this is for the shared ones.
 """
+import logging
 import os
 
 DEFAULT_BASE_URL = "https://dashboard.cavnar.ai"
@@ -148,15 +149,41 @@ def stripe_api(key=None):
     of the four request threads (AI-33). Every caller that talks to Stripe
     goes through here, so one place bounds them all: 10 s per request and a
     single SDK retry. The HTTP client is installed once per process; a fake
-    module in a test that has no RequestsClient is left as it is."""
+    module in a test that has no RequestsClient is left as it is.
+
+    STRIPE_API_VERSION, when set, pins the API version every call is made
+    at (audit #25 A06-08): the SDK otherwise sends the version it was built
+    for, so a stripe upgrade in the lock silently changed the shape of every
+    object read back. Set it to the account's version from the Stripe
+    dashboard (Developers → API version); unset keeps the SDK's own.
+
+    A failure to install the bounded client is logged, never swallowed
+    (A06-10): without it every call may wait the SDK's ~80 s default."""
     import stripe
     stripe.api_key = key if key is not None else os.getenv("STRIPE_SECRET_KEY", "")
+    version = (os.getenv("STRIPE_API_VERSION") or "").strip()
+    if version:
+        stripe.api_version = version
     if not getattr(stripe, "_cavnar_bounded", False):
+        http_client = getattr(stripe, "http_client", None)
+        client_cls = getattr(stripe, "RequestsClient", None) or getattr(http_client, "RequestsClient", None)
+        if client_cls is None:
+            return stripe          # a stand-in module with no HTTP client: nothing to bound
         try:
-            client_cls = getattr(stripe, "RequestsClient", None) or stripe.http_client.RequestsClient
-            stripe.default_http_client = client_cls(timeout=10)
-            stripe.max_network_retries = 1
+            stripe.default_http_client = client_cls(timeout=STRIPE_TIMEOUT_SECONDS)
+            stripe.max_network_retries = STRIPE_MAX_NETWORK_RETRIES
             stripe._cavnar_bounded = True
-        except Exception:
-            pass
+        except Exception as e:
+            global _stripe_unbounded_logged
+            if not _stripe_unbounded_logged:
+                _stripe_unbounded_logged = True
+                logging.getLogger(__name__).error(
+                    "Stripe's bounded HTTP client could not be installed (%s: %s); Stripe calls keep the "
+                    "SDK's default timeout and retries", type(e).__name__, e, exc_info=True)
     return stripe
+
+
+# The bound every Stripe call is held to (config.stripe_api, AI-33).
+STRIPE_TIMEOUT_SECONDS = 10
+STRIPE_MAX_NETWORK_RETRIES = 1
+_stripe_unbounded_logged = False      # said once per process, not on every call

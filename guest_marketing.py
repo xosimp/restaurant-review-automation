@@ -2515,11 +2515,14 @@ def _drain(campaign_id, max_seconds=None, limit=None, db_path=DB_PATH) -> dict:
             break
         last_submit = _time.monotonic()
         err = None
+        maybe = False
         try:
             import notify as _notify_ctx
+            _notify_ctx.clear_last_sms_result()
             # Attributed to the restaurant in sms_log (fix round E, #14).
             with _notify_ctx.sms_context(rid):
                 ok = bool(send_sms(phone, body, use_case="guest", validity_seconds=validity))
+            maybe = not ok and _notify_ctx.last_sms_uncertain()
         except Exception as e:
             ok, err = False, str(e)[:300]
         except BaseException:
@@ -2538,6 +2541,12 @@ def _drain(campaign_id, max_seconds=None, limit=None, db_path=DB_PATH) -> dict:
             sent += 1
             _finish_row(row["id"], campaign_id, "sent", None, db_path, contact=(row["contact_id"], _normalize_phone(phone)),
                         restaurant_id=rid)
+        elif maybe:
+            # Twilio took it and never answered: it may have reached them, so
+            # their frequency claim stands — the next campaign must not text
+            # them early on a text that probably went (audit #25 A06-11).
+            failed += 1
+            _finish_row(row["id"], campaign_id, "failed", _notify_ctx.SMS_UNKNOWN_NOTE, db_path)
         else:
             # A failure never locks the guest out of the next campaign.
             failed += 1

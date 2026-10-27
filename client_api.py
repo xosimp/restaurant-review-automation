@@ -7876,7 +7876,10 @@ def _do_send_review_request(rid, data, actor=None):
                 + f"We'd love your feedback — leave us a Google review: {review_url}"
             )
             _sms = _notify_rr.send_sms_outcome(customer_phone, sms_text, use_case="guest", restaurant_id=rid)
-            sent_sms = _sms.ok
+            # Twilio took it and never answered: it may have reached the
+            # guest, so it is recorded as asked and never "try again" (a
+            # second tap would text them twice — audit #25 A06-11).
+            sent_sms = _sms.ok or bool(getattr(_sms, "uncertain", False))
             if not sent_sms and not customer_email:
                 why = ("that number can't receive texts" if _sms.permanent
                        else "texting isn't set up" if _sms.status == "not_configured"

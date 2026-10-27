@@ -372,6 +372,13 @@ def _notify(issue_id, token=None, db_path=DB_PATH, now=None):
             conn.close()
         _present(r, "issue_sms", db_path)
         return True
+    if getattr(res, "uncertain", False):
+        # Twilio took the request and never answered: the text may well have
+        # gone out, so it counts as sent for retrying (audit #25 A06-11) —
+        # the claim stands, nothing is scheduled again, and the console reads
+        # "delivery unknown". Escalation still follows if nobody answers.
+        _hold_as_sent(issue_id, r["restaurant_id"], "notify", db_path)
+        return False
     attempts = int((r["notify_attempts"] if "notify_attempts" in r.keys() else 0) or 0) + 1
     reason = res.error or res.status or "the text was not accepted"
     if res.permanent or attempts >= MAX_NOTIFY_ATTEMPTS:
@@ -386,6 +393,30 @@ def _notify(issue_id, token=None, db_path=DB_PATH, now=None):
         finally:
             conn.close()
     return False
+
+
+_HOLD_AS_SENT_SQL = {
+    "notify": "UPDATE ops_issues SET notify_error=?, notify_next_at=NULL WHERE id=? AND restaurant_id=?",
+    "escalation": "UPDATE ops_issues SET escalation_error=?, escalation_next_at=NULL WHERE id=? AND restaurant_id=?",
+}
+
+
+def _hold_as_sent(issue_id, restaurant_id, which, db_path=DB_PATH):
+    """An issue text (`which` notify | escalation) whose outcome Twilio never
+    answered (SmsResult.uncertain): its claim (notified_at / escalated_at)
+    stays, no retry is scheduled, and the error column says delivery is
+    unknown — what the console shows. Never raises: the send already
+    happened, or may have."""
+    import notify
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute(_HOLD_AS_SENT_SQL[which], (notify.SMS_UNKNOWN_NOTE[:300], issue_id, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[issues] could not record an unknown text outcome on issue {issue_id}: {e!r}")
 
 
 def texts_on(restaurant_id) -> bool:
@@ -983,6 +1014,9 @@ def _escalate(s, db_path=DB_PATH, now=None):
         finally:
             conn.close()
         return True
+    if getattr(res, "uncertain", False):
+        _hold_as_sent(s["id"], rid, "escalation", db_path)      # maybe delivered: never texted twice (A06-11)
+        return False
     attempts += 1
     reason = res.error or res.status or "the text was not accepted"
     if res.permanent or attempts >= MAX_NOTIFY_ATTEMPTS:
