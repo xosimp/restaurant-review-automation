@@ -75,9 +75,13 @@ Three things page, and they fail independently:
    survives a Resend or APNs outage), an email to `WILL_EMAIL` and every
    `OPS_ONCALL_EMAILS` address, an event to the paging service when one is
    configured (`OPS_PAGER_KIND` / `OPS_PAGER_ROUTING_KEY` /
-   `OPS_PAGER_WEBHOOK_URL` — PagerDuty or any incoming webhook, deduplicated
-   on the page's key; acknowledgement and phone escalation live there,
-   scale audit 10/19/26 OPS-4), and a push to the admin logins (a push
+   `OPS_PAGER_WEBHOOK_URL` — PagerDuty or any incoming webhook; the platform
+   check sends each condition as its own event (`sla:<condition>`, e.g.
+   `sla:job_overdue:pos_sync`, `sla:disk_critical`) and RESOLVES it when the
+   condition clears (re-audit B7, 10/27/26: one constant key, never resolved,
+   let an acknowledged incident swallow every later urgent page); other pages
+   are deduplicated on their key; acknowledgement and phone escalation live
+   there, scale audit 10/19/26 OPS-4), and a push to the admin logins (a push
    proves nothing, so it does not count as delivered). Sent by the web process's supervisor thread
    every five minutes when something needs a person — a stale heartbeat, a
    wedged job or stalled loop, an overdue job, low or critical disk, a
@@ -85,7 +89,9 @@ Three things page, and they fail independently:
    missing past its deadline, a retention window set under its floor
    (`retention_floor`), customer requests failing (a 5xx rate over
    `HTTP_5XX_ALERT_RATE`, 2%, across the last five minutes with at least
-   `HTTP_5XX_ALERT_MIN_REQUESTS`, 50) — and, as daily warnings, customer
+   `HTTP_5XX_ALERT_MIN_REQUESTS`, 50; below that floor, 5 SIGNED-IN customer
+   5xx on 2 routes from 2 restaurants in ten minutes — unauthenticated traffic
+   never pages) — and, as daily warnings, customer
    p95 over `HTTP_P95_SLO_MS` for fifteen minutes, the queue worker process
    silent for `QUEUE_WORKER_ALERT_SECONDS` (the web process has the queue),
    a bulk or POS queue row runnable but waiting past
@@ -109,7 +115,8 @@ Three things page, and they fail independently:
    with SMS contacts. Its hosted status page is the one that survives this
    process; `/status` is served by the same process it reports on. The
    cavnar-watchdog Worker now does this too: a body without `"status":"ok"`
-   for 30 minutes alerts once, naming its `problems` (Audit #25 A07-09).
+   on 5 of its last 7 checks (30 minutes of them — a flapping body too)
+   alerts once, naming its `problems` (Audit #25 A07-09; re-audit B7).
 4. **A paging service for the in-process pages** (`OPS_PAGER_KIND` with
    `OPS_PAGER_ROUTING_KEY` for PagerDuty, or `OPS_PAGER_WEBHOOK_URL`).
    Every degraded-platform page (overdue or failing jobs, the backup, the
@@ -237,12 +244,19 @@ resolve, and — with the `SMOKE_TOKEN` secret, the smoke tenant's session token
 one web read and one mobile read answer. A failure fails the run (GitHub emails
 Will) and prints the rollback step. Hourly, the same workflow fails when the
 build `/health` names has lagged the deploy branch's head for over an hour.
-In the process, `platform_monitor.release_health` compares the new build's
-first 15 minutes with the previous build's last hour (boot failures, customer
-5xx and p95, jobs that crashed after a clean run, failed queue rows, AI
-provider errors, a scheduler tick) and pages once per build: **roll back** on
-an urgent row, **hold the next deploy** on a warning. A boot over 60 s, or 50%
-over the median of the last ten, pages once per build too.
+In the process, `platform_monitor.release_health` compares the new
+DEPLOYMENT's first 15 minutes (Railway's `RAILWAY_DEPLOYMENT_ID`, the SHA
+alongside — so a redeploy for a variable change and a rollback are checked
+too; re-audit B7, 10/27/26) with the previous deployment's last hour (failed
+boots, each counted once; customer 5xx and p95; jobs that crashed after a
+clean run; each queue kind's failed share; AI provider errors; a scheduler
+tick) and pages once per deployment: **roll back** on an urgent row, **hold
+the next deploy** on a warning. A rollback is advised only for a regression
+that starts with the deployment — a rate against the deployment before it,
+with absolute minimums — and never for a provider seen failing at the same
+time (`provider_health`: RPOWER for the POS rows, Anthropic for the AI
+errors), which reads as a hold: "the provider, not the release". A boot over
+60 s, or 50% over the median of the last ten, pages once per build too.
 
 **Emergency deploys come from a pushed commit, never from `railway up`.**
 `railway up` uploads the working directory — uncommitted edits included — and
@@ -269,7 +283,10 @@ runs one deployment at a time. Since the Postgres cutover it holds only the
 local backup snapshots, the volume marker, the restore guard's files and the
 frozen pre-cutover `reviews.db`. With `VOLUME_OPTIONAL=1` the app runs
 without it: the markers live in object storage (`marker_store`, the blob
-bucket or else the backup bucket, under `cavnar-markers/`), the backup's local
+bucket or else the backup bucket, under `cavnar-markers/`; a read that fails
+is never "no marker" — the restore freeze reads as last read, else frozen, and
+the restore guard neither compares nor writes an epoch it could not read;
+re-audit B7, 10/27/26), the backup's local
 snapshot is scratch and the encrypted off-site copy is the backup (the run
 still FAILS when no off-site copy was made), and the monthly drill proves the
 off-site copy. `models.require_volume` refuses a volume-less boot unless the
@@ -1119,10 +1136,12 @@ record it — the Engineering system card shows the last of each and warns past
 - **Heartbeat.** `HEALTHCHECK_PING_URL` on Railway is `https://cavnar-watchdog.cavnarai-account.workers.dev/ping/<PING_TOKEN>`;
   the scheduler pings it every tick (`ops.ping_healthcheck`), `/fail` after a failed backup or digest.
 - **Uptime.** A cron every 5 minutes fetches `/health` and expects 200 with `"db":"ok"`.
-- **Degraded** (Audit #25 A07-09). A 200 whose body has not said `"status":"ok"` for 30 minutes (`DEGRADED_MINUTES`) alerts
-  once — "Cavnar AI is degraded", with the body's `problems` — on every configured channel (deduplicated as
-  `cavnar-watchdog-degraded` on PagerDuty), and once more when `"status":"ok"` is back. The in-app pages for those
-  problems ride the app's own email and text keys; this copy does not.
+- **Degraded** (Audit #25 A07-09; re-audit B7 10/27/26). A 200 whose body did not say `"status":"ok"` on 5 of the last
+  7 checks (`DEGRADED_MIN` of `DEGRADED_WINDOW`: 30 minutes of them, so a flapping body counts too) alerts once —
+  "Cavnar AI is degraded", with the body's `problems` — on every configured channel (deduplicated as
+  `cavnar-watchdog-degraded` on PagerDuty), and once more after two healthy checks running. Degraded turning DOWN
+  resolves the degraded incident and escalates at once: the down alert goes on the first down check, not the second.
+  The in-app pages for those problems ride the app's own email and text keys; this copy does not.
 - Silence past 20 minutes, or two failing `/health` checks in a row, alerts once, and once more when it recovers. A
   `/fail` alerts on its own at the first check that sees it — kept in its own KV key until a channel took the alert,
   36 hours at most (scale re-audit 10/20/26 R8-13; it used to ride the heartbeat's key and was overwritten by the next
