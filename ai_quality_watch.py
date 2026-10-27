@@ -59,6 +59,8 @@ GEN_FALLBACK_ABS_SHARE = 0.5
 GEN_FALLBACK_DAYS = 14
 _CACHE_SECONDS = 3600
 _cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("ai_quality_watch._cache", _cache)
 
 
 def _stamp(dt) -> str:

@@ -41,6 +41,8 @@ log = logging.getLogger("marker_store")
 DEFAULT_PREFIX = "cavnar-markers/"
 EXISTS_TTL_SECONDS = 30.0
 _exists_cache = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("marker_store._exists_cache", _exists_cache)
 _cache_lock = threading.Lock()
 
 

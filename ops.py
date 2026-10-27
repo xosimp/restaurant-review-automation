@@ -2313,6 +2313,7 @@ def jobs_bound_capped(db_path=None, runs=None, use_cache=True) -> list:
 
 
 _failing_cache = {}
+_process_caches.register("ops._failing_cache", _failing_cache)
 
 
 def _run_idle(result_json) -> bool:
