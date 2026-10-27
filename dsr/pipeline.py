@@ -451,14 +451,37 @@ def _period(rid, day, version):
 
 
 def _claim_age_minutes(period):
+    return _claim_row(period)[1]
+
+
+def _claim_row(period):
+    """(claimed_at exactly as stored, its age in minutes) for a held claim,
+    else (None, None)."""
     conn = store.get_conn()
     try:
         row = conn.execute("SELECT claimed_at FROM job_period_claims WHERE job_key=?",
                            (f"{CLAIM_JOB}:{period}",)).fetchone()
     finally:
         conn.close()
-    at = _parse_utc(row["claimed_at"]) if row else None
-    return None if at is None else (datetime.utcnow() - at).total_seconds() / 60.0
+    stamp = row["claimed_at"] if row else None
+    at = _parse_utc(stamp)
+    return stamp, (None if at is None else (datetime.utcnow() - at).total_seconds() / 60.0)
+
+
+def _take_over(period, stamp) -> bool:
+    """Take a dead run's claim in ONE conditional write (audit #25 A02-08):
+    re-stamped only while it still holds the stamp this pass read, so of two
+    passes that both found it stale exactly one wins. It was released and
+    claimed again — the second taker's release deleted the first's fresh
+    claim and both ran."""
+    conn = store.get_conn()
+    try:
+        n = conn.execute("UPDATE job_period_claims SET claimed_at=datetime('now') WHERE job_key=? AND claimed_at=?",
+                         (f"{CLAIM_JOB}:{period}", stamp)).rowcount
+        conn.commit()
+        return n == 1
+    finally:
+        conn.close()
 
 
 def _last_progress(report):
@@ -476,7 +499,7 @@ def _claim(rid, day, version, db):
     period = _period(rid, day, version)
     if ops.claim_period(CLAIM_JOB, period):
         return True
-    age = _claim_age_minutes(period)
+    stamp, age = _claim_row(period)
     if age is None or age < STALE_RUN_MINUTES:
         return False
     report = store.get_report(rid, day, version=version, db_path=db)
@@ -486,9 +509,10 @@ def _claim(rid, day, version, db):
         last = _last_progress(report)
         if last and (datetime.utcnow() - last).total_seconds() / 60.0 < STALE_RUN_MINUTES:
             return False
+    if not _take_over(period, stamp):
+        return False                    # another pass took it over first
     log.error("dsr: claim %s held %.0f minutes with no progress — reclaimed", period, age)
-    ops.release_period(CLAIM_JOB, period)
-    return ops.claim_period(CLAIM_JOB, period)
+    return True
 
 
 def _result(action, report=None, **extra):

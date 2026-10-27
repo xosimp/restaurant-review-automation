@@ -1167,10 +1167,15 @@ def _with_data_as_of(name, restaurant_id, payload, restaurant=None):
 def _read_labor_detail(restaurant_id, weeks=8):
     """Per-day labor, not just the overstaffed/understaffed counts — which
     is what "which day is killing me?" actually needs."""
-    from models import get_labor_daily, get_labor_history
+    from models import get_labor_history
     try:
-        daily = get_labor_daily(restaurant_id)
-    except Exception:
+        # Each day on the viewer's basis (metrics.daily_labor, audit #25
+        # F2): the stored labor_pct is hourly, and it sat beside an all-in
+        # weekly trend for the owner.
+        import metrics as _metrics_ld
+        daily = _metrics_ld.daily_labor(restaurant_id)
+    except Exception as e:
+        log.warning("ask_cavnar tool read_labor_detail daily labor unreadable: %s", e)
         daily = []
     try:
         # Same source the web Labor tab's trend chart uses; oldest first so
@@ -1968,11 +1973,21 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
     want = str(module or "").strip().lower() or None
     window = _days(days, 30, 180)
     reads, seen = [], set()
+    # The Labor and Food reads are kept per salary view (insight_store.
+    # salary_kind, audit #25 F13): a login who may not see salaries reads
+    # only its own view's, never the owner's all-in one.
+    try:
+        from models import viewer_sees_salaries as _vss_rr
+        _sees_rr = bool(_vss_rr())
+    except Exception:
+        _sees_rr = False
     try:
         import ai_reads
         for r in ai_reads.recent_reads(restaurant_id, days=window, limit=20) or []:
             surface = str(r.get("surface") or "")
             base = surface.split(":", 1)[0]
+            if not _sees_rr and base in ai_reads.SALARY_VIEW_SURFACES:
+                continue
             # Every kept read is scoped by its surface (ai_reads.SURFACE_MODULE):
             # a module's read needs that module's view, an owner-level one
             # (the monthly review, digest, brief, Monday plan, nightly report)
@@ -1994,11 +2009,12 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
         import insight_store
         import ai_reads as _air_k
         for kind, perm_module, label in _READ_KINDS:
+            stored_kind = insight_store.salary_kind(kind)
             # The current stored read is already listed when its kept history is.
-            if (perm_module in denied or _air_k.STORE_SURFACE.get(kind, kind) in seen
+            if (perm_module in denied or _air_k.STORE_SURFACE.get(stored_kind, stored_kind) in seen
                     or (want and want not in (kind, perm_module))):
                 continue
-            payload, at = insight_store.latest(restaurant_id, kind)
+            payload, at = insight_store.latest(restaurant_id, stored_kind)
             if (kind == "reviews" and isinstance(payload, dict) and isinstance(payload.get("locations"), dict)
                     and payload["locations"].get("available")):
                 # A Reviews row written before the cross-location read got its
@@ -2085,7 +2101,7 @@ _MODULE_OF_SURFACE = {"reviews": "reviews", "review_diagnosis": "reviews", "revi
                       "food": "inventory", "food_diagnosis": "inventory", "food_read": "inventory",
                       "inventory": "inventory", "labor": "labor", "labor_read": "labor", "schedule": "labor",
                       "marketing": "marketing", "competitor": "intel", "competitor_read": "intel",
-                      "intel": "intel"}
+                      "intel": "intel", "labor_read_hourly": "labor", "food_read_hourly": "inventory"}
 
 
 def _read_service_performance(restaurant_id, days=28, _viewer=None):
@@ -2236,6 +2252,8 @@ def _read_events_once(restaurant_id, days=21, past=4, _viewer=None):
             item["last_like_it"] = {"what": last["describe"], "net": last["net"],
                                     "usual_same_weekday": last["baseline"], "lift_pct": last["lift_pct"],
                                     "covers": last["covers"], "labor_pct": last["labor_pct"],
+                                    # The night's stored labor % is hourly (audit #25 F2).
+                                    "labor_pct_basis": "hourly staff only, salaries not included",
                                     "on_the_clock_by_role": last["headcount"]}
         if not item.get("context_only") and _planned[0] < 3:
             # The full plan goes to the next three games that matter, never

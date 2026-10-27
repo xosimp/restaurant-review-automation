@@ -285,6 +285,9 @@ def test_web_labor_twin_answers_the_same_way(db, held, fake_labor_read, monkeypa
     rid = _rid(db)
     app = Flask(__name__)
     with app.test_request_context("/api/labor-insight?async=1"):
+        # The owner's request (a route always has a login): the read is the
+        # owner's salary view's (audit #25 F13 keeps one per view).
+        g.cavnar_current_user = {"id": 1, "restaurant_id": rid, "role": "client"}
         payload, status = insight_refresh.serve(
             "labor", rid, render=lambda: client_api._labor_insight_web(rid, 1),
             refresh=lambda: client_api.labor_refresh(rid), stale=lambda note: None,

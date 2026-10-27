@@ -76,7 +76,36 @@ def init_insight_store(db_path: str = DB_PATH):
 _KIND_ACTIONS = {"reviews": "review_insight", "food": "inventory_insight", "marketing": "marketing_insight",
                  "labor": "labor_insight",
                  # The Reviews read for a login shown its other locations (re-audit 10/8/26 #1).
-                 "reviews:locations": "review_insight"}
+                 "reviews:locations": "review_insight",
+                 # The Labor and Food reads for a login who may not see salaries
+                 # (salary_kind, audit #25 F13).
+                 "labor:hourly": "labor_insight", "food:hourly": "inventory_insight"}
+
+# The reads whose figures depend on the salary view: Labor (all-in labor %
+# for the owner, hourly for anyone else) and Food (its prime cost carries
+# that labor). Each is kept twice, once per view (salary_kind).
+SALARY_VIEW_KINDS = ("labor", "food")
+HOURLY_SUFFIX = ":hourly"
+
+
+def salary_kind(kind) -> str:
+    """The kind a salary-dependent read (SALARY_VIEW_KINDS) is kept under
+    for the current viewer: `kind` itself for one who sees salaries
+    (models.viewer_sees_salaries — the owner, and a job reporting to the
+    owner), `kind + ":hourly"` for anyone else. One row per restaurant made
+    the owner's all-in read and a manager's hourly one evict each other on
+    every alternate open (a model call each time), and the stale fallback
+    and Ask's stored reads served whichever was written last — the owner's
+    salaries, to a manager (audit #25 F13). Any other kind is returned as
+    it is; a failure reads as the hourly kind (never the salaries)."""
+    if kind not in SALARY_VIEW_KINDS:
+        return kind
+    try:
+        from models import viewer_sees_salaries
+        return kind if viewer_sees_salaries() else kind + HOURLY_SUFFIX
+    except Exception as e:
+        print(f"[insight_store] salary view unreadable, kept hourly: {e!r}")
+        return kind + HOURLY_SUFFIX
 
 
 def fingerprint(*parts) -> str:

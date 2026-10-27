@@ -1789,7 +1789,10 @@ Then, on new lines after the paragraph, write 1-2 recommendations:
             _fp = _ist.read_fingerprint(prompt, readiness=_ready_food, today=today_inv,
                                         week=f"{_iso_inv[0]}-W{_iso_inv[1]:02d}",
                                         extra=((_packet_inv.fingerprint,) if _packet_inv is not None else ()))
-            _stored = _ist.get(restaurant_id, "food", _fp, revalidate=lambda raw: finish_food_read(raw, _ctx))
+            # Kept per salary view (insight_store.salary_kind, audit #25 F13):
+            # the read's prime cost carries the viewer's labor.
+            _stored = _ist.get(restaurant_id, _ist.salary_kind("food"), _fp,
+                               revalidate=lambda raw: finish_food_read(raw, _ctx))
             if isinstance(_stored, str) and _stored.strip():
                 return _stored
         except Exception as _se:
@@ -1839,7 +1842,7 @@ Then, on new lines after the paragraph, write 1-2 recommendations:
     if _fp and out.strip():
         try:
             import insight_store as _ist2
-            _ist2.put(restaurant_id, "food", _fp, out, raw=result)
+            _ist2.put(restaurant_id, _ist2.salary_kind("food"), _fp, out, raw=result)
         except Exception as _pe:
             print(f"[inventory insight store] {_pe}")
     return out

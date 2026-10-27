@@ -555,14 +555,31 @@ SALES_MISMATCH_NIGHTS = 2
 SALES_CONSISTENCY_DAYS = 14
 
 
-def sales_consistency(restaurant_id, days=SALES_CONSISTENCY_DAYS, db_path=None, conn=None) -> dict:
+def sales_consistency(restaurant_id, days=SALES_CONSISTENCY_DAYS, db_path=None, conn=None, today=None) -> dict:
     """{checked, mismatches: [{date, dsr, pos, diff_pct}]} — FINAL daily
     reports (dsr_metrics sales.net) against the POS archive's sales for the
     same business dates over the last `days`, the newest first. Re-read on
     every call, so each POS pull re-checks every final night in the window
-    against what the POS now says (DH2-18). Never raises."""
+    against what the POS now says (DH2-18). Never raises.
+
+    The window is business dates, so it ends on the RESTAURANT's own date
+    (`today`, else time_utils.restaurant_now_by_id; audit #25 F14) — it was
+    the server's UTC date('now'), a day ahead every Central evening.
+
+    Only a night whose archive total is built as the report's own net
+    (dsr.store.POS_SYNC_SAME_BASIS — RPOWER) is re-run when the two
+    disagree (pos._reopen_moved_nights); for any other POS a mismatch is
+    reported here and in Data Health, never re-run (same_basis_recheck)."""
     own = conn is None
     out = {"checked": 0, "mismatches": []}
+    try:
+        if today is None:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id).date()
+        since = (today - timedelta(days=int(days))).isoformat()
+    except Exception as e:
+        print(f"[data_freshness] sales consistency window unreadable for {restaurant_id}: {e!r}")
+        return out
     try:
         c = get_conn(db_path) if own else conn
     except Exception:
@@ -581,8 +598,8 @@ def sales_consistency(restaurant_id, days=SALES_CONSISTENCY_DAYS, db_path=None, 
             "WHERE m.restaurant_id=? AND m.metric='sales.net' AND m.status='ready' AND r.status='final' "
             "AND m.value IS NOT NULL "
             "AND l.sales IS NOT NULL AND l.sales > 0 AND COALESCE(l.final, 1) = 1 "
-            "AND m.business_date >= date('now', ?) ORDER BY m.business_date DESC",
-            (restaurant_id, f"-{int(days)} days")).fetchall()
+            "AND m.business_date >= ? ORDER BY m.business_date DESC",
+            (restaurant_id, since)).fetchall()
         for r in rows:
             dsr, pos_net = float(r["dsr"]), float(r["pos"])
             out["checked"] += 1
@@ -703,7 +720,7 @@ def _sales(r, conn, today, now, ctx, db_path=None):
         return _result("sales", None, None, "No sales on file", state="not_connected")
     err = _pos_of_record_error(r, conn, today, now)
     if not err:
-        chk = sales_consistency(_rid(r), conn=conn)
+        chk = sales_consistency(_rid(r), conn=conn, today=today)
         if len(chk["mismatches"]) >= SALES_MISMATCH_NIGHTS:
             m = chk["mismatches"][0]
             err = (f"Daily report and POS disagree on {len(chk['mismatches'])} nights "
@@ -718,7 +735,44 @@ def _sales(r, conn, today, now, ctx, db_path=None):
             note = f"{int(round(float(cov['share']) * 100))}% of trading days carry sales"
     except Exception:
         note = ""
-    return _data_date_state("sales", d, today, "Sales through", 1.0, note, error=err)
+    # Whether a final nightly report is re-run when the POS moves under it
+    # (audit #25 F14): only for a POS whose daily total is the report's own
+    # net (RPOWER); any other POS's late void is reported, never re-run.
+    recheck = same_basis_recheck(r)
+    if recheck == "reported_only":
+        note = (note + " · " if note else "") + SALES_RECHECK_REPORTED_ONLY
+    out = _data_date_state("sales", d, today, "Sales through", 1.0, note, error=err)
+    if recheck:
+        out["recheck"] = recheck
+    return out
+
+
+# Data Health's sales line for a POS whose daily total is a different figure
+# from the nightly report's net (audit #25 F14).
+SALES_RECHECK_REPORTED_ONLY = ("a void or refund after a nightly report is final is flagged here, "
+                               "not re-run into a new version")
+
+
+def same_basis_recheck(r):
+    """"rerun" when a final nightly report is re-run once the POS's own
+    total moves (the POS's daily archive is built as the report's net:
+    dsr.store.POS_SYNC_SAME_BASIS), "reported_only" for a connected POS
+    whose total is another figure (a mismatch is reported, never re-run —
+    pos._reopen_moved_nights), None without the nightly report or a POS.
+    Never raises."""
+    try:
+        enabled = _get(r, "dsr_enabled")
+        if enabled is not None and not int(enabled or 0):
+            return None
+        import pos
+        from dsr import store as _dsr_store
+        name = pos.connected_provider(_rid(r))[0]
+        if not name:
+            return None
+        return "rerun" if _dsr_store.pos_sync_same_basis(name) else "reported_only"
+    except Exception as e:
+        print(f"[data_freshness] sales recheck basis unreadable: {e!r}")
+        return None
 
 
 def _reviews(r, conn, today, now, ctx, db_path=None):

@@ -291,7 +291,10 @@ def test_the_recent_days_lines_carry_the_last_days_with_sales(db_path):
     conn.close()
     lines = ask_cavnar._recent_days_lines(rid)
     assert lines and "Most recent days" in lines[0]
-    assert any("Tuesday 2026-09-09" in ln for ln in lines)
+    # M/D/YY, never ISO (the model echoes the date to the owner; audit #25
+    # F2 moved this line onto metrics.labor_figures): a day whose labor cost
+    # is not on file says so rather than quoting a %.
+    assert any("Tuesday 9/9/26" in ln and "labor not recorded" in ln for ln in lines)
     assert lines[0] != "- Most recent days with recorded sales:", \
         "the heading has to say how old the newest day is"
 

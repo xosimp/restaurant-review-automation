@@ -10,7 +10,19 @@ nothing.
 The identity is the ordinary one:
 
     COGS = opening inventory + purchases - closing inventory
-    food cost % = COGS / net sales * 100
+    food cost % = COGS / FOOD sales * 100
+
+over FOOD sales, never net sales (FC-CALC-11; audit #25 F10 — this line
+said net and a caller following it would divide by a figure carrying the
+bar's sales): the ledger's COGS holds no alcohol (is_bar_item), so the
+denominator is food sales — the nightly report's food categories on Back
+Office, net sales less the report's drink sales on the inventory path, and
+net sales only when drinks are not separable on file (`sales_basis` says
+which; build_food_cost_pct's payload). The other "food cost" figures are
+different ratios with their own names: Back Office's purchases over sales
+("food bought vs sold", backoffice_ap), the nightly report's recipe
+estimate (dsr food.est_food_cost) and the plate cost of a dish
+(inventory_ledger).
 
 Every input is measured, never assumed. When a component is missing this
 returns what is missing and why, and no percentage at all — a food cost %

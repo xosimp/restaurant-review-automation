@@ -230,7 +230,9 @@ def full(restaurant_id, db_path=None, today=None, build=None, keep=True) -> dict
     if build is None:
         from bar.build import build as _build
         build = _build
-    today = today or date.today()
+    # The restaurant's own date (audit #25 F4): Home asks with none.
+    from bar.common import local_today
+    today = today or local_today(restaurant_id)
     key = _key(restaurant_id, db_path)
     st = stamp(restaurant_id, db_path=db_path, today=today)
     hit = _hit(key, st)

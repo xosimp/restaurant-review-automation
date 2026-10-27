@@ -1,0 +1,38 @@
+{
+ "food_cost_intelligence.py": {
+  "n": 2,
+  "why": "profitability_projection's labor_pct / labor_pct_mtd: the month's labor dollars are already on the viewer's basis (metrics.labor_figures for the measured nights, the viewer-basis analysis share for the rest) and are divided by the month's net once"
+ },
+ "intelligence/dna.py": {
+  "n": 1,
+  "why": "DNA's B4 labor % rebuilds the hourly dollars from the stored % to add the salaried share (_labor_all_in); a login that may not see salaries reads its `hourly` instead (profile(salaries=False))"
+ },
+ "intelligence/features.py": {
+  "n": 1,
+  "why": "the cross-restaurant feature labor_pct_28d is HOURLY by design: cohort comparisons never carry one restaurant's salaries (INTELLIGENCE_ENGINE.md privacy rules)"
+ },
+ "models.py": {
+  "n": 4,
+  "why": "the HOURLY stored figures (labor periods' snapshot, save_labor_daily_history's labor_pct and its upsert) and get_labor_history, which adds the salaried day share on read for a viewer who sees salaries - the figure's storage and its documented all-in read"
+ },
+ "pos_rederive.py": {
+  "n": 1,
+  "why": "re-derives the stored HOURLY labor_daily_history.labor_pct after a sales re-pull - storage, never shown as labor %"
+ },
+ "restaurant_thresholds.py": {
+  "n": 1,
+  "why": "the day-level labor margin is a spread of daily HOURLY % around each weekday's own mean (a variance, never a labor % shown to anyone)"
+ },
+ "schedule_economics.py": {
+  "n": 1,
+  "why": "the schedule's hours budget is HOURLY by design (labor all-in rule: the schedule budget stays hourly) and is set against the all-in target less the salaried share (_hourly_target_pct)"
+ },
+ "schedule_intel.py": {
+  "n": 1,
+  "why": "a published week's daypart labor % for the schedule learners: hourly punches over the daypart's measured sales (schedule_outcomes.labor_pct_daypart), never an owner-facing labor %"
+ },
+ "schedule_scorecard.py": {
+  "n": 1,
+  "why": "the scorecard judges HOURLY labor % against the HOURLY target (_hourly_target_pct), and says so"
+ }
+}

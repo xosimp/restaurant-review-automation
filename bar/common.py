@@ -36,6 +36,17 @@ def get_conn(db_path=None):
     return _models.get_conn(db_path) if db_path else _models.get_conn()
 
 
+def local_today(restaurant_id) -> date:
+    """The restaurant's own calendar date — every Bar read's "today" when a
+    caller gives none (audit #25 F4/R24). On a UTC host date.today() is
+    tomorrow from 7pm Central: Home built the bar payload a day ahead
+    (a trailing window gaining an unsold day, the next count due a day
+    early) and its cache stamp then never matched the Bar page's, so each
+    evening load evicted the other's payload and rebuilt it."""
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(int(restaurant_id), naive=True).date()
+
+
 def _mdy(iso) -> str:
     """M/D/YY from an ISO date (or a datetime's string), "" when unreadable.
     Kept per day: a build formats the same few hundred days ~50k times."""

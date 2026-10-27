@@ -381,7 +381,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `marketing_voice` | 2 | the owner's marketing voice (memory audit 9/29/26): every model draft kept 90 days (`marketing_model_drafts`), every piece that went out measured against it (`marketing_edits`: reply_edits.compare plus hashtags / emoji / sign-off, and who sent it), and `voice_block` — the account holder's style line, three pieces they sent (fenced) and what their regenerated drafts had in common — for the post, calendar, guest-text and email prompts |
 | `menu_intelligence` | 2 | dish scorecard and repricing; a reprice carries the owner's own ratio (`reprice_acceptance`, `apply_owner_ratio`), value complaints (`value_note`) and the link guard (`link_memory.dish_guard`) |
 | `meta_api` | 2 | Instagram/Facebook Graph calls |
-| `metrics` | 2 | the registry of measurable things |
+| `metrics` | 2 | the registry of measurable things; `labor_figures` / `daily_labor` — THE labor figure for a window and a viewer (all-in for the owner, hourly for anyone else, basis stated; audit #25 F2) |
 | `milestones` | 2 | firsts an owner is told about once |
 | `mobile_api` | 3 | the iOS `/mobile/api/*` routes |
 | `models` | 1 | schema at boot, `Restaurant`, most reads and writes; `learning_eligible` / `learning_exclusion` (pooled: demo, test, internal, admin override `learning_override`, `learning_since`), `learns_for_itself` (own: demo or an admin's exclusion only), `reply_voice_sql`, `refresh_labor_periods` |
