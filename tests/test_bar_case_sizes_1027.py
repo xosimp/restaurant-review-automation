@@ -142,3 +142,18 @@ def test_a_bottomless_order_costs_its_refills_too(db):
     conn.close()
     assert bm.glasses_per_bottomless(rid, "Wycliff Bottomless", db_path=db) == 3.7
     assert bm.glasses_per_bottomless(rid, "Sintesi Bottomless", db_path=db) is None
+
+
+def test_every_pourable_product_reaches_the_pickers_past_the_table_cap():
+    """Owner, 10/27/26: Baileys ($158 of spend) sat below the payload's first
+    100 products, and every picker read that capped list."""
+    import bar.cache as bc
+    prods = [{"product_key": f"k{i}", "product": f"P{i}", "category": "liquor", "distributor": "D", "spend": 1000 - i}
+             for i in range(bc.PRODUCT_CAP + 20)] + [{"product_key": "fee", "product": "FUEL", "category": "fee"}]
+    out = bc.trim({"available": True, "products": prods})
+    assert len(out["products"]) == bc.PRODUCT_CAP
+    assert len(out["pickable"]) == bc.PRODUCT_CAP + 20 and all(p["category"] != "fee" for p in out["pickable"])
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html"),
+               encoding="utf-8").read()
+    assert "function allProducts() { return (DATA && (DATA.pickable || DATA.products)) || []; }" in src
