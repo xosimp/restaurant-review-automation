@@ -58,7 +58,15 @@ SNAPSHOT = os.path.join(ROOT, "tests", "fixtures", "ios_api_v1.json")
 # (method, rule, key) -> why a v1 build may leave it out: the route reads it
 # with a default, so an old phone's request does what it always did. Add one
 # only after reading the route; never to let a required key through.
-V1_OPTIONAL = {}
+_FLOOR_COVER = ("who runs the floor, sent only to answer a 409 needs_cover: without it a change that leaves a "
+                "published minute with no manager is refused, and any other change lands as before (blind re-audit "
+                "B2, the manager rule after publish)")
+V1_OPTIONAL = {
+    ('POST', '/mobile/api/labor/time-off/<int:request_id>/decide', 'covered_by'): _FLOOR_COVER,
+    ('POST', '/mobile/api/labor/availability-changes/<int:change_id>/decide', 'covered_by'): _FLOOR_COVER,
+    ('POST', '/mobile/api/labor/availability', 'covered_by'): _FLOOR_COVER,
+    ('POST', '/mobile/api/labor/staff-settings', 'covered_by'): _FLOOR_COVER,
+}
 
 
 # ── reading the Swift of a commit ───────────────────────────────────────────
