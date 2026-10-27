@@ -23,6 +23,7 @@ import pytest
 
 import models
 from models import Restaurant, create_restaurant, update_restaurant
+from tests.clock import frozen
 
 # Imported before any fixture patches get_conn (CLAUDE.md's bound-import hazard).
 import benchmark_registry as br  # noqa: E402
@@ -342,17 +343,38 @@ def test_stale_labor_data_carries_its_window_and_age(monkeypatch):
     assert fresh is True and "this week" not in fresh_line
 
 
-def test_no_industry_figure_is_verifiable_without_a_registry_entry(db_path, monkeypatch):
+@pytest.mark.parametrize("age", [33, 34, 36])
+def test_no_industry_figure_is_verifiable_without_a_registry_entry(db_path, monkeypatch, age):
     import ai_guard
     ents, glob = labor.labor_insight_facts({"dow_summary": {"Wednesday": 31.0}, "overall_labor_pct": 29.5})
     assert not ents.get("industry")
     rid = _rid(db_path, name="Taco Stand")
-    prompt, _ = _labor_prompt(monkeypatch, _labor_analysis(), rid)
+    # A frozen clock, and the days when the data's age (the prompt says "the
+    # last shift on file is N days before today") equals one of the figures:
+    # this failed on main on 10/23 and 10/26/26, the 33rd and 36th day after
+    # the fixture's 9/20 (audit #25 A01-04).
+    with frozen(date(2026, 9, 20) + timedelta(days=age)):
+        prompt, _ = _labor_prompt(monkeypatch, _labor_analysis(), rid)
+    assert f"is {age} days before today" in prompt
     # The old prompt held 33 and 36, so "the industry runs 33% to 36%" verified.
     assert ai_guard.unsupported_figures("The industry runs 33% to 36%.", prompt) == ["33%", "36%"]
     ents2, glob2 = labor.labor_insight_facts({"dow_summary": {"Wednesday": 31.0}}, industry=br.lookup("labor_pct", "italian"))
     assert ai_guard.unbound_figures("The industry median is 34.2%.", ents2, glob2) == []
     assert 34.2 in ents2["industry"]
+
+
+def test_a_duration_never_backs_a_percentage_or_a_dollar_figure():
+    """The guard half of A01-04: a bare numeral followed by a time unit is a
+    duration, and no money, percentage or rating claim may lean on it."""
+    import ai_guard
+    ctx = "Labor ran 31.4%. The last shift on file is 36 days before today; a 14-day window, 12 hours late."
+    assert ai_guard.unsupported_figures("Labor ran 36% last month.", ctx) == ["36%"]
+    assert ai_guard.unsupported_figures("That cost $14 a cover.", ctx) == ["$14"]
+    assert ai_guard.unsupported_figures("Overtime was 12% of hours.", ctx) == ["12%"]
+    # A real figure in the same context still verifies, and a bare one with no
+    # unit still backs a percentage as before.
+    assert ai_guard.unsupported_figures("Labor ran 31.4%.", ctx) == []
+    assert ai_guard.unsupported_figures("Labor was 36%.", "labor 36 against a 30 target") == []
 
 
 # ══ Schedule prompt (NS4 M3, M8) ═════════════════════════════════════════
