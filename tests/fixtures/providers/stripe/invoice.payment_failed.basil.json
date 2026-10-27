@@ -1,0 +1,169 @@
+{
+ "id": "evt_FIXTURE_INV_FAIL_B",
+ "object": "event",
+ "api_version": "2025-03-31.basil",
+ "created": 1795578710,
+ "data": {
+  "object": {
+   "id": "in_FIXTURE_BASIL_FAILED",
+   "object": "invoice",
+   "account_country": "US",
+   "account_name": "Cavnar AI",
+   "account_tax_ids": null,
+   "amount_due": 34900,
+   "amount_overpaid": 0,
+   "amount_paid": 0,
+   "amount_remaining": 34900,
+   "amount_shipping": 0,
+   "application": null,
+   "attempt_count": 2,
+   "attempted": true,
+   "auto_advance": true,
+   "automatic_tax": {
+    "enabled": false,
+    "liability": null,
+    "status": null
+   },
+   "billing_reason": "subscription_cycle",
+   "collection_method": "charge_automatically",
+   "created": 1795578700,
+   "currency": "usd",
+   "custom_fields": null,
+   "customer": "cus_FIXTURE0001",
+   "customer_address": null,
+   "customer_email": "owner@fixture.test",
+   "customer_name": "Fixture Owner",
+   "customer_phone": null,
+   "customer_shipping": null,
+   "customer_tax_exempt": "none",
+   "customer_tax_ids": [],
+   "default_payment_method": null,
+   "default_source": null,
+   "default_tax_rates": [],
+   "description": null,
+   "discounts": [],
+   "due_date": null,
+   "effective_at": 1795578700,
+   "ending_balance": 0,
+   "footer": null,
+   "from_invoice": null,
+   "hosted_invoice_url": "https://invoice.stripe.com/i/acct_FIXTURE/test_in_FIXTURE_BASIL_FAILED",
+   "invoice_pdf": "https://pay.stripe.com/invoice/acct_FIXTURE/test_in_FIXTURE_BASIL_FAILED/pdf",
+   "issuer": {
+    "type": "self"
+   },
+   "last_finalization_error": null,
+   "latest_revision": null,
+   "livemode": false,
+   "metadata": {},
+   "next_payment_attempt": 1796010500,
+   "number": "FIX-ILED",
+   "on_behalf_of": null,
+   "payment_settings": {
+    "default_mandate": null,
+    "payment_method_options": null,
+    "payment_method_types": null
+   },
+   "period_end": 1795578400,
+   "period_start": 1792900000,
+   "post_payment_credit_notes_amount": 0,
+   "pre_payment_credit_notes_amount": 0,
+   "receipt_number": null,
+   "rendering": null,
+   "shipping_cost": null,
+   "shipping_details": null,
+   "starting_balance": 0,
+   "statement_descriptor": null,
+   "status": "open",
+   "status_transitions": {
+    "finalized_at": 1795578700,
+    "marked_uncollectible_at": null,
+    "paid_at": null,
+    "voided_at": null
+   },
+   "test_clock": null,
+   "total_discount_amounts": [],
+   "total_excluding_tax": 34900,
+   "transfer_data": null,
+   "webhooks_delivered_at": 1795578700,
+   "parent": {
+    "quote_details": null,
+    "subscription_details": {
+     "metadata": {
+      "restaurant_id": "41",
+      "restaurant": "Fixture Bistro",
+      "module_keys": "reviews,labor"
+     },
+     "subscription": "sub_FIXTURE0001",
+     "subscription_proration_date": null
+    },
+    "type": "subscription_details"
+   },
+   "lines": {
+    "object": "list",
+    "data": [
+     {
+      "id": "il_FIXTURE_BF_SUB",
+      "object": "line_item",
+      "amount": 34900,
+      "currency": "usd",
+      "description": "1 \u00d7 Cavnar AI (at $349.00 / month)",
+      "discount_amounts": [],
+      "discountable": true,
+      "discounts": [],
+      "invoice": null,
+      "livemode": false,
+      "metadata": {
+       "restaurant_id": "41",
+       "restaurant": "Fixture Bistro",
+       "module_keys": "reviews,labor"
+      },
+      "parent": {
+       "invoice_item_details": null,
+       "subscription_item_details": {
+        "invoice_item": null,
+        "proration": false,
+        "proration_details": {
+         "credited_items": null
+        },
+        "subscription": "sub_FIXTURE0001",
+        "subscription_item": "si_FIXTURE0001"
+       },
+       "type": "subscription_item_details"
+      },
+      "period": {
+       "end": 1795578400,
+       "start": 1792900000
+      },
+      "pretax_credit_amounts": [],
+      "pricing": {
+       "price_details": {
+        "price": "price_FIXTURE_MONTHLY",
+        "product": "prod_FIXTURE0001"
+       },
+       "type": "price_details",
+       "unit_amount_decimal": "34900"
+      },
+      "quantity": 1,
+      "taxes": []
+     }
+    ],
+    "has_more": false,
+    "total_count": 1,
+    "url": "/v1/invoices/in_FIXTURE_BASIL_FAILED/lines"
+   },
+   "subtotal": 34900,
+   "subtotal_excluding_tax": 34900,
+   "total": 34900,
+   "total_pretax_credit_amounts": [],
+   "total_taxes": []
+  }
+ },
+ "livemode": false,
+ "pending_webhooks": 1,
+ "request": {
+  "id": null,
+  "idempotency_key": null
+ },
+ "type": "invoice.payment_failed"
+}

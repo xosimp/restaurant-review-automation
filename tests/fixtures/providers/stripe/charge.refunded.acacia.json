@@ -1,0 +1,75 @@
+{
+ "id": "evt_FIXTURE_REFUND_A",
+ "object": "event",
+ "api_version": "2025-02-24.acacia",
+ "created": 1795578900,
+ "data": {
+  "object": {
+   "id": "ch_FIXTURE_ACACIA",
+   "object": "charge",
+   "amount": 109900,
+   "amount_captured": 109900,
+   "amount_refunded": 109900,
+   "application": null,
+   "application_fee": null,
+   "application_fee_amount": null,
+   "balance_transaction": "txn_FIXTURE0001",
+   "billing_details": {
+    "address": {
+     "city": null,
+     "country": "US",
+     "line1": null,
+     "line2": null,
+     "postal_code": "62701",
+     "state": null
+    },
+    "email": "owner@fixture.test",
+    "name": "Fixture Owner",
+    "phone": null
+   },
+   "calculated_statement_descriptor": "CAVNAR AI",
+   "captured": true,
+   "created": 1792900100,
+   "currency": "usd",
+   "customer": "cus_FIXTURE0001",
+   "description": "Subscription creation",
+   "disputed": false,
+   "failure_balance_transaction": null,
+   "failure_code": null,
+   "failure_message": null,
+   "fraud_details": {},
+   "livemode": false,
+   "metadata": {},
+   "on_behalf_of": null,
+   "outcome": {
+    "network_status": "approved_by_network",
+    "reason": null,
+    "risk_level": "normal",
+    "seller_message": "Payment complete.",
+    "type": "authorized"
+   },
+   "paid": true,
+   "payment_intent": "pi_FIXTURE_ACACIA",
+   "payment_method": "pm_FIXTURE0001",
+   "receipt_email": "owner@fixture.test",
+   "receipt_url": null,
+   "refunded": true,
+   "review": null,
+   "shipping": null,
+   "source_transfer": null,
+   "statement_descriptor": null,
+   "statement_descriptor_suffix": null,
+   "status": "succeeded",
+   "transfer_data": null,
+   "transfer_group": null,
+   "invoice": "in_FIXTURE_ACACIA_PAID"
+  }
+ },
+ "livemode": false,
+ "pending_webhooks": 1,
+ "request": {
+  "id": null,
+  "idempotency_key": null
+ },
+ "type": "charge.refunded"
+}

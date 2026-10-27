@@ -1,0 +1,80 @@
+{
+ "id": "evt_FIXTURE_CHECKOUT",
+ "object": "event",
+ "api_version": "2025-02-24.acacia",
+ "created": 1792899940,
+ "data": {
+  "object": {
+   "id": "cs_test_a1FIXTURE0001",
+   "object": "checkout.session",
+   "after_expiration": null,
+   "allow_promotion_codes": false,
+   "amount_subtotal": 109900,
+   "amount_total": 109900,
+   "automatic_tax": {
+    "enabled": false,
+    "liability": null,
+    "status": null
+   },
+   "billing_address_collection": null,
+   "cancel_url": "https://dashboard.cavnar.ai/pay/cancelled",
+   "client_reference_id": null,
+   "consent": null,
+   "created": 1792899880,
+   "currency": "usd",
+   "customer": "cus_FIXTURE0001",
+   "customer_creation": "always",
+   "customer_details": {
+    "address": {
+     "city": null,
+     "country": "US",
+     "line1": null,
+     "line2": null,
+     "postal_code": "62701",
+     "state": null
+    },
+    "email": "owner@fixture.test",
+    "name": "Fixture Owner",
+    "phone": null,
+    "tax_exempt": "none",
+    "tax_ids": []
+   },
+   "customer_email": null,
+   "expires_at": 1792986280,
+   "invoice": null,
+   "livemode": false,
+   "locale": null,
+   "metadata": {
+    "restaurant_id": "41",
+    "restaurant": "Fixture Bistro",
+    "module_keys": "reviews,labor"
+   },
+   "mode": "subscription",
+   "payment_intent": null,
+   "payment_link": null,
+   "payment_method_collection": "always",
+   "payment_method_types": [
+    "card"
+   ],
+   "payment_status": "paid",
+   "status": "complete",
+   "submit_type": null,
+   "subscription": "sub_FIXTURE0001",
+   "success_url": "https://dashboard.cavnar.ai/pay/thanks",
+   "total_details": {
+    "amount_discount": 0,
+    "amount_shipping": 0,
+    "amount_tax": 0
+   },
+   "ui_mode": "hosted",
+   "url": null
+  }
+ },
+ "livemode": false,
+ "pending_webhooks": 1,
+ "request": {
+  "id": null,
+  "idempotency_key": null
+ },
+ "type": "checkout.session.completed"
+}
