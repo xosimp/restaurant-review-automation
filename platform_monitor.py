@@ -1005,6 +1005,16 @@ def system_report(db_path=None) -> dict:
         report["credentials"] = credentials.status(db_path)
     except Exception as e:
         report["credentials"] = {"error": str(e)[:120]}
+    # Which iPhone app builds are installed (live sessions by X-Cavnar-App)
+    # and what they could not read in the last day (client_compat, audit #25
+    # A05-14 / A06-04).
+    try:
+        import client_compat
+        report["mobile_clients"] = {"installed": client_compat.installed_builds(db_path),
+                                    "decode_failures_24h": client_compat.decode_failure_surge(hours=24,
+                                                                                               db_path=db_path)}
+    except Exception as e:
+        report["mobile_clients"] = {"error": str(e)[:120]}
     report["warnings"] = system_warnings(report)
     return report
 
@@ -1046,4 +1056,10 @@ def system_warnings(report) -> list:
     db = report.get("database") or {}
     if isinstance(db.get("write"), dict) and db["write"].get("state") == "failed":
         w.append("The database cannot take a write.")
+    installed = (report.get("mobile_clients") or {}).get("installed") or {}
+    if installed.get("below_minimum"):
+        n = installed["below_minimum"]
+        w.append(f"{n} signed-in iPhone app session{'s run' if n != 1 else ' runs'} a build below "
+                 f"MOBILE_MIN_BUILD ({installed.get('min_build')}) and {'are' if n != 1 else 'is'} "
+                 "shown the update sheet.")
     return w

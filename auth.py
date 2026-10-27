@@ -610,6 +610,12 @@ def init_auth(db_path: str = DB_PATH):
         # Re-audit 10/20/26 R7-01: wrong codes typed against one challenge.
         # It dies at TWO_FA_CHALLENGE_MAX_WRONG; a resend keeps the count.
         "ALTER TABLE two_fa_challenges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+        # The app build a sign-in came from and a session last ran ("ios 1.0
+        # (4210)", the X-Cavnar-App header — client_compat, audit #25 A06-02):
+        # written at sign-in, refreshed by the last_active touch. NULL: a
+        # browser, or a build from before the header.
+        "ALTER TABLE sessions ADD COLUMN client_app TEXT",
+        "ALTER TABLE login_history ADD COLUMN client_app TEXT",
     ]
     # Only the columns a table is missing are added (models.add_missing_columns):
     # a refused duplicate costs SQLite a full schema parse.
@@ -5074,12 +5080,15 @@ def create_session(user_id: int, days: int = 30,
     conn.execute("DELETE FROM sessions WHERE user_id=? AND datetime(expires_at) <= datetime('now')", (user_id,))
     if device_id:
         conn.execute("DELETE FROM sessions WHERE user_id=? AND device_id=?", (user_id, device_id))
+    # The app build this sign-in came from (client_compat; None for a browser).
+    import client_compat as _cc_login
+    client_app = _cc_login.request_client_app()
     conn.execute(
         "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id, "
-        "staff_restaurant_id, two_factor_at, reauth_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "staff_restaurant_id, two_factor_at, reauth_at, client_app) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (hash_session_token(token), user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "",
          restaurant_id if device_type == "staff_pin" else None,
-         now_sql if second_factor else None, reauth_at)
+         now_sql if second_factor else None, reauth_at, client_app)
     )
     # The event names the KIND of sign-in, not just that one happened. A staff
     # PIN sign-in and an owner console sign-in are different security events
@@ -5087,9 +5096,10 @@ def create_session(user_id: int, days: int = 30,
     # them apart works only while that column happens to be populated — it is
     # nullable and defaulted, so an audit query would silently lump them.
     conn.execute(
-        "INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, device_type) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, device_type, client_app) "
+        "VALUES (?,?,?,?,?,?,?)",
         (user_id, restaurant_id, "staff_login" if device_type == "staff_pin" else "login",
-         ip_address or "", user_agent or "", device_type)
+         ip_address or "", user_agent or "", device_type, client_app)
     )
     conn.commit()
     conn.close()
@@ -5554,7 +5564,16 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     if _touch_due:
         try:
             conn.execute("PRAGMA busy_timeout=1500")
-            conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
+            # The app build the session runs now rides on the same touch, so
+            # an upgrade without a new sign-in is seen (client_compat).
+            import client_compat as _cc_touch
+            app_label = _cc_touch.request_client_app()
+            if app_label:
+                conn.execute("UPDATE sessions SET last_active=datetime('now'), client_app=? WHERE token=?",
+                             (app_label, hash_session_token(token)))
+            else:
+                conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?",
+                             (hash_session_token(token),))
             conn.commit()
         except Exception as e:
             try:
@@ -6007,6 +6026,9 @@ _UNGATED_PREFIXES = (
     "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions", "/api/passkeys",
     # The app's passkey sign-in and its own passkeys (iOS parity #57).
     "/mobile/api/passkey",
+    # A phone's report that it could not read an answer (client_compat,
+    # audit #25 A06-04): no module, and it may come before any sign-in.
+    "/mobile/api/client-errors",
     # A phone's Live Activity push tokens, filed under its session; who may
     # hold a push-to-start token is checked in live_activities.register_token.
     "/mobile/api/live-activity-tokens",

@@ -9666,6 +9666,31 @@ def mobile_request_account_deletion(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/client-errors", methods=["POST"])
+def mobile_client_errors():
+    """The app could not decode an answer (release-safety audit #25 A06-04):
+    {route, method, status, coding_path, description, kind, device_id} —
+    never the body — with the build in its X-Cavnar-App header. Fire and
+    forget on the phone (one per route per hour per device); stored in
+    client_error_reports, deduplicated and capped per device, per address
+    and in total (client_compat.record_report). A live session's token, of
+    either tier, attributes it; none is needed — a sign-in that cannot be
+    decoded must still be heard — and a dead one never answers 401 here."""
+    import client_compat
+    data = request.get_json(silent=True) or {}
+    token = _bearer_token()
+    user = None
+    if token:
+        from auth import get_session_user
+        user = get_session_user(token)
+    payload, status = client_compat.record_report(
+        route=data.get("route"), method=data.get("method"), status=data.get("status"),
+        coding_path=data.get("coding_path"), description=data.get("description"), kind=data.get("kind"),
+        device_id=data.get("device_id"), user=user, ip=_get_client_ip(),
+        client=client_compat.from_headers(request.headers))
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/account/report-bug", methods=["POST"])
 @mobile_login_required
 def mobile_report_bug(current_user):
@@ -9684,6 +9709,11 @@ def mobile_report_bug(current_user):
     restaurant = get_restaurant(rid)
     meta = {k: str(data.get(k))[:80] for k in ("build", "app_version", "ios_version", "device", "screen") if data.get(k)}
     meta["username"] = current_user.get("username")
+    # The build as the request itself names it (X-Cavnar-App), whatever the
+    # sheet filled in — every build used to report "1.0 (1)" (audit #25 A06-02).
+    import client_compat as _cc_bug
+    if _cc_bug.request_client_app():
+        meta["client_app"] = _cc_bug.request_client_app()
     import admin_events
     try:
         report_id = admin_events.store_bug_report(rid, current_user, message[:4000], meta, source="ios")

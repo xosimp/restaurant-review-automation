@@ -5056,6 +5056,9 @@ def init_db(db_path: str = DB_PATH):
     # scale audit 10/19/26 FE-01).
     from home_snapshots import init_home_snapshots
     init_home_snapshots(db_path)
+    # The iPhone app's decode-failure reports (client_compat, audit #25 A06-04).
+    from client_compat import init_client_compat
+    init_client_compat(db_path)
     # The publish outbox: one row per person a Send, a changes send or a
     # resend tells, delivered and retried apart from the stamp (schedule
     # audit 10/10/26 ARCH-19, ARCH-20, BUGSLIFE-9).

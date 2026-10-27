@@ -2482,7 +2482,9 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         E): an inbound webhook refusing every request, no verified Resend
         event while mail goes out, Twilio account errors, an operator
         address suppressed. Read only when paging (send=True) — /health's
-        read-only call does not publish or need them.
+        read-only call does not publish or need them;
+      * the iPhone app could not decode the server's answers on more than
+        CLIENT_DECODE_ALERT_DEVICES devices in an hour (client_compat).
 
     Only where the scheduler is meant to run (scheduler.scheduling_allowed):
     a laptop has no scheduler and must not page anyone. Owners are never
@@ -2680,6 +2682,20 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         problems.append(f"Customer requests are slow: p95 within {rq['p95_le_ms']} ms over the last "
                         f"{rq['latency_minutes']} minutes (SLO {rq['p95_slo_ms']} ms, {rq['latency_requests']} "
                         "requests) — the slow routes are in the console's request rollups.")
+    # The iPhone app failing to read the server's answers (client_compat,
+    # release-safety audit #25 A06-04): past CLIENT_DECODE_ALERT_DEVICES
+    # distinct devices in an hour, a response changed shape under a shipped
+    # build. A warning keyed on the routes, so a new route breaking pages again.
+    out["client_decode"] = None
+    try:
+        import client_compat as _cc_sla
+        out["client_decode"] = _cc_sla.decode_failure_surge(db_path=db_path)
+        decode_line = _cc_sla.surge_problem(out["client_decode"])
+        if decode_line:
+            warn_kinds.add("client_decode:" + ",".join(r["route"] for r in out["client_decode"]["routes"][:4]))
+            problems.append(decode_line)
+    except Exception as e:
+        log.warning(f"client decode reports unavailable to the platform check: {e}")
     # The fleet's POS (scale audit 10/19/26 OPS-6): a provider failing for
     # more than pos_health.FLEET_OUTAGE_SHARE of the connected stores is one
     # outage and one page (a warning: once a day for the set), never one
@@ -3630,6 +3646,9 @@ _RETENTION_DAYS = {
     # sender and subject. 180 days; `no_route` rows go at 30 (the special
     # "email_intake_unrouted" below).
     "email_intake":          int(os.getenv("RETAIN_EMAIL_INTAKE_DAYS", "180")),
+    # The iPhone app's decode-failure reports (client_compat, audit #25
+    # A06-04): the platform check reads the last hour, the console a week.
+    "client_error_reports":  int(os.getenv("RETAIN_CLIENT_ERROR_REPORTS_DAYS", "30")),
 }
 
 # Three years: how long a restaurant a predictive-scheduling law covers keeps
@@ -3702,6 +3721,7 @@ _RETENTION_COLUMN = {
     "schedule_calibration_runs": "run_at",
     "offer_response_platforms": "answered_at",
     "email_intake": "received_at",
+    "client_error_reports": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -3868,6 +3888,8 @@ _RETENTION_FLOOR_DAYS = {
     # The admin's Invoice intake card reads the newest 20 rows, whatever
     # their age; a quarter keeps a feed's history for a question about it.
     "email_intake": 90,
+    # The platform check reads the last hour of decode reports.
+    "client_error_reports": 7,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -4008,6 +4030,7 @@ _RETENTION_READERS = {
     "schedule_model_calls": (("schedule_output.measured_tokens_per_row", 60, None),
                              ("schedule_output.call_costs", 60, None)),
     "schedule_generation_metrics": (("schedule_metrics.summary", 90, None),),
+    "client_error_reports": (("client_compat.decode_failure_surge", 1, None),),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so

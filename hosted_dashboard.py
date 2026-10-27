@@ -227,6 +227,11 @@ http_layer.register(app)
 # immutable files (static_bundles, scheduler audit 10/10/26 SCALE-28).
 import static_bundles
 static_bundles.install(app)
+# The iPhone app's build on every /mobile/api and /staff/api request: a build
+# under MOBILE_MIN_BUILD gets 426 {update_required} (client_compat, audit #25
+# A06-02); one with no header is served until MOBILE_HEADERLESS_CUTOFF.
+import client_compat
+client_compat.install(app)
 
 
 @app.after_request
