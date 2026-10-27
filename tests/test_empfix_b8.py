@@ -89,6 +89,26 @@ def test_a_window_with_an_end_date_is_the_owners_time_window_and_holds_only_unti
     assert after.window_ok("Ben", "2026-12-22", "4:00pm", "10:00pm")[0]     # past 12/15: gone
 
 
+def test_with_no_week_a_dated_window_ends_by_the_restaurants_own_date(monkeypatch):
+    """window_holds with no week read the SERVER's date (date.today()): on a
+    UTC box a window ending today read as ended from 7pm in Chicago
+    (release-safety audit 10/26/26). It reads the restaurant's own date.
+    At 10:30am UTC on 10/26/26 it is 11:30pm on 10/25 in Pago Pago, 5:30am
+    on 10/26 in Chicago and 12:30am on 10/27 in Kiritimati."""
+    import datetime as dt
+    import time_utils
+    instant = dt.datetime(2026, 10, 26, 10, 30, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(time_utils, "restaurant_now",
+                        lambda tz=None, naive=False: instant.astimezone(time_utils.restaurant_tz(tz)))
+    w = {"earliest": "5:00pm", "until": "2026-10-25"}
+    assert sr.window_holds(w, "Tuesday", tz="Pacific/Pago_Pago") is True        # still 10/25 there
+    assert sr.window_holds(w, "Tuesday", tz="America/Chicago") is False         # 10/26 there
+    assert sr.window_holds(dict(w, until="2026-10-26"), "Tuesday", tz="America/Chicago") is True
+    assert sr.window_holds(dict(w, until="2026-10-26"), "Tuesday", tz="Pacific/Kiritimati") is False
+    assert sr.window_holds(w, "Tuesday", today=date(2026, 10, 25)) is True       # a fixed date still decides
+    assert sr.window_holds({"earliest": "5:00pm"}, "Tuesday", tz="Pacific/Kiritimati") is True   # no dates
+
+
 def test_a_weekday_off_until_a_date_blocks_only_the_dates_inside_it(env):
     res = _save(env, week=_week(Friday={"status": "off", "until": "2026-10-31"}, Monday={"status": "off"}))
     assert res["ok"], res
