@@ -83,6 +83,10 @@ FEATURES = {
     "stale_tab_reload": {
         "default": True, "where": "client_compat.page_build",
         "what": "the web dashboard's 'Cavnar AI was updated' bar after a deploy (A06-13)"},
+    "staff_docs_plan_gate": {
+        "default": True, "where": "auth._staff_knowledge_gate_off",
+        "what": "the staff brief, house rules, staff docs and certifications held to the Labor plan and role "
+                "gates (blind re-audit B3); off, only each route's own role check"},
 }
 
 
