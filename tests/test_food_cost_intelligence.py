@@ -89,22 +89,39 @@ def _snapshot(db_path, rid, days_ago, waste, inv_value=None, items=None):
 
 # ── P0-1 · the history is written on a schedule, not on a page view ─────────
 
-def test_the_snapshot_writer_is_a_scheduled_job_not_a_page_render():
+def test_the_snapshot_writer_is_a_scheduled_job_not_a_page_render(db_path, monkeypatch):
     """inventory_history had exactly one writer in production: the AI insight
     function, on page render. The weekly waste series, the multi-week price
     trends, the price-spike alert and the opening/closing values behind food
     cost % all read that table — so all four were functions of whether the
     owner happened to open the tab, and a week nobody looked at is ABSENT
-    from the series rather than zero in it."""
+    from the series rather than zero in it.
+
+    Behaviour, not source text (audit #25 A03-11: this pinned
+    'claim_period("food_cost_snapshots"', "resumable_sweep(" and "except
+    Exception as e:" as strings). The scheduled job runs over every active
+    inventory restaurant; one failing never ends the sweep."""
+    import data_freshness
     import scheduler
-    src = inspect.getsource(scheduler)
-    assert 'claim_period("food_cost_snapshots"' in src
-    body = inspect.getsource(scheduler.run_food_cost_snapshots)
-    assert "weekly_snapshot" in body
-    # Every active restaurant, through the bounded, resumable sweep — this
-    # pinned a bare `for row in rows:` loop, the unbounded shape MOD-FC-19 removed.
-    assert "resumable_sweep(" in body
-    assert "except Exception as e:" in body, "one restaurant failing must not end the sweep"
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    a, b, c = _restaurant(db_path, 1), _restaurant(db_path, 2), _restaurant(db_path, 3, module_inventory=0)
+    monkeypatch.setattr(data_freshness, "depletion_behind", lambda r, **k: None)
+    seen = []
+
+    def snapshot(rid, db_path=None):
+        seen.append(rid)
+        if rid == a:
+            raise RuntimeError("one restaurant's stock read failed")
+        return {"ok": True}
+    monkeypatch.setattr(fci, "weekly_snapshot", snapshot)
+    monkeypatch.setattr(fci, "record_profitability_forecast", lambda rid: None)
+    monkeypatch.setattr(fci, "score_forecasts", lambda rid: {"scored": 0})
+    out = scheduler.run_food_cost_snapshots()
+    assert sorted(seen) == [a, b], "every inventory restaurant, and only those"
+    assert (out["written"], out["failed"], out["hit_bound"]) == (1, 1, False)
+    # The standard counts the job registry reads (ops.run_outcome).
+    assert {"attempted", "ok", "failed", "skipped", "hit_bound"} <= set(out)
 
 
 def test_the_snapshot_records_the_stock_value_cogs_needs(db_path, monkeypatch):

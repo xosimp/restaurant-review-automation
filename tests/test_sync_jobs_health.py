@@ -848,11 +848,53 @@ def test_the_intraday_slot_reads_restaurants_once_and_resumes_from_its_cursor(tm
     assert strategy_jobs._read_cursor("coverage_check_cursor", tmpdb) == walked[0]
 
 
-def test_the_nightly_pos_write_section_is_serialized():
-    import inspect, pos
+def test_the_nightly_pos_fetches_overlap_and_the_write_section_is_serialized(tmpdb, monkeypatch):
+    """Behaviour, not source text (audit #25 A01-11: this pinned
+    "@_serialized_write" and "workers=POS_SYNC_WORKERS" as strings). The
+    real sync_all runs six stores: their provider fetches overlap (the pool),
+    and on SQLite only one store at a time is inside save_synced_shifts."""
+    import threading
+    import time as _time
+    import labor
+    import pos
     assert pos.POS_SYNC_WORKERS >= 4
-    assert "@_serialized_write" in inspect.getsource(pos)
-    assert "workers=POS_SYNC_WORKERS" in inspect.getsource(pos.sync_all)
+    rids = [_rid(tmpdb, name=f"Store {n}") for n in range(6)]
+    gauge = {"fetch": 0, "fetch_max": 0, "write": 0, "write_max": 0, "writes": 0}
+    lock = threading.Lock()
+
+    def _enter(kind):
+        with lock:
+            gauge[kind] += 1
+            gauge[kind + "_max"] = max(gauge[kind + "_max"], gauge[kind])
+
+    def _leave(kind):
+        with lock:
+            gauge[kind] -= 1
+
+    def sync_restaurant(rid, **_k):
+        _enter("fetch")                 # the network-bound pull
+        _time.sleep(0.15)
+        _leave("fetch")
+        pos.save_synced_shifts(rid, "date,day,employee,role,shift_start,shift_end,scheduled_hours\n", "toast")
+        return {"ok": True, "rows": 0}
+
+    def load_shifts(csv_string=None, **_k):    # the first thing inside the write section
+        _enter("write")
+        with lock:
+            gauge["writes"] += 1
+        _time.sleep(0.05)
+        _leave("write")
+        return []
+    monkeypatch.setattr(pos, "connected_provider", lambda rid: ("toast", object()))
+    monkeypatch.setattr(pos, "sync_due_locally", lambda r: True)
+    monkeypatch.setattr(pos, "sync_restaurant", sync_restaurant)
+    monkeypatch.setattr(pos, "note_sync_failure", lambda rid: None)
+    monkeypatch.setattr(labor, "load_shifts", load_shifts)
+    stats = {}
+    pos.sync_all(stats=stats)
+    assert stats["ok"] == len(rids) and gauge["writes"] >= len(rids)
+    assert 2 <= gauge["fetch_max"] <= pos.POS_SYNC_WORKERS, gauge
+    assert gauge["write_max"] == 1, gauge
 
 
 def test_the_daily_data_health_sweep_feeds_the_admin_rollup(tmpdb, monkeypatch):

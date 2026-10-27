@@ -3546,7 +3546,12 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     if not any(x[3] and not x[4] for x in kept_lines):
         if failure is not None:
             raise failure
-        gaps = [{"date": d, "day": _date_of(d).strftime("%A"), "why": unwritten.get(d, "skipped")}
+        # A code source (the solver, production's default) that drafted
+        # nothing was given nothing to build from — no model was asked, so
+        # "the model left them empty" was false (audit #25, found by the
+        # production-config smoke).
+        default_why = "skipped" if chosen == "model" else "no_code_draft"
+        gaps = [{"date": d, "day": _date_of(d).strftime("%A"), "why": unwritten.get(d, default_why)}
                 for d in (sorted(unwritten) or want)]
         why = "; ".join(f"{days}: {words}" for days, words, _n in _gap_groups(gaps))
         raise ScheduleGenerationError(

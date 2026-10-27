@@ -1,6 +1,6 @@
 {
  "about": "inspect.getsource( call sites per test file (tests/test_test_ratchets.py; only goes down)",
- "total": 776,
+ "total": 768,
  "files": 208,
  "counts": {
   "test_a2p_alert_campaign.py": 1,
@@ -66,7 +66,7 @@
   "test_fix_g_quality_trace.py": 4,
   "test_fix_int1_wiring.py": 2,
   "test_fix_integration_lead.py": 3,
-  "test_food_cost_intelligence.py": 13,
+  "test_food_cost_intelligence.py": 11,
   "test_food_cost_layout.py": 1,
   "test_forecast_log.py": 13,
   "test_freshness_sources_reaudit.py": 9,
@@ -159,7 +159,7 @@
   "test_rx_pipe.py": 1,
   "test_salaried_staff.py": 2,
   "test_scale_f2_archive.py": 1,
-  "test_scale_fix_f1.py": 11,
+  "test_scale_fix_f1.py": 10,
   "test_scale_fix_f3.py": 5,
   "test_scale_fix_f4.py": 7,
   "test_scale_h1_reads.py": 3,
@@ -184,7 +184,7 @@
   "test_schedule_trim_and_fill.py": 14,
   "test_schedule_typical_time.py": 1,
   "test_schedule_workspace.py": 1,
-  "test_scheduler_catchup.py": 8,
+  "test_scheduler_catchup.py": 5,
   "test_security_parity_audit.py": 3,
   "test_sf10_c2_budget.py": 2,
   "test_sf10_c2_pipeline.py": 3,
@@ -207,7 +207,7 @@
   "test_sf_g_operations.py": 3,
   "test_slot_mute_budget.py": 3,
   "test_studio_setup_tabs.py": 2,
-  "test_sync_jobs_health.py": 4,
+  "test_sync_jobs_health.py": 2,
   "test_targets_published_figures.py": 6,
   "test_waste_trend.py": 2,
   "test_web_analytics.py": 3

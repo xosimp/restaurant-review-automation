@@ -130,12 +130,54 @@ def test_sec08_public_limits_do_not_write():
     import marketing_links
     import staff_routes
     assert "ai_rate_limited(" not in inspect.getsource(marketing_links._tap_write_allowed)
-    assert 'memory_limited(f"guestoptin:{ip}"' in inspect.getsource(client_api.guest_optin_submit)
     assert "memory_limited(f\"portal:{ip}\"" in inspect.getsource(staff_routes._throttled)
     import request_limits as rl
     rl.reset()
     assert [rl.memory_limited("k", 2, 60, now=1.0) for _ in range(3)] == [False, False, True]
     assert rl.memory_limited("k", 2, 60, now=62.0) is False, "the window slides"
+    rl.reset()
+
+
+def test_sec08_a_burst_on_the_public_join_form_is_refused_before_it_writes(db_path, monkeypatch):
+    """Behaviour, not source text (audit #25 A01-11: this pinned the
+    memory_limited call as a string): from one address the sixth join in
+    five minutes is a 429 — before the restaurant is read or a request
+    recorded — and another address is not held by it."""
+    import sys
+    import models
+    import request_limits as rl
+    from flask import Flask
+    import client_api
+    import guest_links
+    from guest_marketing import init_guest_marketing
+    real = models.get_conn
+    redirect = lambda *a, **k: real(db_path)
+    for mod in list(sys.modules.values()):
+        if mod is not None and getattr(mod, "get_conn", None) is real:
+            monkeypatch.setattr(mod, "get_conn", redirect)
+    monkeypatch.setattr(models, "get_conn", redirect)
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    init_guest_marketing(db_path=db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Join Co", owner_email="j@x.test", module_marketing=1),
+                                   db_path=db_path)
+    token = guest_links.sign_join(rid)
+    app = Flask(__name__, template_folder="../templates")
+    app.register_blueprint(client_api.client_bp)
+    c = app.test_client()
+    rl.reset()
+    url = f"/api/public/guest-optin/{token}"
+    a = {"REMOTE_ADDR": "198.51.100.7"}
+    codes = [c.post(url, json={"name": ""}, environ_base=a).status_code for _ in range(6)]
+    assert codes == [400] * 5 + [429], codes            # a name is required; then the limit
+    refused = c.post(url, json={"name": "Ana", "phone": "3125550101", "consent": True}, environ_base=a)
+    assert refused.status_code == 429 and "Too many attempts" in refused.get_json()["error"]
+    assert c.post(url, json={"name": ""}, environ_base={"REMOTE_ADDR": "198.51.100.8"}).status_code == 400
+    conn = real(db_path)
+    try:
+        n = conn.execute("SELECT COUNT(*) FROM guest_optin_requests").fetchone()[0]
+    finally:
+        conn.close()
+    assert n == 0, "a refused join wrote nothing"
     rl.reset()
 
 
