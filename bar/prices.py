@@ -748,7 +748,7 @@ def _product_row(sk, obs, tiers, breaks, l, unit, today, cutoff, since90, return
     row["headline"] = bool(persistent and row["listed"] and row.get("confidence") == "high"
                            and abs(row["forward_monthly_usd"] or 0) >= HEADLINE_MONTHLY_USD)
     row["per_unit"] = unit_costs(ref, l.get("uom"), l["description"], l["category"],
-                                 packs.get(l["product_key"]), pour)
+                                 packs.get(l["product_key"]), pour, ppc=l.get("ppc"))
     # A code change under one product (a gift box, a new vintage): the
     # history continues, marked.
     codes = []
@@ -788,7 +788,7 @@ def _split_case(lines, canon, today, packs) -> list:
         if not s["CA"] or not s["BO"]:
             continue
         ca, bo = s["CA"][-1], s["BO"][-1]
-        pk = parse_pack(ca["description"], "CA", ca["category"])
+        pk = parse_pack(ca["description"], "CA", ca["category"], ppc=ca.get("ppc"))
         ov = packs.get(ca["product_key"]) or {}
         units = int(ov.get("units_per_case") or pk["units_per_case"] or 12)
         source = "owner" if ov.get("units_per_case") else pk["units_source"]

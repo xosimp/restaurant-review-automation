@@ -137,6 +137,10 @@ _LATE_COLUMNS = (
     ("fintech_invoice_lines", "uom_inferred", "INTEGER"),
     ("fintech_invoice_lines", "discount", "REAL"),
     ("fintech_invoice_lines", "unparsed", "INTEGER"),
+    # The bottles a case holds, as the export states it (PPC — owner, 10/27/26:
+    # read nowhere, so every case was assumed 12 and a 6-bottle case of
+    # WhistlePig cost half a pour).
+    ("fintech_invoice_lines", "ppc", "INTEGER"),
 )
 
 
@@ -262,6 +266,67 @@ def init_fintech_invoices(db_path=None):
         conn.commit()
     finally:
         conn.close()
+    import models as _models_once
+    _models_once.run_once("fintech_lines_ppc_and_lone_charges_v1",
+                          lambda: backfill_ppc_and_charges(db_path=db_path), db_path=db_path)
+
+
+def backfill_ppc_and_charges(db_path=None) -> int:
+    """The lines stored before the export's PPC was read take it from their
+    file (kept with its goods columns), and a lone few-dollar line at a
+    price the distributor charges per unit elsewhere becomes the charge it
+    is (Southern Glazer's $2.29 a bottle stood as Basil Hayden's Toast's
+    price). Returns the lines changed. Run once (models.run_once)."""
+    import blob_store
+    conn = get_conn(db_path)
+    n = 0
+    try:
+        files = conn.execute("SELECT id, restaurant_id, content FROM fintech_files WHERE format='export' "
+                             "AND content IS NOT NULL").fetchall()
+        for f in files:
+            text = blob_store.resolve_text(f["content"]) or ""
+            if not text:
+                continue
+            try:
+                invoices = parse_export(text)
+            except Exception as e:
+                print(f"[fintech] PPC backfill skipped file {f['id']}: {e!r}")
+                continue
+            for inv in invoices:
+                row = conn.execute("SELECT id FROM fintech_invoices WHERE restaurant_id=? AND distributor_key=? "
+                                   "AND number_key=?", (f["restaurant_id"], distributor_key(inv["distributor"]),
+                                                        invoice_key(inv["invoice_number"]))).fetchone()
+                if not row:
+                    continue
+                for ln in inv["lines"]:
+                    if ln.get("ppc") and ln.get("item_code"):
+                        cur = conn.execute("UPDATE fintech_invoice_lines SET ppc=? WHERE invoice_id=? AND restaurant_id=? "
+                                           "AND item_code=? AND (uom=? OR (uom IS NULL AND ? IS NULL)) AND ppc IS NULL",
+                                           (ln["ppc"], row["id"], f["restaurant_id"], ln["item_code"], ln["uom"],
+                                            ln["uom"]))
+                        n += cur.rowcount or 0
+        for rid, dkey in conn.execute("SELECT DISTINCT restaurant_id, distributor_key FROM fintech_invoices").fetchall():
+            history = _history(conn, rid, dkey, None)
+            charges = _charge_prices(history)
+            priced = {item_key(h["item_code"]) for h in history
+                      if h["kind"] == "item" and h["unit_price"] and float(h["unit_price"]) >= CHARGE_MAX}
+            for h in history:
+                if (h["kind"] == "item" and h["unit_price"] is not None and item_key(h["item_code"]) not in priced
+                        and round(float(h["unit_price"]), 2) in charges):
+                    conn.execute("UPDATE fintech_invoice_lines SET kind='charge' WHERE id=? AND restaurant_id=?",
+                                 (h["id"], rid))
+                    n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
+def _charge_prices(history) -> set:
+    """The per-unit charges a distributor bills (its lines read as 'charge':
+    Southern Glazer's $2.29 a bottle), by amount."""
+    return {round(float(h["unit_price"]), 2) for h in history
+            if h["kind"] == "charge" and h["unit_price"] and 0 < float(h["unit_price"]) < CHARGE_MAX}
 
 
 # ── values ─────────────────────────────────────────────────────────────────
@@ -484,7 +549,7 @@ def _settle(ln, rate=None):
     return ln
 
 
-def _kind(desc, price, known_price):
+def _kind(desc, price, known_price, charges=()):
     d = desc or ""
     if _KEG_CREDIT_RE.search(d):
         return "keg_credit"
@@ -499,6 +564,12 @@ def _kind(desc, price, known_price):
     # is free goods, never a charge.
     if price is not None and 0 < price < CHARGE_MAX and (known_price or 0) >= CHARGE_MAX:
         return "charge"
+    # The same few dollars the distributor bills per unit elsewhere, on a
+    # code it never priced for real: that charge again (owner, 10/27/26 -
+    # $2.29 lines for Basil Hayden's Toast, Jameson Triple Triple and Black
+    # Barrel, with no bottle line, read as a $2.29 bottle of whiskey).
+    if price is not None and 0 < price < CHARGE_MAX and not known_price and round(price, 2) in charges:
+        return "charge"
     return "item"
 
 
@@ -511,11 +582,13 @@ _QTY = r"\(?-?[\d,]*\d(?:\.\d+)?-?\)?"
 _LINE_RE = re.compile(rf"^\s*(\S+)\s+(.+?)\s+({_QTY})\s+({_MONEY})\s+({_MONEY})\s*$")
 
 
-def _line(code, desc, qty, price, cost, upc=None, uom=None, raw_adjustment=None, discount=None, unparsed=None):
+def _line(code, desc, qty, price, cost, upc=None, uom=None, raw_adjustment=None, discount=None, unparsed=None,
+          ppc=None):
     return {"item_code": None if _blank(code) else str(code).strip(), "description": str(desc or "").strip(),
             "upc": None if _blank(upc) else str(upc).strip(), "uom": (str(uom).strip().upper() or None) if not _blank(uom) else None,
             "qty": qty, "unit_price": price, "cost": cost, "deposit": None, "adjustment": None,
-            "raw_adjustment": raw_adjustment, "discount": discount, "uom_inferred": None, "unparsed": unparsed}
+            "raw_adjustment": raw_adjustment, "discount": discount, "uom_inferred": None, "unparsed": unparsed,
+            "ppc": ppc}
 
 
 def parse_printout(text):
@@ -616,6 +689,7 @@ _EXPORT_COLS = {
     "adjustment": ("itemadjustments", "itemadjustment", "totaladjustments", "adjustment"),
     "discount": ("totaldiscount", "itemdiscount", "itemdiscounts", "discount"),
     "cost": ("extendedcost", "extendedamount", "extcost", "extendedprice", "linetotal", "lineamount"),
+    "ppc": ("ppc", "piecespercase"),
 }
 # Goods columns kept with the file for a later reader (bottles per case, the
 # pack's UPC, the distributor's GL class); never a payment column.
@@ -679,8 +753,15 @@ def parse_export(text):
         unparsed = 1 if q is None or (c is None and p is None) else None
         inv["lines"].append(_settle(_line(cell(row, "item_code"), cell(row, "description"), q, p, c,
                                           upc=cell(row, "upc"), uom=cell(row, "uom"), raw_adjustment=adj,
-                                          discount=disc, unparsed=unparsed)))
+                                          discount=disc, unparsed=unparsed, ppc=_ppc(cell(row, "ppc")))))
     return invoices
+
+
+def _ppc(text):
+    """The export's PPC (bottles or cans a case holds) as a whole number, or
+    None when it is blank or not a plausible case."""
+    n = number(text)
+    return int(n) if n is not None and float(n).is_integer() and 2 <= n <= 240 else None
 
 
 def _export_kept(text):
@@ -1059,12 +1140,15 @@ def _store_invoice(conn, restaurant_id, inv, fmt, file_id, force=False) -> dict:
         _infer_unit(ln, book)
         _settle(ln, rate)              # an inferred keg carries its deposit, at this distributor's rate
     known = _known_prices(history, real)
+    charges = _charge_prices(history)
     lines = []
     for n, ln in enumerate(inv["lines"], 1):
         if ln.get("unparsed") and ln.get("cost") is None and ln.get("qty") is None:
             kind = "unparsed"
         else:
-            kind = _kind(ln["description"], ln["unit_price"], known.get(item_key(ln["item_code"])))
+            kind = _kind(ln["description"], ln["unit_price"], known.get(item_key(ln["item_code"])), charges)
+            if kind == "charge" and ln["unit_price"]:
+                charges.add(round(float(ln["unit_price"]), 2))
         lines.append((n, ln, kind))
     now = _now()
     ref = inv.get("ref_invoice_number")
@@ -1104,11 +1188,11 @@ def _store_invoice(conn, restaurant_id, inv, fmt, file_id, force=False) -> dict:
         inv_id = cur.lastrowid
     for n, ln, kind in lines:
         conn.execute("INSERT INTO fintech_invoice_lines (invoice_id, restaurant_id, line_no, item_code, description, "
-                     "upc, uom, qty, unit_price, cost, deposit, adjustment, kind, uom_inferred, discount, unparsed) "
-                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     "upc, uom, qty, unit_price, cost, deposit, adjustment, kind, uom_inferred, discount, unparsed, ppc) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (inv_id, rid, n, ln["item_code"], ln["description"], ln["upc"], ln["uom"], ln["qty"],
                       ln["unit_price"], ln["cost"], ln["deposit"], ln["adjustment"], kind, ln.get("uom_inferred"),
-                      ln.get("discount"), ln.get("unparsed")))
+                      ln.get("discount"), ln.get("unparsed"), ln.get("ppc")))
     _version(conn, rid, inv_id, file_id, fmt, total, lines_total, balanced, len(lines), "current")
     # An earlier few-dollar line of a code this invoice prices for real was a
     # charge all along (it arrived before the code's first real price).
