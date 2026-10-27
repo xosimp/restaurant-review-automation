@@ -170,7 +170,7 @@ final class DynamicTypeRenderTests: XCTestCase {
                     self.probe(CavnarAnswerCard(kicker: "The night", headline: lead), "dsr.lead", f)
                 }
                 if let action {
-                    self.probe(CavnarAnswerCard(kicker: DailyReportView.kicker(action), headline: action.text,
+                    self.probe(CavnarAnswerCard(kicker: DSRDoThisToday.kicker(action), headline: action.text,
                                                 summary: action.whyFirstSentence), "dsr.action", f)
                 }
             }
