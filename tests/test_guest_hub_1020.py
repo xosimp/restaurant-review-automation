@@ -181,7 +181,8 @@ def test_the_thank_you_goes_once_to_yesterdays_opted_in_guests(rid, texts):
 
 
 def test_a_thank_you_too_long_for_one_text_is_refused(rid):
-    res = gh.set_followup(rid, True, "x" * 400)
+    import guest_marketing as gm
+    res = gh.set_followup(rid, True, "x" * (gm.CAMPAIGN_MAX_CHARS + 1))
     assert not res["ok"] and "characters" in res["error"]
 
 

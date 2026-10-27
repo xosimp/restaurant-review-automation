@@ -1845,7 +1845,8 @@ def _too_soon(contact, now):
 # enforces it — and nothing on the server did, so a 700-character message
 # (from the API, the phone, Ask, or a draft the model over-wrote) went to the
 # whole list as a five-segment text, billed per segment per guest (AI-32).
-CAMPAIGN_MAX_CHARS = 300
+# 500 since 10/27/26 (owner): about four segments a guest, where 300 was two.
+CAMPAIGN_MAX_CHARS = 500
 
 
 def invented_offers(text, allowed_source=""):
@@ -1898,7 +1899,7 @@ def _validate_sms(text, restaurant, offer_source, never_say):
 
 
 def draft_campaign_message(restaurant, campaign_type="general", topic="", goal=""):
-    """AI-drafts a short SMS (under ~300 chars — a real SMS/MMS segment
+    """AI-drafts a short SMS (under CAMPAIGN_MAX_CHARS — a real SMS/MMS segment
     budget, not email) in the restaurant's own voice. Reuses marketing.py's
     profile lookup for brand voice instead of re-deriving it. `goal` is the
     owner's own words from the Campaigns page ("fill Thursday dinner"): what

@@ -15752,9 +15752,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
                 </div>
               </div>
               <label for="guest-campaign-message" class="cp-sr">Text message</label>
-              <textarea id="guest-campaign-message" class="cp-msg" rows="4" maxlength="300" oninput="cpPaint()"></textarea>
+              <textarea id="guest-campaign-message" class="cp-msg" rows="4" maxlength="500" oninput="cpPaint()"></textarea>
               <div class="cp-meta">
-                <span class="cp-chip hb-num" id="cp-chars">0 / 300</span><span class="cp-chip" id="cp-fit"></span>
+                <span class="cp-chip hb-num" id="cp-chars">0 / 500</span><span class="cp-chip" id="cp-fit"></span>
                 <span class="cp-sp"></span>
                 <label class="cp-linksw"><span class="ac-switch"><input type="checkbox" id="cp-link-on" onchange="cpLinkToggle()"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></span>Track taps</label>
               </div>
@@ -15925,7 +15925,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="cp-card gx-side" id="gx-follow">
         <div class="gx-sh"><div class="k">Next-day thank-you</div><label class="ac-switch"><input type="checkbox" id="gx-f-on" aria-label="Send the next-day thank-you"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div>
         <p class="gx-sub" id="gx-f-when">At 11am, to guests who came in yesterday and joined texts.</p>
-        <textarea class="ac-textarea" id="gx-f-msg" rows="3" maxlength="300" aria-label="Thank-you message" oninput="gxFollowPreview()"></textarea>
+        <textarea class="ac-textarea" id="gx-f-msg" rows="3" maxlength="500" aria-label="Thank-you message" oninput="gxFollowPreview()"></textarea>
         <label class="gx-ask" id="gx-f-rev-row"><input type="checkbox" id="gx-f-rev" onchange="gxFollowPreview()"><span>Add the Google review link</span></label>
         <div class="gx-sms" id="gx-f-prev" aria-label="What guests get"></div>
         <div class="gx-acts"><button type="button" class="cbtn cbtn-primary" id="gx-f-save" onclick="gxFollowSave()">Save</button><span class="gx-msg" id="gx-f-msg-s" role="status" aria-live="polite"></span></div>
@@ -36635,7 +36635,7 @@ window.cpPaint = function() {
   // counts toward the parts it is billed as. A message that already opens
   // with the name is not given it twice (guest_marketing.campaign_text).
   var msg = _cpVal('guest-campaign-message'), link = _cpVal('guest-campaign-link');
-  var sms = ov.sms || {}, prefix = sms.prefix || '', max = sms.max || 300, linkN = sms.link_chars || 41, stopN = sms.stop_chars || 28;
+  var sms = ov.sms || {}, prefix = sms.prefix || '', max = sms.max || 500, linkN = sms.link_chars || 41, stopN = sms.stop_chars || 28;
   var head = prefix && msg.replace(/[‘’]/g, "'").toLowerCase().indexOf(prefix.slice(0, -2).toLowerCase()) !== 0 ? prefix : '';
   var counted = head.length + msg.length + (link ? linkN : 0), full = counted + stopN, tooLong = counted > max;
   var ch = _cpEl('cp-chars'); if (ch) { ch.textContent = counted + ' / ' + max; ch.className = 'cp-chip hb-num' + (tooLong ? ' warn' : ''); }

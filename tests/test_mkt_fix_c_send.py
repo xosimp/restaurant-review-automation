@@ -391,10 +391,10 @@ def test_submissions_are_paced_when_they_reach_a_carrier(db_path, clock, texts, 
 
 # ── MB-10 / #10 / #11: refused before queueing; a durable queue ─────────────
 
-def test_a_400_character_text_is_refused_before_anything_is_queued(db_path, clock, texts, no_thread):
+def test_a_text_past_the_limit_is_refused_before_anything_is_queued(db_path, clock, texts, no_thread):
     rid = _rid(db_path)
     _guests(db_path, rid, 3)
-    out = gm.start_campaign(rid, "x" * 400, db_path=db_path)
+    out = gm.start_campaign(rid, "x" * (gm.CAMPAIGN_MAX_CHARS + 1), db_path=db_path)
     assert out["ok"] is False and out["blocked"] == "too_long" and "queued" not in out
     assert "Shorten it by" in out["error"] and _campaigns(db_path, rid) == 0 and no_thread == [] and texts == []
 
@@ -860,3 +860,17 @@ console.log(JSON.stringify(r));
 def test_esc_html_escapes_quotes():
     got = _node("console.log(JSON.stringify(_escHtml('a\"b\\'c<d>&')));")
     assert got == "a&quot;b&#39;c&lt;d&gt;&amp;"
+
+
+def test_a_guest_text_carries_500_characters_everywhere_it_is_written():
+    """Owner, 10/27/26: the guest text limit is 500, not 300 - the server's
+    cap, both composers' boxes, the counter and the iPhone's default."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assert gm.CAMPAIGN_MAX_CHARS == 500
+    html = open(os.path.join(root, "templates", "dashboard.html"), encoding="utf-8").read()
+    assert 'id="guest-campaign-message" class="cp-msg" rows="4" maxlength="500"' in html
+    assert 'id="gx-f-msg" rows="3" maxlength="500"' in html and "max = sms.max || 500" in html
+    swift = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Marketing", "CampaignModels.swift"),
+                 encoding="utf-8").read()
+    assert "var max: Int = 500" in swift
