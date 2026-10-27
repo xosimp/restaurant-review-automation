@@ -79,3 +79,30 @@ def test_f5_a_row_that_raises_is_isolated_and_named(db_path, monkeypatch):
     assert any(e["query"] == f"location_record:{bad}" for e in out["errors"])
     # Another client's page still opens.
     assert admin_ops.client_detail(good)["ok"] is True
+
+
+# ── K-05: billed MRR applies quantity once ──────────────────────────────────
+
+def test_k05_quantity_is_not_applied_twice(db_path):
+    import billing_jobs
+    rid = _rest(db_path, "Qty House", billing_status="active", stripe_customer_id="cus_Q1")
+    _sql(db_path, "INSERT INTO stripe_subscriptions (restaurant_id, subscription_id, status, interval, interval_count, "
+                  "amount_cents, quantity) VALUES (?,?,?,?,?,?,?)", (rid, "sub_Q1", "active", "month", 1, 104700, 3))
+    c = get_conn(db_path)
+    row = dict(c.execute("SELECT * FROM stripe_subscriptions").fetchone())
+    c.close()
+    k = admin_ops.overview()["kpis"]
+    assert k["mrr"] == billing_jobs.billed_mrr(row) == 1047.0
+    sub = next(r for r in admin_ops.clients()["clients"] if r["id"] == rid)["billing"]["subscription"]
+    assert sub["amount"] == 1047.0 and sub["unit_amount"] == 349.0 and sub["monthly_gross"] == 1047.0
+
+
+# ── K-10: list MRR is the list price of what is billed ─────────────────────
+
+def test_k10_list_mrr_leaves_trialing_subscriptions_out(db_path):
+    rid = _rest(db_path, "Trialing Tap", billing_status="active", stripe_customer_id="cus_T1")
+    _sql(db_path, "INSERT INTO stripe_subscriptions (restaurant_id, subscription_id, status, interval, interval_count, "
+                  "amount_cents, quantity) VALUES (?,?,?,?,?,?,?)", (rid, "sub_T1", "trialing", "month", 1, 34900, 1))
+    k = admin_ops.overview()["kpis"]
+    assert k["mrr"] == 0 and k["mrr_list"] == 0
+    assert k["mrr_committed"] == 349.0 and k["mrr_committed_list"] > 0

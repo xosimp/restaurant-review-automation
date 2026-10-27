@@ -1247,24 +1247,37 @@ def _json_or_none(v):
 
 def _sub_monthly(sub):
     """(monthly before discount, monthly after discount) of a mirrored
-    subscription — amount × quantity ÷ its interval — or (None, None)."""
+    subscription — amount ÷ its interval — or (None, None). The mirror's
+    amount_cents is already Σ unit_amount × quantity over its recurring
+    items (billing_jobs.subscription_facts), so quantity is never applied
+    again here (admin audit 10/27/26 K-05: a quantity-3 subscription read
+    as three times billing_jobs.billed_mrr)."""
     amt = sub.get("amount_cents")
     if amt is None:
         return None, None
     try:
-        qty = int(sub.get("quantity") or 1)
         n = int(sub.get("interval_count") or 1) or 1
         per_month = {"month": 1.0 / n, "year": 1.0 / (12 * n), "week": 52.0 / 12 / n,
                      "day": 365.0 / 12 / n}.get((sub.get("interval") or "month").lower())
         if per_month is None:
             return None, None
-        gross = float(amt) / 100.0 * qty * per_month
+        gross = float(amt) / 100.0 * per_month
         net = gross * (1 - float(sub.get("discount_pct") or 0) / 100.0)
         if sub.get("discount_amount_cents"):
             net = max(0.0, net - float(sub["discount_amount_cents"]) / 100.0 * per_month)
         return round(gross, 2), round(net, 2)
     except (TypeError, ValueError):
         return None, None
+
+
+def _unit_amount(sub):
+    """amount_cents ÷ quantity in dollars — one unit's price — or None."""
+    try:
+        if sub.get("amount_cents") is None:
+            return None
+        return round(float(sub["amount_cents"]) / 100.0 / max(1, int(sub.get("quantity") or 1)), 2)
+    except (TypeError, ValueError):
+        return None
 
 
 def _list_for(mod_count, interval="month"):
@@ -1309,6 +1322,8 @@ def _billing_for(r, d, mod_count):
             "id": sub.get("subscription_id"), "status": st or None, "interval": interval,
             "interval_count": sub.get("interval_count") or 1,
             "amount": (float(sub["amount_cents"]) / 100.0 if sub.get("amount_cents") is not None else None),
+            # The price of one unit (K-05): `amount` is the whole subscription.
+            "unit_amount": _unit_amount(sub),
             "currency": sub.get("currency"), "quantity": sub.get("quantity"),
             "discount_pct": sub.get("discount_pct"), "monthly_gross": gross, "monthly_net": net,
             "trial_end": _stamp_any(sub.get("trial_end")),
@@ -3106,8 +3121,20 @@ def _mrr_totals(recs):
     fallback = [r for r in real if r["billing"]["mrr_source"] == "list" and r["billing"]["monthly"]]
     mirrored = [r for r in real if r["billing"]["mrr_source"] == "mirror"]
     mrr = round(sum(r["billing"]["monthly"] for r in real), 2)
+
+    def _sub_status(r):
+        return ((r["billing"].get("subscription") or {}).get("status") or "").lower()
+    # List MRR beside billed MRR is the list price of what is BILLED — a
+    # billed mirror row or a list-price fallback — never a trialing
+    # subscription's, which every checkout starts as (admin audit 10/27/26
+    # K-10: "$0 … list $1,199" read like a $1,199 gap). The trialing
+    # subscriptions' list price is mrr_committed_list.
+    billed_list = [r for r in payers if (r["billing"]["mrr_source"] == "mirror" and _sub_status(r) in _STRIPE_BILLED)
+                   or (r["billing"]["mrr_source"] == "list" and r["billing"]["monthly"])]
+    committed_list = [r for r in payers if _sub_status(r) in _STRIPE_COMMITTED]
     return {"mrr": mrr,
-            "mrr_list": round(sum(r["billing"]["list_monthly"] or 0 for r in payers), 2),
+            "mrr_list": round(sum(r["billing"]["list_monthly"] or 0 for r in billed_list), 2),
+            "mrr_committed_list": round(sum(r["billing"]["list_monthly"] or 0 for r in committed_list), 2),
             "mrr_billed": round(sum(r["billing"]["billed_monthly"] or 0 for r in mirrored), 2),
             "mrr_committed": round(sum(r["billing"]["committed_monthly"] or 0 for r in real), 2),
             "mrr_past_due": round(sum(r["billing"]["monthly"] for r in real if r["billing"]["status"] == "past_due"), 2),
@@ -3173,6 +3200,7 @@ def overview():
                                                       and _parse_utc(r["created_at"], "UTC") >= month_start)),
             "subscriptions": mrr["subscriptions"],
             "mrr": mrr["mrr"], "mrr_list": mrr["mrr_list"], "mrr_billed": mrr["mrr_billed"],
+            "mrr_committed_list": mrr["mrr_committed_list"],
             "mrr_committed": mrr["mrr_committed"], "mrr_past_due": mrr["mrr_past_due"],
             "mrr_source": mrr["mrr_source"], "mrr_fallback_accounts": mrr["mrr_fallback_accounts"],
             "mrr_mismatches": mrr["mrr_mismatches"], "covered_locations": mrr["covered_locations"],
