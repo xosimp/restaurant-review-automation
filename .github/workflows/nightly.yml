@@ -1,0 +1,323 @@
+name: Nightly
+
+# Tier 2 of the testing strategy (audit #25, TESTING.md "Tiers"; A01-02,
+# A01-08, A01-12, A02-05): everything too slow for the deploy gate, once a
+# night on main, never on the deploy path. A red nightly holds the next
+# promotion (scripts/promote.py) until it is green or every failure is a
+# test marked `quarantine`.
+#
+#   full-sqlite      the whole suite on SQLite at UTC+14, recording every
+#                    statement the app ran
+#   recorded-sql     those statements, and every static one, PREPAREd on
+#                    Postgres (runs even when a test failed)
+#   postgres         the whole suite on Postgres, four shards by file hash
+#   solver-serial    the solver's determinism and benchmark files, alone and
+#                    without xdist; more than one skipped case fails
+#   shifted-tz       the whole suite at UTC-11 (at 07:00 UTC that is the
+#                    previous evening, the opposite side of Chicago's date)
+#   quarantine       the known-flaky tests: run and reported, never failing
+#   browser          the Playwright smoke (tests/browser/)
+#   summary          the failed tests of the night, for scripts/promote.py
+
+on:
+  schedule:
+    # 07:00 UTC = 2am Chicago in daylight time (1am in winter).
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+# bash with -o pipefail, so a piped command's failure fails its step.
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  ANTHROPIC_API_KEY: ""
+  RESEND_API_KEY: ""
+  TZ: Pacific/Kiritimati
+  CAVNAR_ENFORCE_SKIPS: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  full-sqlite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: Every test on SQLite
+        run: >-
+          pytest tests/ -n auto --dist loadfile -q -rs -p no:cacheprovider
+          -m "not quarantine and not browser" --junitxml=junit/full-sqlite.xml
+        env:
+          CAVNAR_RECORD_SQL: ${{ runner.temp }}/recorded-sql
+      - name: Keep the statements the suite ran
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recorded-sql
+          path: ${{ runner.temp }}/recorded-sql
+          if-no-files-found: warn
+          retention-days: 3
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-full-sqlite
+          path: junit/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  recorded-sql:
+    # Every statement the SQLite suite actually ran — the run-time-built ones
+    # (f-string holes, joined IN lists) the source audit cannot read —
+    # translated and PREPAREd on Postgres. Not skipped when an unrelated
+    # test failed (A01-05).
+    needs: full-sqlite
+    if: always() && needs.full-sqlite.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: recorded-sql
+          path: ${{ runner.temp }}/recorded-sql
+      - name: Every statement the suite ran PREPAREs on Postgres
+        run: |
+          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
+          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --strict --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit --recorded ${{ runner.temp }}/recorded-sql
+
+  postgres:
+    # The Postgres path, every test file, in four shards by file hash
+    # (scripts/test_shards.py) instead of one ~2-hour job (A01-08). Each
+    # test's database is copied from a template built the way production's
+    # was (tests/conftest.py, CAVNAR_TEST_PG_URL).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CAVNAR_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: Shard ${{ matrix.shard }} of 4 on Postgres
+        run: >-
+          pytest $(python scripts/test_shards.py --shard ${{ matrix.shard }} --of 4)
+          -n auto --dist loadfile -q -rs -p no:warnings -p no:cacheprovider
+          -m "not quarantine and not browser" --junitxml=junit/postgres-${{ matrix.shard }}.xml
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-postgres-${{ matrix.shard }}
+          path: junit/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  solver-serial:
+    # The solver's "same inputs, same week" promise and the benchmark, run
+    # alone and serially: under xdist's CPU contention the wall-clock cap
+    # cut solves short and the determinism test flaked (A01-12). A cut is
+    # reported in the draft's stats and the case skips; more than one
+    # skipped case means the property went unverified, and fails.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: Determinism and the benchmark, serially
+        run: >-
+          pytest -p no:xdist -q -rs -p no:cacheprovider
+          tests/test_solver_behaviour.py tests/test_schedule_benchmark.py
+          --junitxml=junit/solver-serial.xml
+      - name: At most one case skipped
+        if: always()
+        run: |
+          python - <<'EOF'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse("junit/solver-serial.xml").getroot()
+          skipped = [c.get("classname", "") + "::" + c.get("name", "") for c in root.iter("testcase")
+                     if c.find("skipped") is not None]
+          print(f"{len(skipped)} skipped:", *skipped, sep="\n  ")
+          sys.exit(1 if len(skipped) > 1 else 0)
+          EOF
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-solver-serial
+          path: junit/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  shifted-tz:
+    # The other side of the date line: at 07:00 UTC it is 8pm the previous
+    # day at UTC-11 while Chicago is past midnight, so a test that mixes the
+    # process's date with the restaurant's fails here (the gate's UTC+14
+    # covers the other direction).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TZ: Pacific/Pago_Pago
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: Every test at UTC-11
+        run: >-
+          pytest tests/ -n auto --dist loadfile -q -rs -p no:cacheprovider
+          -m "not quarantine and not browser" --junitxml=junit/shifted-tz.xml
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-shifted-tz
+          path: junit/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  quarantine:
+    # Known-flaky tests (the `quarantine` marker): left out of the gate and
+    # of the jobs above, run here so their state is read every morning.
+    # Reported, never failing the night; a quarantined test is fixed or
+    # deleted, not kept for ever.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: The quarantined tests
+        run: |
+          set +e
+          pytest tests/ -m quarantine -n auto --dist loadfile -q -rs -p no:cacheprovider | tee quarantine.log
+          code=${PIPESTATUS[0]}
+          { echo '### Quarantined tests'; echo '```'; tail -40 quarantine.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # 5 = no test carries the marker: nothing is quarantined, which is good.
+          if [ "$code" = "5" ]; then exit 0; fi
+          exit $code
+
+  browser:
+    # The dashboard in a real browser (tests/browser/, marker `browser`):
+    # log in, open each tab at 390 and 1280 px, no script error, no failed
+    # request (A01-14).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install --no-deps -r requirements-dev.txt
+      - name: Playwright and Chromium
+        if: hashFiles('tests/browser/**/*.py') != ''
+        run: |
+          pip install playwright==1.48.0 greenlet==3.1.1 pyee==12.0.0
+          python -m playwright install --with-deps chromium
+      - name: The browser smoke
+        if: hashFiles('tests/browser/**/*.py') != ''
+        run: >-
+          pytest tests/browser -m browser -q -rs -p no:cacheprovider -p no:xdist
+          --junitxml=junit/browser.xml
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-browser
+          path: junit/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  summary:
+    # The night's failed tests, by job, for scripts/promote.py: a red night
+    # holds the promotion unless every failure is a quarantined test.
+    needs: [full-sqlite, recorded-sql, postgres, solver-serial, shifted-tz, quarantine, browser]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: junit
+          merge-multiple: true
+      - name: Summarise
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python scripts/promote.py --summarize-junit junit --out nightly-summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-summary
+          path: nightly-summary.json
+          retention-days: 30

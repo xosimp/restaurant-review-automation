@@ -354,8 +354,10 @@ def test_ask_leaves_out_alerts_the_viewer_cannot_open(db_path):
     r = models.get_restaurant(rid, db_path)
     manager = _user(db_path, rid, "manager", "m@x.test")
     view = tools.viewer_restaurant(r, manager)
-    if "inventory" not in tools._denied(view):
-        pytest.skip("managers can open Food Cost in this build")
+    # An assertion, not a skip: if a default manager could open Food Cost this
+    # test would have reported SKIPPED for the very regression it guards
+    # (audit #25 A01-18).
+    assert "inventory" in tools._denied(view), "a default manager must not open Food Cost"
     types = [a["type"] for a in tools._read_alerts(rid, _viewer=view)["alerts"]]
     assert "critical_low" not in types and "labor_over" in types
     ctx = ask_cavnar._alerts_context(rid, viewer=view)

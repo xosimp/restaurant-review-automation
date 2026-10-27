@@ -1,0 +1,102 @@
+name: iOS
+
+# The iPhone app's XCTests, compiled and run on a simulator (audit #25
+# A01-07, A06-01: 1,236 XCTest functions had never run in CI). On every push
+# that touches ios/**, nightly, and by hand. The Xcode project is generated
+# (the .pbxproj is gitignored) with ios/CavnarAI/generate.sh, pointed at a
+# local address: the tests never reach a server.
+#
+# The runner image needs an Xcode with the iOS 26 SDK (the app uses its
+# glass APIs); IOS_RUNNER (a repository variable) overrides the image when
+# GitHub renames it.
+
+on:
+  push:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  schedule:
+    # 07:30 UTC, after the nightly Python run starts.
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+# bash with -o pipefail, so a piped command's failure fails its step.
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  xctest:
+    runs-on: ${{ vars.IOS_RUNNER || 'macos-26' }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The newest Xcode on the runner
+        run: |
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+          xcodebuild -version
+
+      - name: xcodegen
+        run: command -v xcodegen >/dev/null || brew install xcodegen
+
+      - name: Generate the project
+        # The scheme's dev API address is substituted at generate time;
+        # localhost keeps the tests off every network.
+        env:
+          CAVNAR_DEV_API_BASE_URL: http://localhost:5050
+        run: ios/CavnarAI/generate.sh
+
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["devices"]
+          def ver(rt):
+              tail = rt.rsplit(".", 1)[-1]
+              return [int(p) for p in tail.replace("iOS-", "").split("-") if p.isdigit()]
+          runtimes = sorted((rt for rt in data if "iOS" in rt), key=ver, reverse=True)
+          for rt in runtimes:
+              for d in data[rt]:
+                  if d.get("isAvailable") and d["name"].startswith("iPhone"):
+                      print(d["udid"]); sys.exit(0)
+          sys.exit("no available iPhone simulator")
+          ')
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "$udid"
+
+      - name: Build for testing
+        run: >-
+          xcodebuild build-for-testing
+          -project ios/CavnarAI/CavnarAI.xcodeproj -scheme CavnarAI
+          -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}"
+          -derivedDataPath build/DerivedData
+          CODE_SIGNING_ALLOWED=NO | tail -200
+
+      - name: Run the XCTests
+        run: >-
+          set -o pipefail &&
+          xcodebuild test-without-building
+          -project ios/CavnarAI/CavnarAI.xcodeproj -scheme CavnarAI
+          -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}"
+          -derivedDataPath build/DerivedData
+          -resultBundlePath build/CavnarAITests.xcresult | tail -300
+
+      - name: Keep the result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CavnarAITests-xcresult
+          path: build/CavnarAITests.xcresult
+          if-no-files-found: ignore
+          retention-days: 14

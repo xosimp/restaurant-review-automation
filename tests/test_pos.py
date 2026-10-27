@@ -6,6 +6,9 @@ import pytest
 
 import pos
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 
 def _fake_provider(connected=False, sync_result=None, crash=False):
     mod = types.ModuleType("fakepos")

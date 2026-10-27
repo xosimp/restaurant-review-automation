@@ -22,6 +22,9 @@ from auth import create_user, init_auth
 from mobile_api import mobile_bp
 from models import Restaurant, create_restaurant, restaurant_has_module
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 
 def _redirect_db(monkeypatch, db_path):
     real = models.get_conn

@@ -1,13 +1,64 @@
 name: CI
 
+# The deploy gate (audit #25: A01-02, A01-05, A04-01, A05-01, A05-17; R2, R5,
+# R17). One job, `gate`, in at most ten minutes: the checks that would catch
+# a release breaking every restaurant, run in front of production instead of
+# two hours after it. It is the required status check on `main` and
+# `production`, and Railway's "Wait for CI" waits for it; scripts/promote.py
+# refuses a SHA without a green `gate`.
+#
+# The full SQLite suite, the full Postgres suite (sharded), the solver's
+# serial determinism run, the quarantined tests, the browser smoke and a
+# shifted-timezone run are .github/workflows/nightly.yml — never on the
+# deploy path. The iPhone app's XCTests are .github/workflows/ios.yml.
+#
+# Everything runs at UTC+14 (TZ=Pacific/Kiritimati): a test that builds
+# "today" from the process clock while the code uses the restaurant's date
+# fails here all day, not only on evening pushes (A01-03).
+
 on:
   push:
-    branches: [main]
+    branches: [main, production]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# bash with -o pipefail, so a piped command's failure fails its step.
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  # Tests must never touch real services; empty keys force every AI/email
+  # path onto its offline fallback (tests/conftest.py also blocks every
+  # connection off the machine).
+  ANTHROPIC_API_KEY: ""
+  RESEND_API_KEY: ""
+  TZ: Pacific/Kiritimati
+  # A skip whose reason tests/expected_skips.txt does not explain fails
+  # the run (A01-18).
+  CAVNAR_ENFORCE_SKIPS: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
-  test:
+  gate:
+    name: gate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +73,7 @@ jobs:
             requirements-dev.txt
 
       - name: Install the locked dependencies
+        id: deps
         # --no-deps: exactly what the lock names and nothing else, so the
         # next step can prove the lock is complete.
         run: pip install --no-deps -r requirements-dev.txt
@@ -32,125 +84,58 @@ jobs:
         run: pip check
 
       - name: Compile every module
-        run: python -m py_compile *.py
+        run: git ls-files -z '*.py' | xargs -0 python -m py_compile
 
-      - name: Theme-safety color lint
-        run: python scripts/check_colors.py
+      - name: Lints (colours, timeouts, silent handlers, tenant scope, email tokens, Postgres text audit)
+        run: |
+          set -e
+          python scripts/check_colors.py
+          python scripts/check_timeouts.py
+          python scripts/check_silent_handlers.py
+          python scripts/check_tenant_scope.py
+          python scripts/check_email_tokens.py
+          python scripts/pg_sql_audit.py --strict
 
-      - name: Silent-failure lint
-        run: python scripts/check_silent_handlers.py
-
-      - name: Run tests
-        # One worker per core; --dist loadfile keeps each file's tests on one
-        # worker, so module-scoped fixtures (the app subprocesses) start once.
-        run: pytest tests/ -n auto --dist loadfile -q
+      - name: Contract slice (pytest -m contract)
+        # The tests in front of every top-10 component (tests/test_contract_
+        # slice_registry.py keeps the slice covering all ten). Every
+        # distinct statement the app runs is recorded for the Postgres
+        # PREPARE below.
+        run: pytest tests/ -m contract -n auto --dist loadfile -q -rs -p no:cacheprovider
         env:
-          # Tests must never touch real services; empty keys force every
-          # AI/email path onto its offline fallback.
-          ANTHROPIC_API_KEY: ""
-          RESEND_API_KEY: ""
-          # Every distinct statement the app runs, the run-time-built ones
-          # included, for the postgres-recorded-sql job to PREPARE
-          # (tests/conftest.py; blind re-audit 10/20/26 R9-02).
           CAVNAR_RECORD_SQL: ${{ runner.temp }}/recorded-sql
 
-      - name: Keep the statements the suite ran
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: recorded-sql
-          path: ${{ runner.temp }}/recorded-sql
-          if-no-files-found: warn
-          retention-days: 3
+      - name: Every inline script in the templates parses
+        run: |
+          if [ -f tests/test_inline_scripts_parse.py ]; then
+            pytest tests/test_inline_scripts_parse.py -q -rs -p no:cacheprovider
+          else
+            echo "tests/test_inline_scripts_parse.py is not in this tree yet"
+          fi
 
-  postgres:
-    # The Postgres path, run against a real Postgres (blind re-audit
-    # 10/11/26, SCALE-10: it had only ever run against a recording driver,
-    # and the cutover's first boot would have failed). A throwaway server
-    # with no data and no keys: the app's boot twice (in its own process),
-    # the copy then the boot, every static statement PREPAREd, and EVERY
-    # test file with each test's database on Postgres (tests/conftest.py,
-    # CAVNAR_TEST_PG_URL) — built as production's was: the boot on SQLite,
-    # pg_copy (month-partitioned fact tables), the boot again on Postgres.
-    # It was a hand-picked list of ~40 files, and the notification badge's
-    # Postgres-only failure (read 0 for every login after the cutover) sat
-    # in a file that was not on it (blind re-audit 10/20/26 R9-01/R9-02).
-    # What cannot run on Postgres is listed in ONE place, with its reason:
-    # tests/conftest.py PG_MODE_SKIP_FILES and the sqlite_only marker.
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
-    env:
-      ANTHROPIC_API_KEY: ""
-      RESEND_API_KEY: ""
-      CAVNAR_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-      - name: Install the locked dependencies
-        run: pip install --no-deps -r requirements-dev.txt
-      - name: Every static statement PREPAREs on Postgres
+      - name: The app boots twice on a fresh SQLite volume
+        run: python scripts/boot_check.py
+
+      - name: The app boots twice on Postgres
+        run: |
+          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_boot')"
+          python scripts/boot_check.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_boot
+
+      - name: Every static statement and every statement the slice ran PREPAREs on Postgres
+        # Runs even when an unrelated test above failed (A01-05: with
+        # `needs: test` this check never ran once while production was on
+        # Postgres).
+        if: always() && steps.deps.outcome == 'success'
         run: |
           python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
-          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit
-      - name: Every test file on Postgres
-        run: pytest tests/ -n auto --dist loadfile -q -p no:warnings
-
-  postgres-recorded-sql:
-    # Every statement the SQLite suite actually ran (the `test` job's
-    # CAVNAR_RECORD_SQL), translated and PREPAREd on Postgres — the
-    # run-time-built SQL (f-string holes, joined IN lists, CASEs built from
-    # a registry) the source audit cannot read (blind re-audit 10/20/26
-    # R9-02). A failure here is a statement that would fail in production.
-    needs: test
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
-    env:
-      ANTHROPIC_API_KEY: ""
-      RESEND_API_KEY: ""
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-      - name: Install the locked dependencies
-        run: pip install --no-deps -r requirements-dev.txt
-      - uses: actions/download-artifact@v4
-        with:
-          name: recorded-sql
-          path: ${{ runner.temp }}/recorded-sql
-      - name: Every statement the suite ran PREPAREs on Postgres
-        run: |
-          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
-          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit --recorded ${{ runner.temp }}/recorded-sql
+          mkdir -p "${{ runner.temp }}/recorded-sql"
+          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit --recorded "${{ runner.temp }}/recorded-sql"
 
   audit:
-    # Known-vulnerability scan of the locked dependencies. Non-blocking for
-    # now (an advisory with no fix must not stop a deploy); read it.
+    # Known-vulnerability scan of the locked dependencies. Non-blocking (an
+    # advisory with no fix must not stop a deploy); read it.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -158,4 +143,4 @@ jobs:
         with:
           python-version-file: .python-version
       - name: pip-audit
-        run: pip install pip-audit && pip-audit -r requirements.txt
+        run: pip install pip-audit==2.9.0 && pip-audit -r requirements.txt

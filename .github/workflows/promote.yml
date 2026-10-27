@@ -1,0 +1,65 @@
+name: Promote to production
+
+# Railway's production service tracks the `production` branch; this moves it
+# (audit #25 deployment strategy; A05-01, R2, R4). scripts/promote.py
+# fast-forwards `production` to a main SHA only when it is on main, has a
+# green `gate` check, and — unless `emergency` — it is 9:00-15:00 Chicago on
+# a weekday and the latest nightly is green or its failures are all
+# quarantined. `emergency` skips the window and the nightly, never the gate.
+#
+# Run it from the Actions tab (or `gh workflow run promote.yml -f sha=<sha>`).
+# The push is made with this workflow's token: branch protection on
+# `production` must let GitHub Actions push (and nothing else).
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "The main SHA to promote (empty: main's head)"
+        required: false
+        default: ""
+      emergency:
+        description: "Skip the 9am-3pm window and the nightly check (never the gate)"
+        type: boolean
+        required: false
+        default: false
+      dry_run:
+        description: "Decide only; do not push"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: promote-production
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  checks: read
+  actions: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Decide, then fast-forward production
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.sha }}
+          EMERGENCY: ${{ inputs.emergency }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          git fetch origin main production || git fetch origin main
+          args=(--repo "$GITHUB_REPOSITORY")
+          [ -n "$SHA" ] && args+=(--sha "$SHA")
+          [ "$EMERGENCY" = "true" ] && args+=(--emergency)
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          python scripts/promote.py "${args[@]}"

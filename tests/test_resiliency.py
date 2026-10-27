@@ -18,6 +18,9 @@ import models
 import ops
 import scheduler
 
+# The deploy gate's contract slice (audit #25; TESTING.md, Tiers).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _redirect_db(monkeypatch, db_path):

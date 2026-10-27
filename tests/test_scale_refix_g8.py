@@ -241,6 +241,7 @@ def test_restore_from_refuses_on_the_postgres_backend(db, monkeypatch, tmp_path)
     snap = tmp_path / "snap.db"
     snap.write_bytes(b"")
     monkeypatch.setenv("RESTORE_FROM", str(snap))
+    monkeypatch.setenv("ALLOW_LOCAL_PG", "1")    # off Railway DATABASE_URL is ignored otherwise
     monkeypatch.setenv("DATABASE_URL", "postgresql://u@h/db")
     monkeypatch.delenv("DB_BACKEND", raising=False)
     with pytest.raises(RuntimeError, match="serves Postgres"):
