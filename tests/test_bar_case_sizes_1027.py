@@ -103,3 +103,26 @@ def test_a_bucket_is_its_beers_and_a_misread_bottle_never_judges_a_price(db):
     conn.close()
     assert bm.bucket_size(rid, db_path=db) == 5
     assert bm._FLOOR["liquor"] == 5.0 and bm._BUCKET_RE.search("Surfside Bucket")
+
+
+def test_a_new_button_reads_the_price_list_that_morning_and_can_be_matched(db, monkeypatch):
+    """Anthony, 10/27/26: a new Peach Crown button - its sales arrive the
+    morning after its first night; its price list was read up to a week
+    later, and Match refused it until then."""
+    import pos_archive
+    rid = _rid(db)
+    monkeypatch.setattr(pos_archive, "PRICE_SYNC_DAYS", 7)
+    conn = models.get_conn(db)
+    conn.execute("INSERT INTO pos_archive_state (restaurant_id, provider, prices_read_at) "
+                 "VALUES (?, 'rpower', datetime('now'))", (rid,))
+    conn.execute("INSERT INTO pos_menu_prices (restaurant_id, provider, item_id, level_id, item_name, level, price, "
+                 "seen_at) VALUES (?, 'rpower', 'OLD', 'L1', 'Titos', 'Level 1', 9, datetime('now'))", (rid,))
+    for lid, iid, name, day in (("o1", "OLD", "Titos", "2026-10-25"), ("o2", "OLD", "Titos", "2026-10-26"),
+                                ("n1", "NEW", "Peach Crown", "2026-10-26")):
+        conn.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, ticket_id, business_date, "
+                     "item_id, item_name, item_kind, kind, qty) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     (rid, "rpower", lid, "t", day, iid, name, "dish", "sale", 1))
+    conn.commit()
+    conn.close()
+    assert pos_archive._prices_due(rid, "rpower", "2026-10-26", db) is True        # Peach Crown's first night
+    assert pos_archive._prices_due(rid, "rpower", "2026-10-25", db) is False       # nothing new that night
