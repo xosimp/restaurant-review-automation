@@ -427,3 +427,45 @@ def test_o5_a_failed_ai_read_reaches_the_ai_payload(db_path, monkeypatch):
     assert "ai_usage" in out["read_failed"] and out["errors"]
     client = admin_ops.ai_client(_rest(db_path, "Any Place", billing_status="active"))
     assert "ai_usage" in client["read_failed"]
+
+
+# ── O4: coverage and failure share on each job row ──────────────────────────
+
+def test_o4_a_sweep_cut_short_every_pass_and_a_failing_share_are_on_the_job_row(db_path):
+    name = "prune_ledgers"
+    for _ in range(3):
+        ops.run_job(name, lambda: {"attempted": 600, "ok": 600, "failed": 0, "skipped": 0, "hit_bound": True,
+                                   "eligible": 1500}, db_path=db_path)
+    row = next(j for j in admin_ops.jobs()["jobs"] if j["job"] == name)
+    assert row["coverage"]["attempted"] == 600 and row["coverage"]["eligible"] == 1500
+    assert row["coverage"]["hit_bound"] is True and row["bound_hit_streak"] == 3 and row["bound_capped"] is True
+    out = admin_ops.jobs()
+    assert name in out["jobs_bound_capped"]
+    for _ in range(2):
+        ops.run_job(name, lambda: {"attempted": 10, "ok": 2, "failed": 8, "skipped": 0, "hit_bound": False},
+                    db_path=db_path)
+    row = next(j for j in admin_ops.jobs()["jobs"] if j["job"] == name)
+    assert row["failed_share"] == 0.8 and row["failing"] == {"why": "failing", "runs": ops.FAILING_ALERT_RUNS}
+    assert row["bound_hit_streak"] == 0
+
+
+# ── F9: a Run now request nothing took reads expired ───────────────────────
+
+def test_f9_an_untaken_run_now_request_reads_expired(db_path):
+    _sql(db_path, "INSERT INTO job_run_requests (job, requested_by, requested_at) VALUES ('prune_ledgers', 'will', ?)",
+         (_ago_utc(minutes=ops.RUN_REQUEST_TTL_MINUTES + 15),))
+    _sql(db_path, "INSERT INTO job_run_requests (job, requested_by) VALUES ('prune_ledgers', 'will')")
+    out = admin_ops.jobs()
+    states = [r["effective_status"] for r in out["requests"]]
+    assert states == ["pending", "expired"]
+    assert out["requests"][1]["expired_reason"].startswith("Not started within")
+    assert out["requests_24h"]["expired"] == 1 and out["requests_24h"]["pending"] == 1
+
+
+def test_f9_run_now_says_when_the_scheduler_is_not_beating(db_path, monkeypatch, scheduler_heartbeat):
+    import scheduler
+    scheduler_heartbeat(120)
+    monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: True)
+    job = next(n for n, s in admin_ops.RUNNABLE_JOBS.items() if not s["sends"])
+    out = admin_ops.run_job_now(job, "will")
+    assert out["queued"] is True and out["scheduler_state"] == "stale" and "expires unstarted" in out["message"]

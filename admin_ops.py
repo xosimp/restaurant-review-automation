@@ -5015,8 +5015,23 @@ def run_job_now(name, actor):
         if req_id is None:
             return {"ok": False, "status": 409, "error": why}
         _audit_run_now(name, actor, {"summary": f"Run now {name} queued for the scheduler (request {req_id})"})
-        return {"ok": True, "job": name, "context": ctx, "queued": True, "request_id": req_id,
-                "message": "Queued — the scheduler starts it on its next tick (within five minutes)."}
+        out = {"ok": True, "job": name, "context": ctx, "queued": True, "request_id": req_id,
+               "message": "Queued — the scheduler starts it on its next tick (within five minutes)."}
+        # A request only the scheduler takes, and it expires unstarted after
+        # RUN_REQUEST_TTL_MINUTES (F9): say so now when the loop is not
+        # beating, instead of promising five minutes.
+        try:
+            import status_manager as _sm_now
+            st = _sm_now.scheduler_state(_current_db_path())
+        except Exception:
+            st = {"state": "unknown"}
+        if st.get("state") in ("stale", "wedged", "unknown"):
+            ttl = int(getattr(_ops_now, "RUN_REQUEST_TTL_MINUTES", 30))
+            out.update(scheduler_state=st.get("state"), warning=True,
+                       message=(f"Queued, but the scheduler is {st.get('state')} — nothing takes the request until it "
+                                f"beats again, and it expires unstarted after {ttl} minutes. Check Jobs → run-now "
+                                "requests."))
+        return out
     # No scheduler in this process's deployment (a laptop): a job that sends
     # nothing runs here, on a thread, through the same run_job.
     import importlib
@@ -5128,6 +5143,7 @@ def _job_rows(conn, overdue):
         else:
             state = "never"
         st = stats.get(name) or {}
+        health = _run_health(runs, _ops_j)
         out.append({
             "job": name, "label": spec.get("label") or name, "cadence": spec["cadence"],
             "what": spec["description"], "sends": bool(spec.get("sends")), "runnable": bool(spec.get("runnable")),
@@ -5136,8 +5152,55 @@ def _job_rows(conn, overdue):
             "avg_ms": st.get("avg_ms"), "runs_7d": st.get("runs") or 0, "failed_7d": st.get("failed") or 0,
             "partial_7d": st.get("partial") or 0, "running_since": open_run["started_at"] if open_run else None,
             "overdue": late.get(name), "history": runs,
+            # Coverage and failure share (admin audit 10/27/26 O4), read off
+            # the runs in hand by ops' own rules — no query of their own.
+            **health,
         })
     return out
+
+
+def _run_blob(run):
+    try:
+        b = json.loads(run.get("result_json") or "null")
+    except (TypeError, ValueError):
+        b = None
+    return b if isinstance(b, dict) else {}
+
+
+def _run_health(runs, ops_mod):
+    """{coverage, failed_share, bound_hit_streak, bound_capped, failing} for
+    one job from its newest runs (newest first), judged as ops'
+    jobs_bound_capped / jobs_failing judge them: the last finished run's
+    counts (what it attempted of how many were eligible, and whether its
+    time bound cut it short), the share of that run that failed, how many
+    runs in a row hit the bound — a sweep cut short every pass rotates
+    through the fleet instead of covering it, while every run reads as a
+    success — and whether its last FAILING_ALERT_RUNS runs all failed (or
+    attempted nothing while restaurants were eligible)."""
+    done = [r for r in runs if r.get("finished_at") is not None and r.get("ok") is not None]
+    last = done[0] if done else None
+    blob = _run_blob(last) if last else {}
+    coverage = None
+    if blob:
+        coverage = {k: blob.get(k) for k in ("attempted", "eligible", "ok", "failed", "skipped", "hit_bound")}
+        coverage["hit_bound"] = bool(coverage.get("hit_bound"))
+    streak = 0
+    for r in done:
+        if not _run_blob(r).get("hit_bound"):
+            break
+        streak += 1
+    n_bound = int(getattr(ops_mod, "BOUND_ALERT_RUNS", 3))
+    n_fail = int(getattr(ops_mod, "FAILING_ALERT_RUNS", 2))
+    failing = None
+    recent = done[:n_fail]
+    if len(recent) >= n_fail:
+        if all(ops_mod._failing_run(r["ok"], r.get("result_json")) for r in recent):
+            failing = {"why": "failing", "runs": n_fail}
+        elif all(ops_mod._run_idle(r.get("result_json")) for r in recent):
+            failing = {"why": "idle", "runs": n_fail}
+    share = ops_mod.run_failed_share(last["ok"], last.get("result_json")) if last else None
+    return {"coverage": coverage, "failed_share": round(share, 3) if share is not None else None,
+            "bound_hit_streak": streak, "bound_capped": streak >= n_bound, "failing": failing}
 
 
 @_reports_failures
@@ -5222,6 +5285,7 @@ def jobs():
         _note_failure("dsr_nights_missing", e)
     schedule = [{"job": j["job"], "cadence": j["cadence"], "runnable": j["runnable"], "sends": j["sends"],
                  "what": j["what"]} for j in job_rows]
+    requests, request_counts = _run_requests_view(_ops)
     return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "heartbeat_minutes": hb, "failures": failures,
             "grouped": grouped, "runs": runs, "last_ok": last_ok,
             "stuck": stuck, "scheduled_posts": posts, "inflight": inflight, "schedule": schedule,
@@ -5230,7 +5294,13 @@ def jobs():
             # full liveness, the lease, the backup, run-now requests, the
             # last operator page, windows missed, DSR nights missing.
             "jobs": job_rows, "heartbeat": heartbeat, "lease": _ops.scheduler_lease_holder(),
-            "backup": _ops.backup_status(), "storage": _ops.storage_trend(), "requests": _ops.job_requests(),
+            "backup": _ops.backup_status(), "storage": _ops.storage_trend(), "requests": requests,
+            # Run-now requests of the last 24 hours by what became of them —
+            # an expired one included (F9); and the jobs whose sweeps keep
+            # stopping at their bound, or keep failing (O4).
+            "requests_24h": request_counts,
+            "jobs_bound_capped": [j["job"] for j in job_rows if j.get("bound_capped")],
+            "jobs_failing_runs": [dict(j["failing"], job=j["job"]) for j in job_rows if j.get("failing")],
             "operator_alert": _ops.last_operator_alert(), "missed_windows": missed, "dsr_missing": dsr_missing,
             "jobs_overdue": overdue, "local_sends_refused": local_refused,
             "local_sends_refused_reason": LOCAL_SENDS_REFUSED if local_refused else None,
@@ -5239,6 +5309,34 @@ def jobs():
             # audit 9/29/26): prune_ledgers refuses each one — nothing is
             # deleted from it — until its RETAIN_* variable is fixed.
             "retention": _retention_now()}
+
+
+def _run_requests_view(ops_mod):
+    """(requests, counts) — ops.job_requests annotated with what became of
+    each (admin audit 10/27/26 F9): a request is expired by the scheduler
+    when it takes requests, so one queued while the scheduler is down, in
+    maintenance or without the lease stayed 'pending' for ever and the admin
+    told "within five minutes" saw nothing. `effective_status` reads one
+    pending past RUN_REQUEST_TTL_MINUTES as expired; `counts` are the last
+    24 hours' by effective status."""
+    ttl = int(getattr(ops_mod, "RUN_REQUEST_TTL_MINUTES", 30))
+    rows = list(ops_mod.job_requests(limit=50) or [])
+    counts = {"pending": 0, "running": 0, "done": 0, "failed": 0, "expired": 0}
+    for r in rows:
+        status = (r.get("status") or "pending").lower()
+        age_h = _age_hours(r.get("requested_at"), "UTC")
+        eff = status
+        if status == "pending" and age_h is not None and age_h * 60 > ttl:
+            eff = "expired"
+            r["expired_reason"] = (f"Not started within {ttl} minutes — the scheduler did not take it (down, in "
+                                   "maintenance, or without the lease).")
+        elif status == "expired":
+            r["expired_reason"] = r.get("error") or f"Not started within {ttl} minutes."
+        r["effective_status"] = eff
+        r["requested_at_z"] = _iso_z(r.get("requested_at"), "UTC")
+        if age_h is not None and age_h <= 24:
+            counts[eff] = counts.get(eff, 0) + 1
+    return rows[:20], counts
 
 
 def _retention_now():
