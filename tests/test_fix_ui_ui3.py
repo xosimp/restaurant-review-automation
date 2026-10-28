@@ -216,10 +216,11 @@ def test_in_flight_sits_apart_from_delivered_and_bounced(page):
 
 def _mn_js(page):
     """The menu-notes edit over a stub DOM: need/post/api answer from P."""
-    return (_js(page, ("menuNotesHtml", "mnCountText", "mnCount", "mnSay", "mnSave", "mnPutBack", "mnUse"),
+    # busyBtn: Save is a busy button while it saves (admin audit 10/27/26 V13).
+    return (_js(page, ("menuNotesHtml", "mnCountText", "mnCount", "mnSay", "mnSave", "mnPutBack", "mnUse", "busyBtn"),
                 ("MENU_NOTES_MAX",))
             + "let _mn = null; const els = {}; const posts = []; const gets = [];\n"
-            + "function el(id){ if(!els[id]) els[id] = {value:'', textContent:'', innerHTML:'', disabled:false, style:{}, focus(){}}; return els[id]; }\n"
+            + "function el(id){ if(!els[id]) els[id] = {value:'', textContent:'', innerHTML:'', disabled:false, style:{}, focus(){}, setAttribute(){}, removeAttribute(){}}; return els[id]; }\n"
             + "const $ = (id) => els[id] || null; function skel(){ return ''; }\n"
             + "let answers = []; async function need(p){ gets.push(p); return answers.shift(); }\n"
             + "async function api(p, o){ gets.push(p); return answers.shift(); }\n"

@@ -1196,6 +1196,16 @@ function errText(d, fallback){ return (d && d.error) || ((fallback || 'That didn
 function say(d, okMsg){ const ok = okRes(d); toast(ok ? ((d && d.message) || okMsg || 'Done') : errText(d), ok ? 'good' : 'bad'); return ok; }
 // An admin job (#153): the action answers {job_id} at once and the work runs
 // on the server's bounded pool; its poll URL answers {status: pending} until
+// Loading and in-flight, the house way (admin audit 10/27/26 V13): the sliding
+// ember pulse, never "…" text — pulse(label[, say]) for a line still reading
+// (say: words worth keeping beside the bar, "up to two minutes"); busyBtn for
+// a button whose write is in flight (visual only — disabling stays with the
+// caller). A modal's status line says its outcome in colour (V07): green
+// when it worked, red when it didn't, amber ('warn') for a working connection
+// with a fault, plain (null) while it only informs. ES5.
+function pulse(label, sayIt){ return '<span class="pulse-line" role="status" aria-label="' + esc(label || 'Working') + '"><span class="dr-pulse"><i></i></span>' + (sayIt ? esc(sayIt) : '') + '</span>'; }
+function busyBtn(b, on){ if(!b) return; if(on) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy'); }
+function statusSay(id, ok, msg){ var el = $(id); if(!el) return; el.textContent = msg; el.style.color = ok == null ? '' : (ok === 'warn' ? 'var(--amber-t)' : (ok ? 'var(--green-t)' : 'var(--red-t)')); }
 // the result is in. Polled every 2 s, five minutes at most. A poll carries a
 // method, so it is never dropped when the admin moves to another page.
 async function pollJob(url, onTick){
@@ -1261,9 +1271,9 @@ async function formSubmit(){
     else if(f.type === 'checks') vals[f.id] = Array.prototype.slice.call(document.querySelectorAll('input[name="' + id + '"]:checked')).map(x => x.value);
     else vals[f.id] = (($(id) || {}).value || '').trim();
   });
-  const btn = $('f-go'); btn.disabled = true; $('f-status').style.color = ''; $('f-status').textContent = 'Working…';
+  const btn = $('f-go'); btn.disabled = true; busyBtn(btn, true); $('f-status').style.color = ''; $('f-status').textContent = '';
   let d; try{ d = await _form.submit(vals); }catch(e){ d = {ok:false, error:String((e && e.message) || e)}; }
-  btn.disabled = false;
+  btn.disabled = false; busyBtn(btn, false);
   if(d === false){ $('f-status').textContent = ''; return; }
   if(okRes(d)){ closeModal('m-form'); toast((d && d.message) || _form.done || 'Done', 'good'); if(_form.after) _form.after(d); else route(); }
   else { $('f-status').textContent = errText(d); $('f-status').style.color = 'var(--red-t)'; }
@@ -1549,15 +1559,15 @@ async function confirmStep(rid, step, value){
 }
 async function loadChecklists(rid, apply){
   const d = await post('/admin/api/onboarding/' + rid + '/checklists', {doc: $('setup-checklists').value, apply: apply});
-  if(!d.ok){ $('setup-cl-out').textContent = d.error || 'Not loaded'; return; }
-  $('setup-cl-out').textContent = apply ? (d.lines_added + ' lines added, ' + d.sheets_created + ' new sheets') : (d.lines + ' lines on ' + (d.sheets||[]).length + ' sheets would be added');
+  if(!d.ok){ statusSay('setup-cl-out', false, d.error || 'Not loaded'); return; }
+  statusSay('setup-cl-out', apply ? true : null, apply ? (d.lines_added + ' lines added, ' + d.sheets_created + ' new sheets') : (d.lines + ' lines on ' + (d.sheets||[]).length + ' sheets would be added'));
   if(apply) toast('Checklists loaded');
 }
 async function setDsr(rid, apply){
   const d = await post('/admin/api/onboarding/' + rid + '/dsr', {preset: $('dsr-preset').value, fiscal_year_start: $('dsr-year').value || null,
     fiscal_week_start_dow: +$('dsr-dow').value, apply: apply});
-  if(!d.ok){ $('setup-dsr-out').textContent = d.error || 'Not saved'; return; }
-  $('setup-dsr-out').textContent = apply ? 'Saved.' : 'That calendar checks out.';
+  if(!d.ok){ statusSay('setup-dsr-out', false, d.error || 'Not saved'); return; }
+  statusSay('setup-dsr-out', true, apply ? 'Saved.' : 'That calendar checks out.');
   if(apply){ toast('DSR calendar saved'); openSetup(rid); }
 }
 async function onboarding(){
@@ -2142,9 +2152,9 @@ async function mnSave(){
   if(!t || !m) return;
   const v = t.value.trim();
   if(v === String(m.base || '').trim()){ mnSay('', 'Nothing changed.'); return; }
-  $('mn-save').disabled = true; mnSay('', 'Saving…');
+  $('mn-save').disabled = true; busyBtn($('mn-save'), true); mnSay('', '');
   let d; try{ d = await post(m.url, {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}}); }catch(e){ d = null; }
-  if($('mn-save')) $('mn-save').disabled = false;
+  if($('mn-save')){ $('mn-save').disabled = false; busyBtn($('mn-save'), false); }
   if(_mn !== m || !$('mn-text')) return;                 // the admin has moved on
   if(!d){ mnSay('bad', 'No answer from the server — the outcome is unknown. Reload before saving again.'); return; }
   if(okRes(d)){
@@ -2194,7 +2204,7 @@ async function menuExtract(id, source){
   else if(source === 'pdf'){ const f = $('mx-pdf').files[0]; if(!f) return; const fd = new FormData(); fd.append('pdf', f); d = await api('/admin/upload-menu-pdf/' + id, {method:'POST', body: fd}); }
   else d = await post('/admin/refresh-menu-notes/' + id, {});
   if(!okRes(d) || !d.job_id){ out.innerHTML = `<div class="warnline">${esc(errText(d, 'The extraction didn\'t start'))}</div>`; return; }
-  out.innerHTML = `<span class="muted" style="font-size:12.5px">Reading the menu… this can take a minute.</span>`;
+  out.innerHTML = pulse('Reading the menu', 'Reading the menu — up to a minute');
   const r = await pollJob('/admin/api/menu-extract/' + encodeURIComponent(d.job_id));
   if(!$('mx-out')) return;
   if(!okRes(r) || !r.menu_notes){ $('mx-out').innerHTML = `<div class="warnline">${esc(errText(r, 'Nothing came back'))}</div>`; return; }
@@ -3747,11 +3757,11 @@ async function reviewAccountRotate(){
   if(typed === null) return;
   if(typed.trim().toUpperCase() !== 'ROTATE'){ toast('Nothing changed — type ROTATE to rotate the password.', 'bad'); return; }
   const btn = $('seed-btn'), st = $('seed-status');
-  if(btn) btn.disabled = true; if(st) st.textContent = 'Starting the seed';
+  if(btn) btn.disabled = true; if(st) st.innerHTML = pulse('Starting the seed');
   let d; try{ d = await post('/admin/seed-review-account', {rotate_password: true, confirm: 'ROTATE'}); }
   catch(e){ if(btn) btn.disabled = false; if(st) st.textContent = 'No answer from the server — the outcome is unknown. Check the account before trying again.'; return; }
   if(!okRes(d) || !d.job_id){ if(btn) btn.disabled = false; if(st) st.textContent = errText(d, "It didn't start"); return; }
-  if(st) st.textContent = d.message || 'Seeding — up to two minutes.';
+  if(st) st.innerHTML = pulse('Seeding', d.message || 'Seeding — up to two minutes');
   const r = await pollJob(jobUrl(d.job_id));
   if($('seed-btn')) $('seed-btn').disabled = false;
   if(!okRes(r)){ if($('seed-status')) $('seed-status').textContent = errText(r, 'Seeding failed'); toast(errText(r, 'Seeding failed'), 'bad'); return; }
@@ -4691,10 +4701,10 @@ async function seedReviewAccount(){
   // new password (a brand-new account) is handed over once, in Shown once.
   const btn = $('seed-btn'), status = $('seed-status'), out = $('seed-out');
   if(!confirm('Create or refresh the App Store review account? Its existing password is kept.')) return;
-  btn.disabled = true; status.textContent = 'Starting…'; out.hidden = true;
+  btn.disabled = true; status.innerHTML = pulse('Starting the seed'); out.hidden = true;
   const d = await post('/admin/seed-review-account', {});
   if(!okRes(d) || !d.job_id){ btn.disabled = false; status.textContent = errText(d, 'It didn\'t start'); return; }
-  status.textContent = d.message || 'Seeding (up to two minutes)…';
+  status.innerHTML = pulse('Seeding', d.message || 'Seeding — up to two minutes');
   const r = await pollJob(jobUrl(d.job_id));
   btn.disabled = false;
   if(!okRes(r)){ status.textContent = errText(r, 'Seeding failed'); return; }
@@ -4713,12 +4723,12 @@ async function createClient(){
   if(!payload.restaurant_name||!payload.owner_email||!payload.username||!payload.password){ st.textContent='Name, email, username and a first password are required.'; st.style.color='var(--red-t)'; return; }
   const mods = [payload.module_reviews, payload.module_labor, payload.module_inventory, payload.module_marketing].filter(Boolean).length;
   if(!confirm('Create ' + payload.restaurant_name + ' with the login ' + payload.username + (mods ? '? The DocuSign contract goes to ' + payload.owner_email + ' at once.' : '?'))) return;
-  btn.disabled=true; btn.textContent='Creating…'; st.style.color=''; st.textContent='';
-  const d = await post('/admin/create-client', payload); btn.disabled=false; btn.textContent='Create client';
+  btn.disabled=true; busyBtn(btn, true); st.style.color=''; st.textContent='';
+  const d = await post('/admin/create-client', payload); btn.disabled=false; busyBtn(btn, false);
   if(!okRes(d)){ st.style.color='var(--red-t)'; st.textContent=errText(d, 'Something went wrong'); return; }
   _clients=null; badges();
-  const rid = d.restaurant_id, said = ['✓ Created ' + payload.restaurant_name + ' — username ' + payload.username + (d.timezone_defaulted ? ' (timezone: Central, the default).' : '.')];
-  st.style.color='var(--green-t)'; st.textContent = said[0] + (d.setup_job_id ? ' Sending the contract…' : '');
+  const rid = d.restaurant_id, said = ['Created ' + payload.restaurant_name + ' — username ' + payload.username + (d.timezone_defaulted ? ' (timezone: Central, the default).' : '.')];
+  st.style.color='var(--green-t)'; st.innerHTML = esc(said[0]) + (d.setup_job_id ? ' ' + pulse('Sending the contract', 'Sending the contract') : '');
   const aid = v('r-audit');
   if(aid){ const l = await post('/admin/api/audits/' + encodeURIComponent(aid) + '/link', {restaurant_id: rid}); said.push(okRes(l) ? 'Linked to its sales audit.' : "The sales audit didn't link: " + errText(l)); }
   let bad = false;
@@ -4908,15 +4918,15 @@ async function valueRecap(rid, name, email){
 }
 // Toast credentials
 let _tRid=null, _tName='';
-async function toastOpen(rid, name){ _tRid=rid; _tName=name||''; $('m-toast-title').textContent='Toast POS — '+name; $('m-toast-status').textContent='Loading…'; ['t-cid','t-sec','t-guid'].forEach(i=>$(i).value=''); openModal('m-toast'); let d; try{ d = await api('/admin/toast/status/'+rid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; } $('m-toast-status').textContent = !okRes(d) && !d.connected ? errText(d, 'Toast status couldn\'t be read') : (d.connected ? ('Connected · GUID '+(d.guid_masked||'')+' · last sync '+ago(d.last_synced)+(d.sync_error?' · error: '+d.sync_error:'')) : 'Not connected — enter credentials below.'); }
-async function toastSave(){ const d = await post('/admin/toast/save/'+_tRid, {client_id:$('t-cid').value.trim(), client_secret:$('t-sec').value.trim(), restaurant_guid:$('t-guid').value.trim(), test:true}); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Saved and tested')) : ('✕ '+errText(d)); if(okRes(d)){ _clients=null; } }
-async function toastSync(){ const d = await post('/admin/toast/sync/'+_tRid); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Synced')) : ('✕ '+errText(d, 'Sync failed')); }
-async function toastDisconnect(){ if(!confirm('Disconnect Toast for ' + (_tName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/toast/disconnect/'+_tRid); $('m-toast-status').textContent = okRes(d)?'Disconnected':errText(d); _clients=null; }
+async function toastOpen(rid, name){ _tRid=rid; _tName=name||''; $('m-toast-title').textContent='Toast POS — '+name; $('m-toast-status').style.color=''; $('m-toast-status').innerHTML=pulse('Reading the Toast connection'); ['t-cid','t-sec','t-guid'].forEach(i=>$(i).value=''); openModal('m-toast'); let d; try{ d = await api('/admin/toast/status/'+rid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; } const bad = !okRes(d) && !d.connected; statusSay('m-toast-status', bad ? false : (d.connected ? (d.sync_error ? 'warn' : true) : null), bad ? errText(d, 'Toast status couldn\'t be read') : (d.connected ? ('Connected · GUID '+(d.guid_masked||'')+' · last sync '+ago(d.last_synced)+(d.sync_error?' · error: '+d.sync_error:'')) : 'Not connected — enter credentials below.')); }
+async function toastSave(){ const d = await post('/admin/toast/save/'+_tRid, {client_id:$('t-cid').value.trim(), client_secret:$('t-sec').value.trim(), restaurant_guid:$('t-guid').value.trim(), test:true}); statusSay('m-toast-status', okRes(d), okRes(d) ? (d.message||'Saved and tested') : errText(d)); if(okRes(d)){ _clients=null; } }
+async function toastSync(){ const d = await post('/admin/toast/sync/'+_tRid); statusSay('m-toast-status', okRes(d), okRes(d) ? (d.message||'Synced') : errText(d, 'Sync failed')); }
+async function toastDisconnect(){ if(!confirm('Disconnect Toast for ' + (_tName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/toast/disconnect/'+_tRid); statusSay('m-toast-status', okRes(d) ? null : false, okRes(d)?'Disconnected':errText(d)); _clients=null; }
 // RPOWER
 let _rpRid=null, _rpName='';
-function rpowerOpen(rid, name){ _rpRid=rid; _rpName=name||''; $('m-rpower-title').textContent='RPOWER POS — '+name; $('m-rpower-status').textContent=''; $('rp-token').value=''; $('rp-stores').style.display='none'; openModal('m-rpower'); rpowerStatus(); }
+function rpowerOpen(rid, name){ _rpRid=rid; _rpName=name||''; $('m-rpower-title').textContent='RPOWER POS — '+name; $('m-rpower-status').style.color=''; $('m-rpower-status').innerHTML=pulse('Reading the RPOWER connection'); $('rp-token').value=''; $('rp-stores').style.display='none'; openModal('m-rpower'); rpowerStatus(); }
 async function rpowerStatus(){ let d; try{ d = await api('/admin/rpower/status/'+_rpRid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
-  $('m-rpower-status').textContent = d.connected ? ('✓ Connected to '+(d.store_name||'RPOWER')+(d.last_synced?(' — last synced '+fmtDT(d.last_synced)):'')) : (d.message||d.error||'Not connected');
+  statusSay('m-rpower-status', d.connected ? true : (d.error && !d.message ? false : null), d.connected ? ('Connected to '+(d.store_name||'RPOWER')+(d.last_synced?(' — last synced '+fmtDT(d.last_synced)):'')) : (d.message||d.error||'Not connected'));
   const cr = d.credential, x = [];
   if(cr) x.push(`<span>Partner credential #${cr.id} · v${cr.version} · ${cr.stores} live store${cr.stores===1?'':'s'}${cr.rotated_at?' · rotated '+fmtDT(cr.rotated_at):''} <button class="btn s w" onclick="rpowerRotate(${cr.id})">Rotate token…</button></span>`);
   if(d.is_demo) x.push(`<span>Demo: ${d.live_mirror?'may read this live store (override on)':'simulated stores only'} <button class="btn s w" onclick="rpowerLiveMirror(${d.live_mirror?'false':'true'})">${d.live_mirror?'Turn the override off':'Allow a live store…'}</button></span>`);
@@ -4925,30 +4935,30 @@ async function rpowerStatus(){ let d; try{ d = await api('/admin/rpower/status/'
 async function rpowerRotate(id){ const t = prompt('Paste the NEW RPOWER token for credential #'+id+'. Every store on it reads with the new token from its next request.'); if(!t) return;
   let d = await post('/admin/rpower/credentials/'+id+'/rotate', {token:t.trim()});
   if(d && d._status===409 && d.unseen && confirm(errText(d)+'\n\n'+d.unseen.map(u=>u.name).join(', ')+'\n\nRotate anyway?')) d = await post('/admin/rpower/credentials/'+id+'/rotate', {token:t.trim(), force:true});
-  $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Rotated')) : ('✕ '+errText(d)); rpowerStatus(); }
+  statusSay('m-rpower-status', okRes(d), okRes(d) ? (d.message||'Rotated') : errText(d)); rpowerStatus(); }
 async function rpowerLiveMirror(on){ let reason = ''; if(on){ reason = prompt('Why should this DEMO read a live store? Every login on the demo sees that store\'s sales, wages and staff.'); if(!reason) return; }
-  const d = await post('/admin/rpower/live-mirror/'+_rpRid, {on, reason}); $('m-rpower-status').textContent = okRes(d) ? '✓ Saved' : ('✕ '+errText(d)); rpowerStatus(); }
+  const d = await post('/admin/rpower/live-mirror/'+_rpRid, {on, reason}); statusSay('m-rpower-status', okRes(d), okRes(d) ? 'Saved' : errText(d)); rpowerStatus(); }
 async function rpowerReleaseHold(){ const how = prompt('How did you confirm the owner (a call to the store, RPOWER)? This opens the store\'s numbers to its logins.'); if(!how) return;
-  const d = await post('/admin/rpower/owner-check/'+_rpRid, {how}); $('m-rpower-status').textContent = okRes(d) ? '✓ Released' : ('✕ '+errText(d)); rpowerStatus(); }
-async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ $('m-rpower-status').textContent='✕ Paste the token first'; return; }
-  $('m-rpower-status').textContent='Verifying…';
+  const d = await post('/admin/rpower/owner-check/'+_rpRid, {how}); statusSay('m-rpower-status', okRes(d), okRes(d) ? 'Released' : errText(d)); rpowerStatus(); }
+async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ statusSay('m-rpower-status', false, 'Paste the token first'); return; }
+  $('m-rpower-status').style.color=''; $('m-rpower-status').innerHTML=pulse('Verifying the token');
   const d = await post('/admin/rpower/save/'+_rpRid, {token:t});
-  if(!okRes(d)){ $('m-rpower-status').textContent='✕ '+errText(d); return; }
+  if(!okRes(d)){ statusSay('m-rpower-status', false, errText(d)); return; }
   if(d.needs_choice){ const sel=$('rp-store'); sel.innerHTML=''; (d.stores||[]).forEach(function(st){ const o=document.createElement('option'); o.value=st.store_mid; o.textContent=st.name+' (cg '+st.cg+')'; sel.appendChild(o); });
-    $('rp-stores').style.display='block'; $('m-rpower-status').textContent=d.message; return; }
-  $('m-rpower-status').textContent='✓ '+(d.message||'Connected'); _clients=null; }
+    $('rp-stores').style.display='block'; statusSay('m-rpower-status', null, d.message); return; }
+  statusSay('m-rpower-status', true, d.message||'Connected'); _clients=null; }
 async function rpowerBind(){ const d = await post('/admin/rpower/bootstrap/'+_rpRid, {store_mid:$('rp-store').value});
-  $('m-rpower-status').textContent = okRes(d) ? ('✓ Bound to '+(d.store&&d.store.name||'store')) : ('✕ '+errText(d));
+  statusSay('m-rpower-status', okRes(d), okRes(d) ? ('Bound to '+(d.store&&d.store.name||'store')) : errText(d));
   if(okRes(d)){ $('rp-stores').style.display='none'; _clients=null; } }
-async function rpowerSync(){ const d = await post('/admin/rpower/sync/'+_rpRid); $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Sync started')) : ('✕ '+errText(d, 'Sync failed')); }
-async function rpowerDisconnect(){ if(!confirm('Disconnect RPOWER for ' + (_rpName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/rpower/disconnect/'+_rpRid); $('m-rpower-status').textContent = okRes(d)?'Disconnected':errText(d); _clients=null; }
+async function rpowerSync(){ const d = await post('/admin/rpower/sync/'+_rpRid); statusSay('m-rpower-status', okRes(d), okRes(d) ? (d.message||'Sync started') : errText(d, 'Sync failed')); }
+async function rpowerDisconnect(){ if(!confirm('Disconnect RPOWER for ' + (_rpName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/rpower/disconnect/'+_rpRid); statusSay('m-rpower-status', okRes(d) ? null : false, okRes(d)?'Disconnected':errText(d)); _clients=null; }
 // Brand (#23): the form is this client's own stored values; only what the
 // admin changed is sent, with the version it was loaded at; an emptied field
 // is cleared on purpose; a stale form (409) is refilled from what is stored.
 let _bRid=null, _b0=null;
 const BRAND_FIELDS = [['b-name','brand_name'],['b-color','brand_color'],['b-logo','brand_logo_url']];
 const PROFILE_FIELDS = [['b-sm','service_model'],['b-concept','concept'],['b-own','ownership'],['b-opened','opened_year']];
-function brandReset(){ BRAND_FIELDS.concat(PROFILE_FIELDS).forEach(f=>{ $(f[0]).value=''; }); $('b-bar').checked=false; $('b-excl').value='0'; $('b-lov').value=''; $('b-lhist').checked=false; $('b-lhist-l').hidden=true; $('b-learn').innerHTML=''; $('b-lhint').textContent=''; $('b-status').textContent=''; $('b-load').textContent=''; _b0=null; }
+function brandReset(){ BRAND_FIELDS.concat(PROFILE_FIELDS).forEach(f=>{ $(f[0]).value=''; }); $('b-bar').checked=false; $('b-excl').value='0'; $('b-lov').value=''; $('b-lhist').checked=false; $('b-lhist-l').hidden=true; $('b-learn').innerHTML=''; $('b-lhint').textContent=''; statusSay('b-status', null, ''); statusSay('b-load', null, ''); _b0=null; }
 function brandFill(p){
   _b0 = p;
   BRAND_FIELDS.forEach(f=>{ $(f[0]).value = p[f[1]] || ''; });
@@ -4990,20 +5000,20 @@ function brandLearnHint(){
   $('b-lhint').textContent = h;
 }
 async function brandOpen(rid, name){
-  _bRid=rid; brandReset(); $('b-title').textContent = 'Branding & peer profile — ' + name; $('b-save').disabled = true; $('b-load').textContent = 'Loading what is stored…'; openModal('m-brand');
+  _bRid=rid; brandReset(); $('b-title').textContent = 'Branding & peer profile — ' + name; $('b-save').disabled = true; $('b-load').innerHTML = pulse('Reading what is stored'); openModal('m-brand');
   let d; try{ d = await api('/admin/api/brand/'+rid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
   if(_bRid !== rid) return;
-  if(!okRes(d)){ $('b-load').textContent = errText(d, 'The stored branding couldn\'t be read') + ' Nothing can be saved until it loads.'; return; }
+  if(!okRes(d)){ statusSay('b-load', false, errText(d, 'The stored branding couldn\'t be read') + ' Nothing can be saved until it loads.'); return; }
   brandFill(d); $('b-save').disabled = false;
 }
 function brandClose(){ brandReset(); _bRid = null; closeModal('m-brand'); }
 async function brandSave(){
-  if(!_b0){ $('b-status').textContent = '✕ The stored values haven\'t loaded — close and open it again.'; return; }
+  if(!_b0){ statusSay('b-status', false, 'The stored values haven\'t loaded — close and open it again.'); return; }
   const body = {expected_version: _b0.version}, clear = [];
   BRAND_FIELDS.forEach(f=>{ const v = $(f[0]).value.trim(), was = _b0[f[1]] || ''; if(v === was) return; if(!v) clear.push(f[1]); else body[f[1]] = v; });
   const pr = _b0.profile || {}, prof = {service_model:$('b-sm').value, concept:$('b-concept').value, ownership:$('b-own').value, opened_year:$('b-opened').value.trim(), bar_led:$('b-bar').checked ? 1 : 0};
   const profChanged = ['service_model','concept','ownership','opened_year'].some(k=>String(prof[k]||'') !== String(pr[k]==null?'':pr[k])) || (!!prof.bar_led) !== (!!pr.bar_led);
-  if(profChanged){ if(!prof.service_model){ $('b-status').textContent = '✕ Choose a service model — the peer profile needs one.'; return; } Object.assign(body, prof); }
+  if(profChanged){ if(!prof.service_model){ statusSay('b-status', false, 'Choose a service model — the peer profile needs one.'); return; } Object.assign(body, prof); }
   const excl = $('b-excl').value === '1' ? 1 : 0; if(excl !== (_b0.exclude_from_learning ? 1 : 0)) body.exclude_from_learning = excl;
   // The override only when it changed: the server starts an include's
   // teaching on the save that sets it (learning_since), unless the history
@@ -5011,28 +5021,28 @@ async function brandSave(){
   const lov = $('b-lov').value, lov0 = (_b0.learning && _b0.learning.override) || '';
   if(lov !== lov0){ body.learning_override = lov; if(lov === 'include') body.learning_history = $('b-lhist').checked; }
   if(clear.length) body.clear = clear;
-  if(Object.keys(body).length === 1){ $('b-status').textContent = 'Nothing changed.'; return; }
+  if(Object.keys(body).length === 1){ statusSay('b-status', null, 'Nothing changed.'); return; }
   const d = await post('/admin/api/brand/'+_bRid, body);
-  if(okRes(d)){ brandFill(d); $('b-status').textContent = '✓ Saved'; return; }
-  if(d && d._status === 409 && d.current){ brandFill(d.current); $('b-status').textContent = '✕ Changed by someone else since this opened — the form now shows what is stored. Make your change again.'; return; }
-  $('b-status').textContent = '✕ ' + errText(d);
+  if(okRes(d)){ brandFill(d); statusSay('b-status', true, 'Saved'); return; }
+  if(d && d._status === 409 && d.current){ brandFill(d.current); statusSay('b-status', false, 'Changed by someone else since this opened — the form now shows what is stored. Make your change again.'); return; }
+  statusSay('b-status', false, errText(d));
 }
 // Review import (#149): the platform's own columns, into THIS client.
 let _iRid=null, _iPlat=null;
 const IMPORT_LABEL = {tripadvisor:'TripAdvisor', doordash:'DoorDash', ubereats:'Uber Eats'};
-function importOpen(rid, name, platform){ _iRid=rid; _iPlat=platform; $('m-import-title').textContent='Import '+(IMPORT_LABEL[platform]||platform)+' reviews — '+name; $('i-status').textContent=''; $('i-file').value=''; $('i-btn').disabled=false; openModal('m-import'); }
+function importOpen(rid, name, platform){ _iRid=rid; _iPlat=platform; $('m-import-title').textContent='Import '+(IMPORT_LABEL[platform]||platform)+' reviews — '+name; statusSay('i-status', null, ''); $('i-file').value=''; $('i-btn').disabled=false; openModal('m-import'); }
 async function importSubmit(){
-  const f=$('i-file').files[0]; if(!f){ $('i-status').textContent='Choose a CSV first'; return; }
+  const f=$('i-file').files[0]; if(!f){ statusSay('i-status', false, 'Choose a CSV first'); return; }
   const fd=new FormData(); fd.append('file',f); fd.append('platform',_iPlat);
-  $('i-status').textContent='Uploading…'; $('i-btn').disabled=true;
+  statusSay('i-status', null, ''); $('i-btn').disabled=true; busyBtn($('i-btn'), true);
   let d; try{ d = await api('/admin/import-reviews/'+_iRid, {method:'POST', body:fd}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
-  $('i-btn').disabled=false;
-  if(!okRes(d)){ $('i-status').textContent = '✕ ' + errText(d, 'Import failed'); return; }
+  $('i-btn').disabled=false; busyBtn($('i-btn'), false);
+  if(!okRes(d)){ statusSay('i-status', false, errText(d, 'Import failed')); return; }
   const bits = [(d.new||0) + ' new'];
   if(d.already_had) bits.push(d.already_had + ' already here');
   if(d.skipped) bits.push(d.skipped + ' skipped (no rating or text)');
   if(d.rejected) bits.push(d.rejected + ' refused');
-  $('i-status').textContent = '✓ Read ' + (d.imported||0) + ' ' + (IMPORT_LABEL[d.platform]||'') + ' review' + (d.imported===1?'':'s') + ': ' + bits.join(', ') + (d.new ? '. AI drafting runs in the background.' : '.');
+  statusSay('i-status', true, 'Read ' + (d.imported||0) + ' ' + (IMPORT_LABEL[d.platform]||'') + ' review' + (d.imported===1?'':'s') + ': ' + bits.join(', ') + (d.new ? '. AI drafting runs in the background.' : '.'));
   _clients = null;
 }
 // Add a location to an existing brand (#42).
@@ -5040,7 +5050,7 @@ let _alFrom = null, _alt;
 async function addLocationOpen(fromId, brand){
   _alFrom = fromId || null;
   ['al-find','al-name','al-loc','al-place','al-yelp','al-phone'].forEach(i=>{ $(i).value=''; });
-  $('al-res').innerHTML=''; $('al-status').textContent=''; $('al-same').checked=true; $('al-mods').hidden=true; $('al-btn').disabled=false;
+  $('al-res').innerHTML=''; statusSay('al-status', null, ''); $('al-same').checked=true; $('al-mods').hidden=true; $('al-btn').disabled=false;
   $('al-tz').innerHTML = tzOptions('', 'Same as the brand');
   $('al-picked').innerHTML = fromId ? 'Brand: <b>' + esc(brand || ('#' + fromId)) + '</b>' : 'Pick a location of the brand above.';
   openModal('m-addloc'); setTimeout(()=>$(fromId ? 'al-name' : 'al-find').focus(), 30);
@@ -5053,16 +5063,16 @@ function addLocFind(){ clearTimeout(_alt); const q = $('al-find').value.trim(); 
 function addLocPick(id, title){ _alFrom = id; $('al-picked').innerHTML = 'Brand: <b>' + esc(title) + '</b>'; $('al-res').innerHTML = ''; $('al-find').value = ''; $('al-name').focus(); }
 async function addLocationSubmit(){
   const v = id => ($(id).value || '').trim();
-  if(!_alFrom){ $('al-status').textContent = 'Pick a location of the brand first.'; return; }
-  if(!v('al-name')){ $('al-status').textContent = 'Give the new location a name.'; return; }
+  if(!_alFrom){ statusSay('al-status', false, 'Pick a location of the brand first.'); return; }
+  if(!v('al-name')){ statusSay('al-status', false, 'Give the new location a name.'); return; }
   const body = {from_restaurant_id:_alFrom, restaurant_name:v('al-name'), location_name:v('al-loc'), google_place_id:v('al-place'), yelp_business_id:v('al-yelp'), owner_phone:v('al-phone'), timezone:v('al-tz')};
   if(!$('al-same').checked) MODULE_KEYS.forEach(m=>{ body['module_' + m[0]] = $('al-m-' + m[0]).checked ? 1 : 0; });
   if(v('al-audit')) body.audit_id = +v('al-audit');
   if(!confirm('Add ' + body.restaurant_name + ' to this brand? Same owner and login; billed with the brand; no contract is sent.')) return;
-  $('al-btn').disabled = true; $('al-status').textContent = 'Adding…';
+  $('al-btn').disabled = true; busyBtn($('al-btn'), true); statusSay('al-status', null, '');
   const d = await post('/admin/api/brand/add-location', body);
-  $('al-btn').disabled = false;
-  if(!okRes(d)){ $('al-status').textContent = '✕ ' + errText(d); return; }
+  $('al-btn').disabled = false; busyBtn($('al-btn'), false);
+  if(!okRes(d)){ statusSay('al-status', false, errText(d)); return; }
   _clients = null; badges(); closeModal('m-addloc'); toast(d.message || 'Location added', 'good');
   location.hash = '#client/' + d.restaurant_id;
 }
