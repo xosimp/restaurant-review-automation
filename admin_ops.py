@@ -3247,6 +3247,20 @@ def _real(recs):
     return [r for r in recs if r["segment"] == "customer"]
 
 
+def _is_paying_account(r):
+    """THE paying account (admin audit 10/27/26 K-07): a customer location
+    that pays — active or past due — and is not covered by another
+    location's subscription. One definition for the Overview, the daily
+    snapshot and the reconstructed history; a covered location is counted
+    apart (covered_locations)."""
+    b = r["billing"]
+    return b["status"] in PAYING_STATES and not b.get("billed_by")
+
+
+def paying_accounts(recs):
+    return [r for r in _real(recs) if _is_paying_account(r)]
+
+
 def _mrr_totals(recs):
     """Billed MRR once per subscription (mirror), list MRR, committed
     (trialing) and how much still falls back to list price (#15, #116)."""
@@ -3327,6 +3341,12 @@ def overview():
         month_start = _parse_utc(w["month_start_ct"])
         kpis = {
             "clients": len(real), "active": sum(1 for r in real if r["billing"]["status"] == "active"),
+            # The one paying-account figure (K-07): payer locations, active or
+            # past due — what the snapshot's paying_accounts and the history
+            # count. `active` stays the per-location status count.
+            "paying_accounts": len(paying_accounts(recs)),
+            # Accounts that have not cancelled: the denominator beside it.
+            "accounts_live": sum(1 for r in real if r["billing"]["status"] not in ENDED_STATES),
             "trial": sum(1 for r in real if r["billing"]["status"] == "trial"),
             "locations": len(recs), "brands": len(_brands(real)),
             "internal_accounts": sum(1 for r in recs if r["segment"] == "internal"),
@@ -6594,7 +6614,7 @@ def _series(recs, d, conn):
                                          if c and _ct(c) < end and r["billing"]["status"] in PAYING_STATES), 2)})
         accounts = [{"week_start": ws.date().isoformat(),
                      "paying": sum(1 for c, r in created if c and _ct(c) < ws + timedelta(days=7)
-                                   and r["billing"]["status"] in PAYING_STATES), "trial": None} for ws in weeks]
+                                   and _is_paying_account(r)), "trial": None} for ws in weeks]
         source = "reconstructed"
         note = ("Reconstructed from today's accounts: churned and downgraded accounts are missing from the past. "
                 "Real history starts when the daily snapshot runs.")
@@ -6779,7 +6799,7 @@ def snapshot_business_metrics(db_path=None, day=None):
 
         def ids(pred):
             return sorted(r["id"] for r in real if pred(r))
-        state = {"paying": ids(lambda r: r["billing"]["status"] in PAYING_STATES and not r["billing"]["billed_by"]),
+        state = {"paying": ids(_is_paying_account),
                  "trial": ids(lambda r: r["billing"]["status"] in ("trial", "pending", "")),
                  "past_due": ids(lambda r: r["billing"]["status"] == "past_due"),
                  "ended": ids(lambda r: r["billing"]["status"] in ENDED_STATES)}

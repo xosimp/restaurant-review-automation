@@ -247,3 +247,21 @@ def test_k06_a_covered_location_reads_its_groups_owner_and_activity(db_path):
     # A lone location with no login keeps reading none.
     lone = _rest(db_path, "Lone Diner", billing_status="active")
     assert next(r for r in admin_ops.clients()["clients"] if r["id"] == lone)["owner"] is None
+
+
+# ── K-07: one paying-account definition ─────────────────────────────────────
+
+def test_k07_paying_accounts_is_one_figure_everywhere(db_path):
+    for i in range(3):
+        _rest(db_path, f"Brand Loc{i}", billing_status="active", owner_email="grp@ex.com", location_group="Brand")
+    _rest(db_path, "Solo Diner", billing_status="past_due")
+    _rest(db_path, "Gone Grill", billing_status="canceled")
+    ov = admin_ops.overview()
+    k = ov["kpis"]
+    admin_ops.snapshot_business_metrics(db_path=db_path)
+    c = get_conn(db_path)
+    snap = dict(c.execute("SELECT paying_accounts FROM business_metrics_daily").fetchone())
+    c.close()
+    assert k["paying_accounts"] == snap["paying_accounts"] == 2      # one group payer + the past-due store
+    assert k["covered_locations"] == 2 and k["accounts_live"] == 4
+    assert k["active"] == 3                                           # the per-location status count is unchanged
