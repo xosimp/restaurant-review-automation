@@ -337,3 +337,31 @@ def test_every_page_read_shares_one_queue_of_two_and_navigation_empties_it():
     assert out["after"] == ["__stale__"] * 4 and out["left"] == 0
     r = _fn("route")
     assert r.index("++_seq") < r.index("readQueueDrop()")
+
+
+# ── C5: one helper each ─────────────────────────────────────────────────────
+
+def test_the_duplicated_helpers_are_one_each():
+    for gone in ("function readFailed(", "function rpPct(", "function aiPct(", "function isoMdy(", "function perDay("):
+        assert gone not in PAGE, gone
+    code = re.sub(r"//[^\n]*", "", PAGE)                     # comments may name what was folded
+    for gone in ("readFailed(", "rpPct(", "aiPct(", "isoMdy("):
+        assert gone not in code, gone
+    js = _js(("readErr", "sharePct", "parseTs", "durMin", "ago", "minsAgo", "agoWord", "dayKey", "mdy", "dayOf", "unknownV", "figOr")) + r"""
+    var iso = function(m){ return new Date(Date.now() - m * 60000).toISOString(); };
+    var d = {ok: true, unavailable: ['restaurants'], query_errors: [{query: 'ai_usage', error: 'timeout'}]};
+    console.log(JSON.stringify({
+      unavailable: readErr(d, ['restaurants']), q: readErr(d, ['ai_usage']), fine: readErr(d, ['email_log']),
+      fig: figOr(d, ['restaurants'], '12'), figOk: figOr(d, ['email_log'], '12'),
+      pct: [sharePct(0.1234), sharePct(null), sharePct(1)],
+      words: [agoWord(iso(0.2)), agoWord(iso(41020)), agoWord(null), minsAgo(180)],
+      key: dayKey(new Date(2026, 8, 5)), event: mdy(dayOf(String('2026-10-28' || '').slice(0, 10))), none: mdy(dayOf(''))
+    }));
+    """
+    out = _node(js)
+    assert out["unavailable"] == "restaurants: unavailable"          # the stricter rule: unavailable counts
+    assert out["q"] == "ai_usage: timeout" and out["fine"] is None
+    assert "unknown" in out["fig"] and out["figOk"] == "12"
+    assert out["pct"] == ["12.3%", "—", "100%"]
+    assert out["words"] == ["just now", "28d ago", "—", "3h ago"]
+    assert out["key"] == "2026-09-05" and out["event"] == "10/28/26" and out["none"] == "—"

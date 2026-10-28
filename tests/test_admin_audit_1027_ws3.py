@@ -212,7 +212,7 @@ def _st(**states):
             "systems": {n: {"state": states.get(n, "ok"), "reason": n + " reason", "since": None} for n in SYSTEMS}}
 
 
-VERDICT_FNS = ("okRes", "errText", "parseTs", "mdy", "fmtT", "fmtDT", "durMin", "ago", "agoWord", "esc_", "sysLabel",
+VERDICT_FNS = ("okRes", "errText", "parseTs", "mdy", "fmtT", "fmtDT", "durMin", "ago", "minsAgo", "agoWord", "esc_", "sysLabel",
                "systemsOf", "sysOf", "railHealth", "platformSystems", "healthRing", "healthCard", "opsStateKeep",
                "opsStateCached", "opsStateRead", "pulse")
 

@@ -88,7 +88,8 @@ def test_overview_figures_built_on_a_failed_read_say_unknown(page):
     assert "unknownV(" in helper
     # "Nothing needs you" is said only when the fleet was actually read.
     needs = _fn(page, "needsList")
-    i_fail, i_clear = needs.index("readFailed(d, ['restaurants'])"), needs.index("Nothing needs you")
+    # readErr since admin audit 10/27/26 (C5): one honest-read helper, the stricter one.
+    i_fail, i_clear = needs.index("readErr(d, ['restaurants'])"), needs.index("Nothing needs you")
     assert i_fail < i_clear
 
 

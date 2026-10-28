@@ -554,6 +554,9 @@ const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&a
 // for any name with an apostrophe (owner, 9/28/26).
 const jsq = (v) => esc(JSON.stringify(String(v == null ? '' : v)).slice(1, -1).replace(/'/g, '\\x27'));
 const fmtN = (n) => (n == null ? '—' : Number(n).toLocaleString());
+// A share (0.123) as a percent to one decimal, "12.3%"; "—" when unknown.
+// One helper (admin audit 10/27/26 C5: aiPct and rpPct were the same function twice).
+function sharePct(v){ return v == null ? '—' : (Math.round(v * 1000) / 10) + '%'; }
 const fmtUSD = (n, d) => (n == null ? '—' : '$' + Number(n).toLocaleString(undefined, {minimumFractionDigits: d == null ? 0 : d, maximumFractionDigits: d == null ? 0 : d}));
 // sqlite's datetime('now') stamps are UTC with a space; Python isoformat stamps are local with a T. Same rule as admin_ops._parse.
 function parseTs(s){ if(!s) return null; s=String(s).trim(); const utc = /Z$/.test(s) || (s.indexOf('T')<0 && s.indexOf(' ')>0); const t = Date.parse(s.replace(' ','T').replace(/Z$/,'') + (utc?'Z':'')); return isNaN(t) ? null : new Date(t); }
@@ -1072,15 +1075,11 @@ function isoWeekKey(d){
 function weekLabel(s){ const d = isoWeekDay(s); return d ? 'week of ' + mdy(d) : String(s || ''); }
 // "2026-08" as "Aug 2026" — a month, never read as the 26th of August.
 function monLabel(s){ const x = dayOf(s); return x ? x.toLocaleString('en-US', {month:'short'}) + ' ' + x.getFullYear() : String(s || ''); }
-// Which of a payload's failed reads touch these tables — fix round C labels
-// each failure with the table it read — so the figure built on them is
-// unknown rather than a confident zero.
-function readFailed(d, tables){
-  const errs = [].concat((d && d.errors) || [], (d && d.query_errors) || []);
-  const hit = errs.find(e => e && typeof e === 'object' && tables.indexOf(e.query) >= 0);
-  return hit ? (hit.query + ': ' + (hit.error || 'failed')) : null;
-}
-function figOr(d, tables, html){ const f = readFailed(d, tables); return f ? unknownV(f) : html; }
+// A figure built on reads that failed — fix round C labels each failure with
+// the table it read — is unknown rather than a confident zero. One helper
+// answers which (readErr, below; admin audit 10/27/26 C5: it replaced
+// readFailed, which missed `unavailable` sources and string errors).
+function figOr(d, tables, html){ const f = readErr(d, tables); return f ? unknownV(f) : html; }
 // Named systems, so "6/8" is countable rather than a score. Each is ok, warn
 // or bad by the SERVER's verdict (/admin/api/ops/state, W2/O1/V04 — the ring
 // used to judge them here with thresholds of its own and showed "All systems
@@ -1176,7 +1175,7 @@ function needsList(){
   const total = _ovTab === 'all' ? (d.issues_total != null ? d.issues_total : all.length) : segs.find(s=>s[0]===_ovTab)[2];
   return `<div class="ch" style="padding-bottom:14px"><div style="display:flex;align-items:center;gap:10px"><h2>Needs you</h2>${ic.critical?`<span class="cnt bad" title="Critical, customers and platform">${ic.critical}</span>`:''}</div>
     <div class="seg">${segs.map(s=>`<button class="${_ovTab===s[0]?'on':''}" onclick="_ovTab='${s[0]}';$('ov-needs').innerHTML=needsList()"${s[0]==='internal'?' title="Demo, test and internal accounts: never counted in attention or critical"':''}>${s[1]} <b>${s[2]}</b></button>`).join('')}</div></div>
-    <div class="lst" style="border-top:1px solid var(--line)">${pick.slice(0,5).map(needRow).join('') || `<div class="empty">${readFailed(d, ['restaurants']) ? "The issue list couldn't be read — see the warning above." : (_ovTab === 'internal' ? 'No issues on internal accounts.' : 'Nothing needs you. Everything is running.')}</div>`}</div>
+    <div class="lst" style="border-top:1px solid var(--line)">${pick.slice(0,5).map(needRow).join('') || `<div class="empty">${readErr(d, ['restaurants']) ? "The issue list couldn't be read — see the warning above." : (_ovTab === 'internal' ? 'No issues on internal accounts.' : 'Nothing needs you. Everything is running.')}</div>`}</div>
     ${total > 5 ? `<a class="more" href="#customers/support${_ovTab==='internal'?'?segment=internal':''}">Open the support queue · <span class="n">${total}</span> ${ico('chev','xs')}</a>` : ''}`;
 }
 function changesList(events){
@@ -1205,7 +1204,7 @@ async function overview(){
   if(!d || d.ok === false || d._status >= 400) throw new Error((d && d.error) || "The overview couldn't be read");
   _ov = d; _ovMsg = undefined; applyBadges(d);
   const k = d.kpis || {}, ic = d.issue_counts || {}, s = d.series || {}, issues = d.issues || [];
-  const fleetErr = readFailed(d, ['restaurants']), money = t => figOr(d, ['restaurants', 'stripe_subscriptions'], t);
+  const fleetErr = readErr(d, ['restaurants']), money = t => figOr(d, ['restaurants', 'stripe_subscriptions'], t);
   const mrr = (s.mrr || []).map(m => +m.mrr || 0), months = (s.mrr || []).map(m => dayOf(m.month));
   // "Up this month" only from real snapshots — a reconstruction can't say it.
   let mrrMove = null;
@@ -1801,7 +1800,7 @@ async function onboarding(){
       <div class="steps">${left.slice(0,2).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px" title="${esc(left.slice(2).map(s=>s.label).join(' · '))}">${left.length>2?'+'+(left.length-2)+' more to go · ':''}<span class="ok">✓</span> ${done.length} done</div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">${bill(r.status)}${r.owner_hid_card?'<span class="chip" title="The owner hid their setup card; this stays until the steps are done">card hidden by owner</span>':''}${r.deletion_due?'<span class="chip bad">closing</span>':''}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto"><button class="btn s w" onclick="resendWelcome(${r.id},'${jsq(r.name)}','${jsq(r.owner_email||'')}')">Resend welcome</button>${r.status!=='active'&&!r.billed_by?`<button class="btn s w" onclick="resendPayment(${r.id},'${jsq(r.name)}','${jsq(r.status||'')}','${jsq(r.owner_email||'')}')">Payment link</button>`:''}<button class="btn s w" onclick="openSetup(${r.id})">Setup</button><a class="btn s g" href="#client/${r.id}?tab=billing">Billing</a><a class="btn s g w" href="/admin/client-settings/${r.id}">Settings</a></div></div>`; }).join('')}</div>`
-    : `<div class="card empty">${readFailed(d, ['restaurants']) ? 'Onboarding is unknown — the fleet couldn\'t be read.' : 'Everyone in service is set up.'}</div>`);
+    : `<div class="card empty">${readErr(d, ['restaurants']) ? 'Onboarding is unknown — the fleet couldn\'t be read.' : 'Everyone in service is set up.'}</div>`);
   bulkPartners();
 }
 
@@ -1938,7 +1937,7 @@ async function issues(qs){
         <select aria-label="Sort" onchange="_ssort=this.value;_spage=1;issues()">${[['severity','Most severe first'],['age','Oldest first'],['restaurant','By restaurant']].map(x=>`<option value="${x[0]}" ${_ssort===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
         <label class="search-in" style="width:220px">${ico('search','s')}<input placeholder="Find an issue or client" value="${esc(_sq)}" oninput="_sq=this.value;_spage=1;clearTimeout(window._sqt);window._sqt=setTimeout(()=>{issues().then(()=>{const i=V().querySelector('.search-in input');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}});},250)"></label>
       </div></div>
-    <section class="card" style="overflow:hidden"><div class="lst">${(d.items||[]).map(needRow).join('') || `<div class="empty">${readFailed(d,['restaurants'])?'Unknown — the fleet couldn\'t be read.':'Nothing needs attention here.'}</div>`}</div>${pager(d.page, d.pages, d.total, 'issuesPage', 'issues')}</section>
+    <section class="card" style="overflow:hidden"><div class="lst">${(d.items||[]).map(needRow).join('') || `<div class="empty">${readErr(d,['restaurants'])?'Unknown — the fleet couldn\'t be read.':'Nothing needs attention here.'}</div>`}</div>${pager(d.page, d.pages, d.total, 'issuesPage', 'issues')}</section>
     <div class="dim">${asOf(d)}</div>`;
 }
 function issuesPage(n){ _spage = n; issues(); }
@@ -2180,7 +2179,7 @@ function cData(c, d){
     <section class="card" style="padding:16px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span class="ico ${g.source==='none'?'warn':'good'}">${ico('refresh')}</span><div style="flex:1;min-width:240px;display:flex;flex-direction:column;gap:3px"><b>Review fetching</b><span class="muted" style="font-size:12.5px">${esc(fetching + why)}</span></div>
       ${canOn?`<button class="btn s p w" onclick="reviewsFetching(${c.id},'${jsq(c.name)}',true)">Turn on review fetching</button>`:''}${g.source==='places_sampled'?`<button class="btn s g w" onclick="reviewsFetching(${c.id},'${jsq(c.name)}',false)">Turn off</button>`:''}</section>
     <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2 title="Each feed's own sync health">Data sources</h2></div>
-      ${srcs.length ? table([{h:'Source',key:'source',cell:r=>`<b>${esc(r.source)}</b>${r.provider?' <span class="dim">'+esc(r.provider)+'</span>':''}`},{h:'Last good',key:'last_ok_at',cell:r=>`<span class="num">${r.last_ok_at?fmtDT(r.last_ok_at):'never'}</span>`},{h:'Failing',key:'consecutive_failures',r:true,cell:r=>r.consecutive_failures?`<span class="chip ${r.error_class==='auth'?'bad':'warn'}">${r.consecutive_failures} in a row</span>${r.first_failed_at?' <span class="dim">since '+fmtD(r.first_failed_at)+'</span>':''}`:'<span class="chip ok">ok</span>'},{h:'Next try',key:'next_retry_at',cell:r=>`<span class="num">${r.next_retry_at?fmtDT(r.next_retry_at):'—'}</span>`},{h:'Data through',key:'data_through',cell:r=>`<span class="num">${r.data_through?fmtD(r.data_through):'—'}</span>`},{h:'Last error',key:'last_error',wrap:true,cell:r=>r.last_error?`<span style="color:var(--red-t)">${esc(String(r.last_error).slice(0,160))}</span>`:''}], srcs, {id:'csrc-t'}) : `<div class="cb">${readFailed(d,['source_health'])?unknownV(readFailed(d,['source_health'])):'<span class="muted">No data-source history yet.</span>'}</div>`}</section>
+      ${srcs.length ? table([{h:'Source',key:'source',cell:r=>`<b>${esc(r.source)}</b>${r.provider?' <span class="dim">'+esc(r.provider)+'</span>':''}`},{h:'Last good',key:'last_ok_at',cell:r=>`<span class="num">${r.last_ok_at?fmtDT(r.last_ok_at):'never'}</span>`},{h:'Failing',key:'consecutive_failures',r:true,cell:r=>r.consecutive_failures?`<span class="chip ${r.error_class==='auth'?'bad':'warn'}">${r.consecutive_failures} in a row</span>${r.first_failed_at?' <span class="dim">since '+fmtD(r.first_failed_at)+'</span>':''}`:'<span class="chip ok">ok</span>'},{h:'Next try',key:'next_retry_at',cell:r=>`<span class="num">${r.next_retry_at?fmtDT(r.next_retry_at):'—'}</span>`},{h:'Data through',key:'data_through',cell:r=>`<span class="num">${r.data_through?fmtD(r.data_through):'—'}</span>`},{h:'Last error',key:'last_error',wrap:true,cell:r=>r.last_error?`<span style="color:var(--red-t)">${esc(String(r.last_error).slice(0,160))}</span>`:''}], srcs, {id:'csrc-t'}) : `<div class="cb">${readErr(d,['source_health'])?unknownV(readErr(d,['source_health'])):'<span class="muted">No data-source history yet.</span>'}</div>`}</section>
     <section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cd-intake"><h2>Invoice intake</h2>${skel(3)}</section>
     <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Modules</h2><a class="w" href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Turn modules on or off</a></div><div class="lst" style="border-top:1px solid var(--line)">${c.modules.map(m=>`<div class="li"><div class="tt"><b>${esc(m.label)}</b><span>${m.enabled?'on':'off'} · ${m.configured?'configured':'not configured'} · ${m.receiving?'receiving data':'no data coming in'}</span></div><span class="chip ${MOD[m.state]}">${MODL[m.state]}</span><span class="n muted" style="font-size:12.5px;width:140px;text-align:right">${m.last_data?fmtDT(m.last_data):'—'}</span></div>`).join('')}</div></section>
     <section class="grid g2">
@@ -2498,7 +2497,10 @@ function cMessages(c, d){
     after: () => lazy('cm-ai', () => aiClientHtml(c))};
 }
 function loginName(c, uid){ const l = (c.logins||[]).find(x=>x.id===uid); return l ? l.username : (uid == null ? '' : '#' + uid); }
-function dayKeysBack(n){ const out = []; for(let i = 0; i < n; i++){ const x = new Date(); x.setDate(x.getDate() - i); out.push([x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'), mdy(x)]); } return out; }
+// A local day as the server's "YYYY-MM-DD" — one helper for every day key
+// the page builds (C5) — and the last n days, newest first, [key, M/D/YY].
+function dayKey(x){ return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); }
+function dayKeysBack(n){ const out = []; for(let i = 0; i < n; i++){ const x = new Date(); x.setDate(x.getDate() - i); out.push([dayKey(x), mdy(x)]); } return out; }
 async function suppressionsHtml(c){
   const d = await need('/admin/api/suppressions?restaurant_id=' + c.id);
   const rows = d.suppressions || [];
@@ -2940,9 +2942,10 @@ async function apiAll(paths, limit){
 function fillUtcDays(rows, n){ const by = {}; (rows||[]).forEach(r => { by[r.day] = r; }); const out = [], t = new Date();
   for(let i=n-1;i>=0;i--){ const k = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()-i)).toISOString().slice(0,10); out.push(Object.assign({day:k}, by[k] || {})); }
   return out; }
-// Minutes since, as words: "just now" under a minute, never "0m ago".
-function agoWord(ts){ const a = ago(ts); return a === 'now' ? 'just now' : (a === '—' ? '—' : a + ' ago'); }
+// How long ago, as words — "just now" under a minute, never "0m ago" — from
+// minutes (minsAgo) or a timestamp (agoWord), one phrase on durMin (C5).
 function minsAgo(m){ return m == null ? '—' : (m < 1 ? 'just now' : durMin(m) + ' ago'); }
+function agoWord(ts){ var d = parseTs(ts); return d ? minsAgo((Date.now() - d) / 60000) : '—'; }
 function tsAt(v){ return typeof v === 'number' ? new Date(v*1000) : parseTs(v); }
 // Every write in these areas: a confirm that says what it does and names
 // the client or recipient, then a toast from the server's own answer — its
@@ -3060,7 +3063,6 @@ function opsRender(){
 // kept apart from the season file and laid over it on every load; the
 // restaurants that follow the series re-sync on the admin job pool. Each
 // save is audited, and so is the re-sync's outcome.
-function isoMdy(s){ if(!s || !/^\d{4}-\d{2}-\d{2}/.test(s)) return '—'; return (+s.slice(5,7)) + '/' + (+s.slice(8,10)) + '/' + s.slice(2,4); }
 async function opsEvents(){
   V().innerHTML = '<div class="sk blk"></div>';
   const d = await need('/admin/api/event-catalog');
@@ -3078,7 +3080,7 @@ async function opsEvents(){
         return `<tr data-ev="${e.id}" data-over="${esc(JSON.stringify(e.overrides || {}))}" oninput="evDirty(this)" onchange="evDirty(this)">
           <td class="muted">${esc(e.week || '')}</td>
           <td><b>${e.home_away === 'home' ? 'vs' : 'at'} ${esc(e.opponent || '')}</b>${e.is_primetime ? ' <span class="chip">prime time</span>' : ''}${over.length ? ` <span class="chip warn" title="Corrected here: ${esc(over.join(', '))}">corrected</span>` : ''}${e.needs_result ? ` <span class="chip warn" title="An if-necessary game whose date has passed: enter its result, or set it cancelled if it was not played. Until then its night stays out of every baseline and is not measured.">needs a result</span>` : ''}</td>
-          <td><input type="date" data-f="event_date" data-o="${esc(e.event_date || '')}" value="${esc(e.event_date || '')}" aria-label="Date"><span class="muted" style="font-size:12px;display:block">${esc(isoMdy(e.event_date))}</span></td>
+          <td><input type="date" data-f="event_date" data-o="${esc(e.event_date || '')}" value="${esc(e.event_date || '')}" aria-label="Date"><span class="muted" style="font-size:12px;display:block">${esc(mdy(dayOf(String(e.event_date || '').slice(0, 10))))}</span></td>
           <td><input data-f="kickoff_local" data-o="${esc(e.kickoff_local || '')}" value="${esc(e.kickoff_local || '')}" placeholder="19:15" size="5" aria-label="Kickoff, 24-hour local"></td>
           <td><input data-f="broadcast" data-o="${esc(e.broadcast || '')}" value="${esc(e.broadcast || '')}" size="7" aria-label="Broadcast"></td>
           <td><select data-f="status" data-o="${esc(e.status || '')}" aria-label="Status">${st}</select></td>
@@ -3746,7 +3748,6 @@ var _rp = {health: '', type: '', anomaly: false, q: '', after: [], open: null};
 var RP_TONE = {auth: 'bad', failing: 'bad', stale: 'warn', watch: 'warn', onboarding: 'neu', ok: 'good'};
 var RP_WORD = {auth: 'Token refused', failing: 'Failing', stale: 'Stale', watch: 'Watch', onboarding: 'Onboarding', ok: 'OK'};
 var RP_CAL = {archived: 'var(--green)', restated: 'var(--green-t)', missing: 'var(--red)', failed: 'var(--red)', suspect: 'var(--amber)', recon_gap: 'var(--amber)', pay_gap: 'var(--amber)', none: 'var(--line)'};
-function rpPct(v){ return v == null ? '—' : (Math.round(v * 1000) / 10) + '%'; }
 function rpQuery(){
   var p = ['limit=50'];
   if(_rp.health) p.push('health=' + encodeURIComponent(_rp.health));
@@ -3765,19 +3766,19 @@ function rpSearch(ev){ if(ev && ev.key !== 'Enter') return; var el = $('rp-q'); 
 // cell links — they would only reopen this page.
 function rpStrip(f){
   var b = f.breaker || {}, used = f.backfill_cap ? fmtN(f.backfill_used) + ' / ' + fmtN(f.backfill_cap) : fmtN(f.backfill_used || 0);
-  var top = stripCell('', 'alert', f.failing ? 'bad' : 'good', 'Failing', rpPct(f.failing_share), fmtN(f.failing || 0) + ' stores')
+  var top = stripCell('', 'alert', f.failing ? 'bad' : 'good', 'Failing', sharePct(f.failing_share), fmtN(f.failing || 0) + ' stores')
     + stripCell('', 'key', f.auth_failed ? 'bad' : 'good', 'Token refused', fmtN(f.auth_failed || 0), fmtN(f.auth_buckets || 0) + ' tokens')
     + stripCell('', 'clock', f.stale_48h ? 'warn' : 'good', 'Stale 48h+', fmtN(f.stale_48h || 0), 'archive or labor')
     + stripCell('', 'alert', f.stores_with_gaps ? 'warn' : 'good', 'Archive gaps', fmtN(f.stores_with_gaps || 0), 'stores, 14 days')
     + stripCell('', 'clock', (f.queue_failed_24h || f.queue_expired_24h) ? 'warn' : 'good', 'Queue failed / expired', fmtN(f.queue_failed_24h || 0) + ' / ' + fmtN(f.queue_expired_24h || 0), 'RPOWER rows, 24h')
     + stripCell('', 'refresh', b.state === 'closed' ? 'good' : 'bad', 'Breaker', esc(b.state || 'unknown'), b.state === 'closed' ? 'requests flowing' : esc(b.reason || ''));
   var more = stripCell('', 'plug', 'neu', 'Connected', fmtN(f.connected || 0), 'live stores')
-    + stripCell('', 'gauge', 'neu', 'Coverage p50', rpPct(f.coverage_p50), '90 days, p10 ' + rpPct(f.coverage_p10))
+    + stripCell('', 'gauge', 'neu', 'Coverage p50', sharePct(f.coverage_p50), '90 days, p10 ' + sharePct(f.coverage_p10))
     + stripCell('', 'alert', (f.recon_nights_7d || f.pay_gap_nights_7d) ? 'warn' : 'good', 'Recon / pay gaps', fmtN(f.recon_nights_7d || 0) + ' / ' + fmtN(f.pay_gap_nights_7d || 0), 'nights, 7 days')
-    + stripCell('', 'gauge', (f.s429_share > 0.01 || f.skipped_share > 0.05) ? 'warn' : 'good', 'Requests 24h', fmtN(f.requests_24h || 0), '429 ' + rpPct(f.s429_share) + ' · paused ' + rpPct(f.skipped_share))
+    + stripCell('', 'gauge', (f.s429_share > 0.01 || f.skipped_share > 0.05) ? 'warn' : 'good', 'Requests 24h', fmtN(f.requests_24h || 0), '429 ' + sharePct(f.s429_share) + ' · paused ' + sharePct(f.skipped_share))
     + stripCell('', 'plug', 'neu', 'Backfill slots', used, 'in use')
     + rpBudgetCell(f.capacity || {})
-    + stripCell('', 'card', 'neu', 'Unnamed sales types', rpPct(f.unknown_sales_share_7d), '$' + fmtN(Math.round(f.unknown_sales_7d || 0)) + ', 7 days')
+    + stripCell('', 'card', 'neu', 'Unnamed sales types', sharePct(f.unknown_sales_share_7d), '$' + fmtN(Math.round(f.unknown_sales_7d || 0)) + ', 7 days')
     + stripCell('', 'check', 'neu', 'Recipe coverage p50', f.recipe_coverage_p50 == null ? '—' : (Math.round(f.recipe_coverage_p50 * 10) / 10) + '%', fmtN(f.recipe_coverage_stores || 0) + ' stores measured');
   return '<section class="card strip">' + top + '</section>'
     + '<details class="card"><summary>More fleet figures · <span class="n">8</span></summary><div class="strip" style="border-top:1px solid var(--line)">' + more + '</div></details>';
@@ -3798,7 +3799,7 @@ function rpRow(r){
     + '<div class="tt"><b>' + clientLink(r.restaurant_id, r.name || ('#' + r.restaurant_id)) + (r.is_demo ? ' <span class="chip">demo</span>' : '') + '</b>'
     + '<span>' + (bad.length ? 'Behind: ' + esc(bad.join(', ')) + ' · ' : '') + esc((r.reasons || [])[0] || 'Every data type current') + '</span></div>'
     + '<span class="n muted" style="width:90px;flex-shrink:0;text-align:right;font-size:12.5px" title="last labor pull · last archived night">' + (r.last_labor_ok ? ago(r.last_labor_ok) : '—') + ' · ' + (r.last_archive_night ? esc(mdy(new Date(r.last_archive_night + 'T12:00:00'))) : '—') + '</span>'
-    + '<span class="n" style="width:64px;flex-shrink:0;text-align:right" title="settled coverage, 90 days">' + rpPct(r.coverage_90d) + '</span>'
+    + '<span class="n" style="width:64px;flex-shrink:0;text-align:right" title="settled coverage, 90 days">' + sharePct(r.coverage_90d) + '</span>'
     + '<span class="n" style="width:44px;flex-shrink:0;text-align:right;' + (r.gaps_14d ? 'color:var(--red-t)' : '') + '" title="nights missing, 14 days">' + fmtN(r.gaps_14d || 0) + '</span>'
     + '<span class="n muted" style="width:80px;flex-shrink:0;text-align:right;font-size:12.5px" title="requests · errors, 24h">' + fmtN(r.req_24h || 0) + ' · ' + fmtN(r.err_24h || 0) + '</span>'
     + '<span style="display:flex;gap:6px;width:110px;flex-shrink:0;justify-content:flex-end"><button class="cbtn btn s w" onclick="event.stopPropagation();rpowerOpen(' + r.restaurant_id + ',\'' + jsq(r.name || '') + '\')">Token &amp; sync</button></span>'
@@ -4432,7 +4433,7 @@ function anaHistory(bm, bmE){
   const by = {}; got.forEach(r => { by[r.date] = r; });
   const rows = [], end = dayOf(got[got.length - 1].date);
   for(let d = dayOf(got[0].date); d && end && d <= end; d.setDate(d.getDate() + 1)){
-    const k = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const k = dayKey(d);
     rows.push(by[k] || {date: k});
   }
   const last = got[got.length - 1], dl = p => mdy(dayOf(p.date));
@@ -4904,7 +4905,6 @@ function expPinForm(){
 // Dismiss, and the override editor. Written in ES5 (CLAUDE.md: inline JS is
 // ES5) — var, function and string joins — beside the page's older code.
 var _airTriggers = {};
-function aiPct(v){ return v == null ? '—' : (Math.round(v * 1000) / 10) + '%'; }
 function aiMs(v){ return v == null ? '—' : (v >= 1000 ? (Math.round(v / 100) / 10) + ' s' : Math.round(v) + ' ms'); }
 function aiUsd(v){ return v == null ? '—' : '$' + (Math.abs(v) < 0.1 ? Number(v).toFixed(4) : Number(v).toFixed(2)); }
 function aiNum(v){ return '<span class="num">' + v + '</span>'; }
@@ -4918,7 +4918,7 @@ function aiField(name, p){
   if(name === 'batch') return v ? 'yes' : 'no';
   if(name === 'canary') return v ? 'canary restaurants first' : 'every restaurant';
   if(name === 'reviewer_unattended') return v ? esc(v) : 'same as reviewer';
-  if(name === 'shadow_rate') return aiPct(v);
+  if(name === 'shadow_rate') return sharePct(v);
   return esc(v == null ? '—' : String(v));
 }
 var AI_FIELD_LABEL = {ladder: 'Ladder', escalate_on: 'Escalates on', max_escalations: 'Escalations', reviewer: 'Reviewer',
@@ -4942,9 +4942,9 @@ function aiStatsTable(w){
     {h:'$ / run', key:'cost_per_run', r:true, cell:function(r){ return aiNum(aiUsd(r.cost_per_run)); }},
     {h:'p50', key:'p50_ms', r:true, cell:function(r){ return aiNum(aiMs(r.p50_ms)); }},
     {h:'p95', key:'p95_ms', r:true, cell:function(r){ return aiNum(aiMs(r.p95_ms)); }},
-    {h:'Escalated', key:'escalation_rate', r:true, cell:function(r){ return aiNum(aiPct(r.escalation_rate)); }},
-    {h:'Passed', key:'pass_rate', r:true, cell:function(r){ return aiNum(aiPct(r.pass_rate)); }},
-    {h:'Accepted', key:'acceptance', r:true, cell:function(r){ return r.acceptance == null ? '<span class="dim">—</span>' : aiNum(aiPct(r.acceptance)) + ' <span class="dim">n=' + r.outcomes + '</span>'; }},
+    {h:'Escalated', key:'escalation_rate', r:true, cell:function(r){ return aiNum(sharePct(r.escalation_rate)); }},
+    {h:'Passed', key:'pass_rate', r:true, cell:function(r){ return aiNum(sharePct(r.pass_rate)); }},
+    {h:'Accepted', key:'acceptance', r:true, cell:function(r){ return r.acceptance == null ? '<span class="dim">—</span>' : aiNum(sharePct(r.acceptance)) + ' <span class="dim">n=' + r.outcomes + '</span>'; }},
     {h:'Quality', key:'quality', r:true, cell:function(r){ return r.quality == null ? '<span class="dim">—</span>' : aiNum(r.quality.toFixed(2)); }},
     {h:'Shadow score', key:'shadow_score', r:true, cell:function(r){ return r.shadow_score == null ? '<span class="dim">—</span>' : aiNum(r.shadow_score.toFixed(2)); }}
   ], w.stats, {id:'air-' + w.workflow, sort:'runs'});
@@ -4965,7 +4965,7 @@ function aiRecRow(r){
 }
 function aiRow(w){
   var t = w.totals, o = w.override;
-  var figs = t == null ? unknownV('ai_runs') : (t.runs ? aiNum(fmtN(t.runs)) + ' runs · ' + aiNum(aiUsd(t.cost_per_run)) + ' a run · ' + aiNum(aiPct(t.pass_rate)) + ' passed · ' + aiNum(aiPct(t.escalation_rate)) + ' escalated' : 'no runs in 28 days');
+  var figs = t == null ? unknownV('ai_runs') : (t.runs ? aiNum(fmtN(t.runs)) + ' runs · ' + aiNum(aiUsd(t.cost_per_run)) + ' a run · ' + aiNum(sharePct(t.pass_rate)) + ' passed · ' + aiNum(sharePct(t.escalation_rate)) + ' escalated' : 'no runs in 28 days');
   var meta = o ? '<span class="ink2" style="font-size:12.5px">Override by ' + esc(o.updated_by || 'admin') + ' on ' + fmtD(o.updated_at) + (o.reason ? ' — ' + esc(o.reason) : '') + '</span>' : '';
   var invalid = o && o.invalid ? '<div class="warnline" role="status">' + ico('alert','xs') + ' The stored override no longer validates (' + esc(o.invalid) + ') — the defaults run until it is edited.</div>' : '';
   return '<div class="li click" onclick="toggleRow(this)"><span style="width:96px;flex-shrink:0" class="dim">' + esc(w.agent) + '</span>'
