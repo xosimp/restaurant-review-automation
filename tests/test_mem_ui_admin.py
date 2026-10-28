@@ -370,13 +370,14 @@ def test_backfilled_weeks_show_grey_and_a_pattern_record_reads_week_by_week(page
 def _brand_js(page):
     ids = ("b-name", "b-color", "b-logo", "b-sm", "b-concept", "b-own", "b-opened", "b-bar", "b-excl", "b-lov",
            "b-lhist", "b-lhist-l", "b-learn", "b-lhint", "b-status", "b-load", "b-save")
-    # brandSave sends once per click (admin audit 10/27/26, C11): oneAtATime.
+    # brandSave sends once per click (admin audit 10/27/26, C11): oneAtATime; its
+    # status line says its outcome in colour (V07): statusSay.
     return (_js(page, ("learnStatus", "brandLearnInclude", "brandLearnHint", "brandReset", "brandFill", "brandSave",
-                       "oneAtATime"),
+                       "oneAtATime", "statusSay"),
                 ("BRAND_FIELDS", "PROFILE_FIELDS"))
             + "var _inflight = {};\n"
             + "let _bRid = 5, _b0 = null; const els = {}; const posts = [];\n"
-            + "const $ = (id) => { if(!els[id]) els[id] = {value:'', checked:false, hidden:false, textContent:'', innerHTML:''}; return els[id]; };\n"
+            + "const $ = (id) => { if(!els[id]) els[id] = {value:'', checked:false, hidden:false, textContent:'', innerHTML:'', style:{}}; return els[id]; };\n"
             + json.dumps(list(ids)) + ".forEach($);\n"
             + "let answers = []; async function post(u, b){ posts.push([u, JSON.parse(JSON.stringify(b))]); return answers.shift(); }\n")
 

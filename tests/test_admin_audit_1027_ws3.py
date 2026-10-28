@@ -70,6 +70,8 @@ function El(id){ this.id = id; this.innerHTML = ''; this.textContent = ''; this.
 El.prototype.querySelector = function(){ return null; };
 El.prototype.querySelectorAll = function(){ return []; };
 El.prototype.scrollIntoView = function(){};
+El.prototype.setAttribute = function(k, v){ this['@' + k] = String(v); };
+El.prototype.removeAttribute = function(k){ delete this['@' + k]; };
 function $(id){ return _els[id] || null; }
 function mk(id){ _els[id] = new El(id); return _els[id]; }
 function toast(msg, tone){ _toasts.push([msg, tone || '']); }
@@ -496,19 +498,20 @@ def test_a_job_started_from_needs_you_is_followed_and_its_failure_said(page):
 
 
 def test_pos_sync_now_is_followed_and_the_modal_says_how_it_went(page):
-    js = _page_js(page, ("okRes", "errText", "say", "jobSaid", "jobUrl", "posSyncFollow", "toastSync", "rpowerSync")) + r"""
+    js = _page_js(page, ("okRes", "errText", "say", "jobSaid", "jobUrl", "statusSay", "posSyncFollow", "toastSync", "rpowerSync")) + r"""
     var _tRid = 5, _rpRid = 6; mk('m-toast-status'); mk('m-rpower-status');
     function post(path){ return Promise.resolve({ok: true, _status: 200, job_id: path.indexOf('toast') >= 0 ? 't1' : 'r1', message: 'Sync started.'}); }
     function pollJob(url){ return Promise.resolve(url.indexOf('t1') >= 0 ? {ok: true, state: 'ok', status: 'done', _status: 200}
                                                              : {ok: false, state: 'failed', result: {error: 'RPOWER: store offline'}, status: 'error', _status: 200}); }
     (async function(){
       await toastSync(); await rpowerSync();
-      console.log(JSON.stringify({t: $('m-toast-status').textContent, r: $('m-rpower-status').textContent, toasts: _toasts}));
+      console.log(JSON.stringify({t: $('m-toast-status').textContent, r: $('m-rpower-status').textContent, toasts: _toasts,
+                                   tc: $('m-toast-status').style.color, rc: $('m-rpower-status').style.color}));
     })();
     """
     out = _node(js)
-    assert out["t"] == "✓ Toast sync finished"
-    assert out["r"] == "✕ RPOWER: store offline"
+    assert out["t"] == "Toast sync finished" and out["tc"] == "var(--green-t)"      # said in colour (V07)
+    assert out["r"] == "RPOWER: store offline" and out["rc"] == "var(--red-t)"
     assert ["RPOWER: store offline", "bad"] in out["toasts"]
 
 
@@ -577,7 +580,7 @@ def test_attaching_a_stripe_customer_says_the_reconcile_result(page):
 
 def test_the_small_wiring_defects(page):
     ev = _fn(page, "opsEvents")
-    assert 'class="btn p s w" onclick="evSave(' in ev and 'class="btn g s w" title=' in ev       # W15-a: support never sees them
+    assert 'class="btn s w ev-save" onclick="evSave(' in ev and 'class="btn g s w" title=' in ev  # W15-a: support never sees them
     js = _page_js(page, ("principalLogin",)) + r"""
     console.log(JSON.stringify([
       principalLogin([{id: 3, is_active: 1, role: 'manager', email: 'm@x'}, {id: 7, is_active: 1, role: null, email: 'o@x'}]).id,
@@ -611,7 +614,7 @@ def test_reinstate_is_offered_only_where_the_server_allows_it_and_names_the_clie
 
 
 def test_the_menu_page_an_extraction_read_is_saved_with_the_notes(page):
-    js = _page_js(page, ("okRes", "errText", "mnCountText", "mnCount", "mnSay", "mnSave", "mnUse"),
+    js = _page_js(page, ("okRes", "errText", "busyBtn", "mnCountText", "mnCount", "mnSay", "mnSave", "mnUse"),
                   ("fmtN", "MENU_NOTES_MAX", "_mn")) + r"""
     var posted = [];
     function post(path, body){ posted.push(body); return Promise.resolve({ok: true, _status: 200, version: 8, saved: {menu_notes: body.menu_notes, menu_url: body.menu_url}}); }
