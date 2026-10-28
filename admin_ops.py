@@ -7594,7 +7594,17 @@ def _slim(r):
             # conversion, or paying (or paused) now. A trial that never paid
             # is not a retained customer.
             "converted_at": b.get("converted_at"),
-            "ever_paid": bool(b.get("converted_at")) or b["status"] in PAYING_STATES + ("paused",)}
+            "ever_paid": bool(b.get("converted_at")) or b["status"] in PAYING_STATES + ("paused",),
+            # The fleet list's Data cell (admin audit 10/27/26 O9): the POS
+            # by pos_health's own state, else the review fetch's age — what
+            # admin.html's _fleetDataCell reads.
+            "freshness": _slim_freshness(r)}
+
+
+def _slim_freshness(r):
+    f = r.get("freshness") or {}
+    return {"pos_state": f.get("pos_state") or None, "reviews": f.get("reviews") or None,
+            "pos": f.get("pos") or None}
 
 
 def clients_page(q=None, health=None, segment="customer", status=None, sort="name", page=1, per_page=50,
@@ -7847,11 +7857,73 @@ def queues():
     return {"ok": True, "queues": out, **_merge_problems(bucket)}
 
 
-def data_sources(segment="customer", page=None, per_page=None, failing=False, source=None):
+DATA_SOURCE_STATES = ("failing", "stale", "ok")
+_DS_STATE_RANK = {s: i for i, s in enumerate(DATA_SOURCE_STATES)}
+
+
+def source_stale_after_hours(source):
+    """How long a data source may go without a good read before it is stale
+    (admin audit 10/27/26 O9) — from data_health's own clock: the longest
+    gap between the scheduler's refreshes of it (data_health.SLOTS, held in
+    step with the scheduler by tests/test_data_health_owner.py; a weekly
+    slot is 168 hours, and the reviews gap is the longer of the regular and
+    the quiet Places-only slots, so a quiet store is never called stale on
+    the regular clock) plus data_health.CADENCE_SLACK_HOURS. None for a
+    source nothing refreshes on a clock — weather is fetched on read,
+    invoices arrive by email, counts and deliveries are the owner's — which
+    is therefore never stale."""
+    try:
+        import data_health as _dh_c
+        slot = (_dh_c.SLOTS or {}).get(source)
+        if not slot:
+            return None
+        hours, weekday = slot
+        if weekday is not None:
+            gap = 168
+        else:
+            sets = [tuple(hours)]
+            if source == "reviews":
+                try:
+                    import fetcher as _f_c
+                    sets.append(tuple(_f_c.QUIET_SLOTS))
+                except Exception as e:
+                    log.warning("quiet review slots unreadable: %s", e)
+            gap = 0
+            for hs in sets:
+                hs = sorted(int(h) for h in hs)
+                if not hs:
+                    continue
+                gaps = [b - a for a, b in zip(hs, hs[1:])] + [24 - hs[-1] + hs[0]]
+                gap = max(gap, max(gaps))
+        return float(gap + _dh_c.CADENCE_SLACK_HOURS) if gap else None
+    except Exception as e:
+        log.warning("data source cadence unreadable for %s: %s", source, e)
+        return None
+
+
+def _source_state(failures, last_ok_at, stale_after):
+    """failing | stale | ok: stale is zero failures but the last good read
+    older than the source's stale_after hours (O9) — a feed that stopped
+    attempting read "ok" beside the healthy rows. A source with no known
+    cadence, or no good read on record, is never stale."""
+    if failures:
+        return "failing"
+    if stale_after is not None:
+        age = _age_hours(last_ok_at, "UTC")
+        if age is not None and age > stale_after:
+            return "stale"
+    return "ok"
+
+
+def data_sources(segment="customer", page=None, per_page=None, failing=False, source=None, state=None):
     """Every data source's sync state per restaurant (#46): failures in a
-    row, since when, the last error, the next retry — failing first. With
-    `page` the server pages (Audit #23 A6-15) and filters (`failing`, one
-    `source`); the summary is over the full set."""
+    row, since when, the last error, the next retry. Each row's `state` is
+    failing | stale | ok (O9: stale = no failures but no good read within
+    its cadence, `stale_after_hours`), sorted failing, then stale (oldest
+    good read first), then ok. With `page` the server pages (Audit #23
+    A6-15) and filters (`state` failing|stale, `failing` — the same as
+    state=failing — and one `source`); the summary is over the full set and
+    counts `failing` and `stale` per source."""
     with _collecting() as bucket:
         recs, d, meta = _records_cached()
     try:
@@ -7859,32 +7931,46 @@ def data_sources(segment="customer", page=None, per_page=None, failing=False, so
         labels = getattr(_dh, "OWNER_LABEL", {}) or {}
     except Exception:
         labels = {}
-    rows, summary = [], {}
+    rows, summary, cadence = [], {}, {}
     for rec in recs:
         if segment != "all" and rec["segment"] != segment:
             continue
         for s in (d.get("source_health") or {}).get(rec["id"], []):
             n = int(s.get("consecutive_failures") or 0)
+            if s["source"] not in cadence:
+                cadence[s["source"]] = source_stale_after_hours(s["source"])
+            st = _source_state(n, s.get("last_ok_at"), cadence[s["source"]])
             rows.append({"restaurant_id": rec["id"], "restaurant": rec["name"], "brand": rec["brand"],
                          "source": s["source"], "label": labels.get(s["source"], s["source"]),
-                         "provider": s.get("provider"), "failures": n, "state": "failing" if n else "ok",
+                         "provider": s.get("provider"), "failures": n, "state": st,
+                         "stale_after_hours": cadence[s["source"]],
                          "since": _iso_z(s.get("first_failed_at"), "UTC"), "last_error": (s.get("last_error") or "")[:200],
                          "error_class": s.get("error_class"), "next_retry_at": _iso_z(s.get("next_retry_at"), "UTC"),
                          "last_ok_at": _iso_z(s.get("last_ok_at"), "UTC"),
                          "last_attempt_at": _iso_z(s.get("last_attempt_at"), "UTC"), "data_through": s.get("data_through")})
             agg = summary.setdefault(s["source"], {"source": s["source"], "label": labels.get(s["source"], s["source"]),
-                                                   "restaurants": 0, "failing": 0})
+                                                   "restaurants": 0, "failing": 0, "stale": 0,
+                                                   "stale_after_hours": cadence[s["source"]]})
             agg["restaurants"] += 1
-            agg["failing"] += 1 if n else 0
-    rows.sort(key=lambda x: (-x["failures"], (x["restaurant"] or "").lower(), x["source"]))
+            agg["failing"] += 1 if st == "failing" else 0
+            agg["stale"] += 1 if st == "stale" else 0
+    rows.sort(key=lambda x: (_DS_STATE_RANK[x["state"]], -x["failures"],
+                             (x["last_ok_at"] or "") if x["state"] == "stale" else "",
+                             (x["restaurant"] or "").lower(), x["source"]))
     real = _real(recs)
     paging = {}
+    want = (state or "").strip().lower() or ("failing" if failing else None)
+    if want not in (None, "failing", "stale"):
+        want = None
     if page is not None:
-        sel = [r for r in rows if (not failing or r["failures"]) and (not source or r["source"] == source)]
+        sel = [r for r in rows if (not want or r["state"] == want) and (not source or r["source"] == source)]
         rows, pg, pp, total, pages = _page(sel, page, per_page)
-        paging = {"page": pg, "per_page": pp, "total": total, "pages": pages}
-    return {"ok": True, "rows": rows, **paging,
-            "summary": sorted(summary.values(), key=lambda x: (-x["failing"], x["source"])),
+        paging = {"page": pg, "per_page": pp, "total": total, "pages": pages, "state": want}
+    return {"ok": True, "rows": rows, **paging, "states": list(DATA_SOURCE_STATES),
+            "state_counts": {"failing": sum(a["failing"] for a in summary.values()),
+                             "stale": sum(a["stale"] for a in summary.values()),
+                             "ok": sum(a["restaurants"] - a["failing"] - a["stale"] for a in summary.values())},
+            "summary": sorted(summary.values(), key=lambda x: (-x["failing"], -x["stale"], x["source"])),
             "data_health_median": _median([r["data_health"]["overall"] for r in real
                                            if r["data_health"].get("overall") is not None and not r["data_health"].get("stale")]),
             "stale_snapshots": sum(1 for r in real if r["data_health"].get("stale")),

@@ -6929,14 +6929,17 @@ def admin_api_pos_traffic(current_user):
 @admin_bp.route("/admin/api/data-sources")
 @admin_required
 def admin_api_data_sources(current_user):
-    """Every data source's sync state per restaurant, failing first (#46),
-    paged by the server (Audit #23 A6-15). ?segment=customer|internal|all
-    &page= &per_page= &failing=1 &source="""
+    """Every data source's sync state per restaurant — failing, then stale
+    (no failures, but no good read within its cadence: admin audit 10/27/26
+    O9), then ok (#46) — paged by the server (Audit #23 A6-15).
+    ?segment=customer|internal|all &page= &per_page= &state=failing|stale
+    &failing=1 (the same as state=failing) &source="""
     return jsonify(**_admin_ops_c.data_sources(segment=request.args.get("segment", "customer"),
                                                page=request.args.get("page", 1, type=int),
                                                per_page=request.args.get("per_page", 50, type=int),
                                                failing=request.args.get("failing") == "1",
-                                               source=request.args.get("source") or None))
+                                               source=request.args.get("source") or None,
+                                               state=request.args.get("state") or None))
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/timeline")

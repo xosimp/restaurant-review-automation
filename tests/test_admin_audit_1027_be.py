@@ -190,3 +190,62 @@ def test_p11_the_row_reads_are_masked_for_support_like_their_pages(app, db_path)
     r = s.get("/admin/api/emails/rows?status=undeliverable")
     assert r.status_code == 200 and r.headers.get("X-Redacted") == "support"
     assert "a@ex.com" not in r.get_data(as_text=True), "an address is masked for a support login"
+
+
+# ── O9 contract 4: data sources read failing | stale | ok ────────────────────
+
+def _source(db_path, rid, source, failures=0, ok_hours_ago=None):
+    _x(db_path, "INSERT INTO source_health (restaurant_id, source, provider, last_attempt_at, last_ok_at, "
+                "consecutive_failures, last_error) VALUES (?,?,?,?,?,?,?)",
+       (rid, source, "test", _utc(utc_now()), _utc(utc_now() - timedelta(hours=ok_hours_ago))
+        if ok_hours_ago is not None else None, failures, "boom" if failures else None))
+
+
+def test_o9_a_source_with_no_good_read_in_its_cadence_reads_stale_not_ok(db_path):
+    rid = _rid(db_path, "Feed Grill")
+    _source(db_path, rid, "pos", failures=2, ok_hours_ago=40)
+    _source(db_path, rid, "labor", ok_hours_ago=30)           # nightly: stale past 24h + 2h slack
+    _source(db_path, rid, "competitor", ok_hours_ago=200)     # weekly: stale past 168h + 2h
+    _source(db_path, rid, "reviews", ok_hours_ago=14)         # overnight gap: not stale at 14h
+    _source(db_path, rid, "weather", ok_hours_ago=24 * 5)     # fetched on read: never stale
+    _source(db_path, rid, "sales", ok_hours_ago=2)
+    out = admin_ops.data_sources()
+    st = {r["source"]: r["state"] for r in out["rows"]}
+    assert st == {"pos": "failing", "labor": "stale", "competitor": "stale", "reviews": "ok", "weather": "ok",
+                  "sales": "ok"}
+    assert [r["source"] for r in out["rows"]][:3] == ["pos", "competitor", "labor"], \
+        "failing, then stale (oldest good read first), then ok"
+    by = {s["source"]: s for s in out["summary"]}
+    assert by["labor"]["stale"] == 1 and by["pos"]["failing"] == 1 and by["pos"]["stale"] == 0
+    assert out["state_counts"] == {"failing": 1, "stale": 2, "ok": 3}
+    rows = {r["source"]: r for r in out["rows"]}
+    assert rows["labor"]["stale_after_hours"] == 26.0 and rows["weather"]["stale_after_hours"] is None
+    assert rows["reviews"]["stale_after_hours"] == 18.0, "the quiet Places-only slots' longer gap"
+    # Paged and filtered by the server.
+    page = admin_ops.data_sources(page=1, state="stale")
+    assert [r["source"] for r in page["rows"]] == ["competitor", "labor"] and page["total"] == 2
+    assert [r["source"] for r in admin_ops.data_sources(page=1, failing=True)["rows"]] == ["pos"], \
+        "failing=1 keeps working"
+    assert admin_ops.data_sources(page=1, state="failing")["total"] == 1
+
+
+def test_o9_the_data_sources_route_takes_the_stale_filter(app, db_path):
+    rid = _rid(db_path, "Feed Grill")
+    _source(db_path, rid, "labor", ok_hours_ago=30)
+    _source(db_path, rid, "sales", ok_hours_ago=1)
+    c, _uid = _admin(app, db_path)
+    d = c.get("/admin/api/data-sources?state=stale").get_json()
+    assert d["ok"] and [r["source"] for r in d["rows"]] == ["labor"] and d["state"] == "stale"
+
+
+# ── O9 contract 5: the fleet list's slim rows carry the Data cell's facts ────
+
+def test_o9_slim_fleet_rows_carry_freshness_for_the_data_cell(db_path):
+    rid = _rid(db_path, "Fresh Grill")
+    _x(db_path, "UPDATE restaurants SET last_fetched_at=? WHERE id=?",
+       ((restaurant_now() - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S"), rid))
+    item = next(i for i in admin_ops.clients_page()["items"] if i["id"] == rid)
+    f = item["freshness"]
+    assert set(f) == {"pos_state", "reviews", "pos"}
+    assert f["reviews"] and f["reviews"].endswith("Z"), "the review fetch, as the console's Z stamp"
+    assert isinstance(f["pos_state"], dict) and f["pos_state"]["state"] == "not_connected" and f["pos"] is None
