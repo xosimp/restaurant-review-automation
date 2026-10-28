@@ -210,3 +210,40 @@ def test_k04_a_failed_vendor_cost_read_is_unknown_not_zero(db_path, monkeypatch)
     assert b["margin"]["fixed_cost_month"] is None and b["margin"]["gross_margin"] is None
     assert b["margin"]["fixed_read_failed"] is True
     assert any(e["query"] == "vendor_costs" for e in b["errors"])
+
+
+# ── K-06: a covered group location is judged with its payer ────────────────
+
+def test_k06_a_covered_location_has_no_contract_of_its_own_to_chase(db_path):
+    payer = _rest(db_path, "Group Main", billing_status="active", owner_email="own@ex.com", location_group="Grp")
+    sib = _rest(db_path, "Group Second", billing_status="active", owner_email="own@ex.com", location_group="Grp")
+    _sql(db_path, "UPDATE restaurants SET created_at=?", (_ago_utc(days=10),))
+    _sql(db_path, "UPDATE restaurants SET contract_status='signed' WHERE id=?", (payer,))
+    recs = {r["id"]: r for r in admin_ops.clients()["clients"]}
+    sib_rec = recs[sib]
+    assert sib_rec["billing"]["billed_by"]["restaurant_id"] == payer
+    assert f"{sib}:contract" not in [i["key"] for i in sib_rec["issues"]]
+    assert next(s for s in sib_rec["onboarding"]["steps"] if s["key"] == "contract")["done"]
+    assert sib_rec["billing"]["contract_covered"] is True
+    assert sib_rec["billing"]["contract_covered_by"]["restaurant_id"] == payer
+    b = admin_ops.billing()
+    row = next(r for r in b["rows"] if r["restaurant_id"] == sib)
+    assert row["contract_covered"] is True and b["totals"]["contract_unsigned"] == 0
+
+
+def test_k06_a_covered_location_reads_its_groups_owner_and_activity(db_path):
+    payer = _rest(db_path, "Duo Main", billing_status="active", owner_email="duo@ex.com", location_group="Duo")
+    sib = _rest(db_path, "Duo Second", billing_status="active", owner_email="duo@ex.com", location_group="Duo")
+    _sql(db_path, "UPDATE restaurants SET created_at=?", (_ago_utc(days=40),))
+    now_ct = admin_ops._now_ct().strftime("%Y-%m-%dT%H:%M:%S")
+    _sql(db_path, "INSERT INTO users (restaurant_id, username, email, password_hash, role, is_admin, is_active, last_login) "
+                  "VALUES (?,?,?,?,?,?,?,?)", (payer, "duo", "duo@ex.com", "x", "owner", 0, 1, now_ct))
+    recs = {r["id"]: r for r in admin_ops.clients()["clients"]}
+    s = recs[sib]
+    assert (s["owner"] or {}).get("username") == "duo" and s["owner_via"] == payer
+    assert s["last_active"] is not None
+    assert next(x for x in s["onboarding"]["steps"] if x["key"] == "login")["done"]
+    assert "never active" not in s["churn_risk"]["reasons"]
+    # A lone location with no login keeps reading none.
+    lone = _rest(db_path, "Lone Diner", billing_status="active")
+    assert next(r for r in admin_ops.clients()["clients"] if r["id"] == lone)["owner"] is None

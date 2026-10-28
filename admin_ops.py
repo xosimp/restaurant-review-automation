@@ -1092,6 +1092,7 @@ def _load_with(conn):
              owed_failed=owed_failed, reconcile=reconcile, open_invoices=open_invoices, envelope_fate=envelope_fate,
              pay_reminders=pay_reminders, learning=learning,
              rest_names={r["id"]: r.get("name") for r in rests},
+             contract_by_rid={r["id"]: (r.get("contract_status") or "pending").strip().lower() for r in rests},
              has_converted_at=bool(rests) and "converted_at" in rests[0],
              pos_states={}, loaded_at=_utc_stamp(w["now"]))
     d["billing_groups"] = _billing_groups(rests, mirror)
@@ -1362,6 +1363,10 @@ def _billing_for(r, d, mod_count):
         out.update(monthly=list_monthly, list_monthly=list_monthly, mrr_source="list")
     groups = d.get("billing_groups") or {}
     out["covers"] = [m for m in grp.get("group", []) if m != rid and (groups.get(m) or {}).get("billed_by") == rid]
+    covered, by = _contract_cover(r, d)
+    out["contract_covered"] = covered and out["contract_status"] != "signed"
+    out["contract_covered_by"] = ({"restaurant_id": by, "name": (d.get("rest_names") or {}).get(by)}
+                                  if out["contract_covered"] and by else None)
     # The pause reason (#138): workstream H's column, else read off the
     # Stripe events of the pause itself (a dispute or a refund).
     if bs == "paused":
@@ -1697,7 +1702,7 @@ def _onboarding_for(r, d, owner):
     facts = (d.get("onboarding_facts") or {}).get(rid) or {}
     steps = [
         {"key": "contract", "label": "Contract signed", "done": (r.get("contract_status") or "pending") == "signed"
-         or _onb.partner_covers(facts, "contract")},
+         or _onb.partner_covers(facts, "contract") or _contract_cover(r, d)[0]},
         {"key": "login", "label": "First sign-in", "done": bool(owner and owner.get("last_login"))},
         {"key": "reviews", "label": "Google reviews connected", "done": bool(r.get("gmb_refresh_token") or r.get("reviews_live"))},
         {"key": "voice", "label": "Brand voice set", "done": bool(r.get("voice_notes"))},
@@ -1880,12 +1885,24 @@ def _activity_for(r, d, users):
     (restaurants.last_activity, Chicago). Staff PIN sign-ins, PIN failures
     and an admin's view-as never count."""
     rid = r["id"]
-    owners = [u for u in users if not u.get("is_admin")
-              and (u.get("role") or "client").strip().lower() in OWNER_ROLES]
+
+    def owners_in(us):
+        return [u for u in us if not u.get("is_admin")
+                and (u.get("role") or "client").strip().lower() in OWNER_ROLES]
+    owners = owners_in(users)
+    # A location with no owner login of its own (a covered sibling — the
+    # owner's login lives on the first location) is used when its billing
+    # group's owner uses the product (admin audit 10/27/26 K-06).
+    members = [rid] if owners else _group_ids(rid, d)
+    if not owners:
+        owners = [u for m in members for u in owners_in((d.get("users") or {}).get(m, []))]
     sign_in = max((x for x in (_parse_utc(u.get("last_login")) for u in owners) if x), default=None)
-    sess = (d.get("owner_sessions") or {}).get(rid) or {}
+    sess_rows = [s for s in ((d.get("owner_sessions") or {}).get(m) for m in members) if s]
+    sess = {"last_active": max((s["last_active"] for s in sess_rows if s.get("last_active")), default=None),
+            "ios": any(s.get("ios") for s in sess_rows)}
+    logins = [l.get("last_at") for l in ((d.get("owner_logins") or {}).get(m) for m in members) if l]
     sources = {"sign_in": sign_in,
-               "console_login": _parse_utc(((d.get("owner_logins") or {}).get(rid) or {}).get("last_at"), "UTC"),
+               "console_login": max((x for x in (_parse_utc(v, "UTC") for v in logins) if x), default=None),
                "session": _parse_utc(sess.get("last_active"), "UTC"),
                "web_tab": _parse_utc(r.get("last_activity"))}
     best = max((v for v in sources.values() if v), default=None)
@@ -1897,11 +1914,52 @@ def _activity_for(r, d, users):
             "on_ios": bool(sess.get("ios")), "team_last_seen": team.strftime(_ZFMT) if team else None}
 
 
+def _group_ids(rid, d):
+    """Every location billed with this one (_billing_groups: organization,
+    location_group + owner email, Stripe customer), itself first."""
+    ids = ((d.get("billing_groups") or {}).get(rid) or {}).get("group") or [rid]
+    return [rid] + [x for x in ids if x != rid]
+
+
+def _contract_cover(r, d):
+    """(covered, by_rid) — whether a location's contract is its billing
+    group's (admin audit 10/27/26 K-06). A location added under a brand is
+    billed by the group's subscription and is sent no contract of its own
+    (admin_routes add-location), so it is covered when it is billed by a
+    payer, or when another location of its group signed; `by_rid` is the
+    location whose contract covers it (a signed one when there is one)."""
+    rid = r["id"]
+    grp = (d.get("billing_groups") or {}).get(rid) or {}
+    statuses = d.get("contract_by_rid") or {}
+    payer = grp.get("billed_by")
+    signed = [m for m in grp.get("group") or [] if m != rid and statuses.get(m) == "signed"]
+    by = payer if (payer and statuses.get(payer) == "signed") else (signed[0] if signed else payer)
+    return bool(payer or signed), by
+
+
+def _owner_of(users):
+    return next((u for u in users if u.get("role") in ("client", "owner") and not u.get("is_admin")), None)
+
+
+def _group_owner(rid, d):
+    """(owner login, its location id) from the location's own logins, else
+    its billing group's (K-06): the owner's login lives on the first
+    location, so a covered sibling read 'no owner, never active'."""
+    users = (d.get("users") or {})
+    for m in _group_ids(rid, d):
+        o = _owner_of(users.get(m, []))
+        if o:
+            return o, m
+    return None, None
+
+
 def location_record(r, d):
     """The one health record for a location. Everything else is a view of it."""
     rid = r["id"]
     users = d["users"].get(rid, [])
-    owner = next((u for u in users if u.get("role") in ("client", "owner") and not u.get("is_admin")), users[0] if users else None)
+    owner, owner_via = _group_owner(rid, d)
+    if owner is None:
+        owner, owner_via = (users[0], rid) if users else (None, None)
     rv = d["reviews"].get(rid, {})
     ai = d["ai_month"].get(rid, {})
     em = d["emails"].get(rid, {})
@@ -1948,6 +2006,9 @@ def location_record(r, d):
         "full_control_note": r.get("admin_control_note"),
         "created_at": _iso_z(r.get("created_at")),
         "timezone": r.get("timezone"),
+        # The location whose login `owner` is — another location of its
+        # billing group for a covered sibling (K-06).
+        "owner_via": owner_via if owner else None,
         "owner": ({"id": owner["id"], "username": owner["username"], "email": owner["email"], "role": owner.get("role"),
                    "is_active": bool(owner.get("is_active")), "last_login": _iso_z(owner.get("last_login"))} if owner else None),
         "owner_name": r.get("owner_name"), "owner_email": r.get("owner_email"), "owner_phone": r.get("owner_phone"),
@@ -2298,7 +2359,10 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
             env.get("status_at") or r.get("created_at"), "Send a new contract", f"/admin/resend-contract/{rid}",
             (f"DocuSign: {env['status_reason']}" if env.get("status_reason") else None), zone="UTC",
             action_href=billing_tab)
-    elif cs != "signed" and not r.get("is_demo") and bs not in ("internal",) + ENDED_STATES:
+    elif (cs != "signed" and not r.get("is_demo") and bs not in ("internal",) + ENDED_STATES
+          and not _contract_cover(r, d)[0]):
+        # A covered group location has no contract of its own to resend
+        # (K-06): Resend would send the owner a second envelope.
         age = _age_days(r.get("created_at"))
         if age is not None and age > 3:
             add("contract", "Contract still unsigned", "warning", r.get("created_at"), "Resend contract",
@@ -4590,6 +4654,9 @@ def billing():
                          "mrr_source": b["mrr_source"], "billed_by": b["billed_by"], "covers": b["covers"],
                          "list_mismatch": b["list_mismatch"], "status_mismatch": b["status_mismatch"],
                          "contract_status": b["contract_status"], "envelope_id": b["envelope_id"],
+                         # Covered by its billing group's contract (K-06): not "unsigned".
+                         "contract_covered": b.get("contract_covered"),
+                         "contract_covered_by": b.get("contract_covered_by"),
                          "signed_at": b.get("signed_at"), "days_since_signed": b.get("days_since_signed"),
                          "days_in_trial": b.get("days_in_trial"), "converted_at": b.get("converted_at"),
                          "pause_reason": b.get("pause_reason"), "pause_reason_inferred": b.get("pause_reason_inferred"),
@@ -4641,6 +4708,9 @@ def billing():
                    round(sum(v for k, v in fixed["by_vendor"].items() if k not in METERED_VENDORS), 2))
     gross = (None if variable is None or fixed_total is None else round(totals["mrr"] - variable - fixed_total, 2))
     payers = [x for x in customers if x["monthly"]]
+    # Contracts still to sign, a covered group location not among them (K-06).
+    totals = dict(totals, contract_unsigned=sum(1 for x in customers if x["contract_status"] != "signed"
+                                                and not x.get("contract_covered") and x["status"] not in ENDED_STATES))
     return {"ok": True, "rows": rows, "events": events, "stripe_live": bool(os.getenv("STRIPE_SECRET_KEY", "")),
             "stripe_error": None, "live_source": "mirror", "mirror_available": bool(d.get("mirror_available")),
             "live_route": "/admin/api/client/<id>/billing/live",
