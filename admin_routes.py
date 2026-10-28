@@ -1222,7 +1222,9 @@ def add_alert_contact_route(restaurant_id, current_user):
         current_user, "alert_contact.added", restaurant_id=restaurant_id, target=f"alert_contact:{contact_id}",
         after={"contact_id": contact_id, "name": name, "phone_last4": phone[-4:], "sms_consent": False},
         summary=f"{current_user.get('username') or 'admin'} added {name or 'a contact'} …{phone[-4:]}")
-    return jsonify(ok=True, id=contact_id, name=name, phone=phone)
+    # The number back as its last four only (admin audit 10/27/26 S10): the
+    # caller typed it, and a response body is no place to repeat it whole.
+    return jsonify(ok=True, id=contact_id, name=name, phone_last4=phone[-4:])
 
 
 @admin_bp.route("/admin/alert-contacts/delete/<int:contact_id>", methods=["POST"])
@@ -7150,9 +7152,13 @@ def admin_api_ai_capacity(current_user):
 @admin_bp.route("/admin/api/ai/reset-breaker", methods=["POST"])
 @admin_required
 def admin_api_ai_reset_breaker(current_user):
-    """Close a provider's breaker in this process now (body {"provider":
-    "anthropic" | "perplexity" | "google_places"}, or none for all). The next
-    call goes straight to the provider."""
+    """Close a provider's breaker (body {"provider": "anthropic" |
+    "perplexity" | "google_places"}, or none for all) — in this process at
+    once, and in every other process within ai_utils.BREAKER_SYNC_SECONDS:
+    ai_utils.reset_breaker publishes the reset through the shared
+    `ai_breakers` rows, and a provider's reset closes its model-family and
+    tenant breakers too. The next call goes straight to the provider.
+    `breakers` in the answer is this process's view after the reset."""
     if not current_user.get("is_admin"):
         return jsonify(ok=False, error="Admins only."), 403
     import ai_utils

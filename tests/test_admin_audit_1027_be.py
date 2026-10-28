@@ -594,3 +594,53 @@ def test_p20_integration_pages_reuse_one_webhook_reading(app, db_path, monkeypat
         d = c.get(f"/admin/api/integrations?page=1&f={f}").get_json()
         assert d["ok"] and "providers" in d["webhooks_inbound"]
     assert len(n) <= 1, f"computed {len(n)} times for four page or filter clicks"
+
+
+# ── C10: the server's cut-offs live in config and travel with the payloads ──
+
+def test_c10_the_thresholds_are_env_backed_and_on_the_payloads(app, db_path, monkeypatch):
+    import jobs_registry
+    import pos_capacity
+    for name, default in (("JOB_FAIL_STORE_SHARE", 0.05), ("JOB_FAIL_MIN_STORES", 2), ("JOB_FAIL_CRITICAL", 5),
+                          ("API_5XX_BAD_PCT", 5.0), ("API_5XX_MIN_REQUESTS", 20), ("API_P95_WARN_MS", 2000.0),
+                          ("PUSH_WAIT_WARN_MINUTES", 30.0), ("RPOWER_429_WARN_SHARE", 0.01),
+                          ("RPOWER_SKIPPED_WARN_SHARE", 0.05)):
+        assert getattr(admin_ops, name) == default, name
+    c, _uid = _admin(app, db_path)
+    th = admin_ops.ops_state()["thresholds"]         # /admin/api/ops/state (status_bp) hands back ops_state()
+    assert th["api_5xx_bad_pct"] == 5.0 and th["api_5xx_min_requests"] == 20 and th["api_p95_warn_ms"] == 2000.0
+    assert th["heartbeat_stale_minutes"] == jobs_registry.HEARTBEAT_STALE_MINUTES
+    assert th["email_bounce_warn_pct"] == admin_ops.EMAIL_BOUNCE_WARN_PCT and "email_min_sends" in th
+    assert th["rpower_429_share_warn"] == 0.01 and th["rpower_skipped_share_warn"] == 0.05
+    assert th["rpower_nightly_budget_warn_pct"] == pos_capacity.UTIL_ALERT_PCT
+    rp = c.get("/admin/api/rpower-health").get_json()["thresholds"]
+    assert rp == {"rpower_429_share_warn": 0.01, "rpower_skipped_share_warn": 0.05,
+                  "rpower_nightly_budget_warn_pct": pos_capacity.UTIL_ALERT_PCT}
+    sys_th = c.get("/admin/api/system").get_json()["system"]["http"]["thresholds"]
+    assert sys_th == {"api_5xx_bad_pct": 5.0, "api_5xx_min_requests": 20, "api_p95_warn_ms": 2000.0}
+
+
+def test_c10_the_api_verdict_reads_the_configured_cut_offs(db_path, monkeypatch):
+    import http_layer
+    monkeypatch.setattr(http_layer, "request_metrics", lambda **k: {"window_seconds": 300, "rpm": 2.0,
+                                                                     "p95_ms": 900.0, "server_error_rate": 0.0,
+                                                                     "requests": 30})
+    monkeypatch.setattr(admin_ops, "API_P95_WARN_MS", 500.0)
+    api = admin_ops._ops_state_build()["systems"]["api"]
+    assert api["state"] == "warn" and "p95" in api["reason"]
+    monkeypatch.setattr(admin_ops, "API_P95_WARN_MS", 2000.0)
+    assert admin_ops._ops_state_build()["systems"]["api"]["state"] == "ok"
+
+
+# ── S10: the legacy add route echoes only the number's last four ─────────────
+
+def test_s10_the_legacy_alert_contact_add_never_echoes_the_whole_number(app, db_path, monkeypatch):
+    import notify
+    monkeypatch.setattr(notify, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    monkeypatch.setattr(notify, "DB_PATH", db_path, raising=False)
+    c, _uid = _admin(app, db_path)
+    rid = _rid(db_path)
+    r = _post(c, f"/admin/alert-contacts/{rid}", {"name": "Erik", "phone": "+15125550123"})
+    d = r.get_json()
+    assert d["ok"] and d["phone_last4"] == "0123" and "phone" not in d
+    assert "5125550123" not in r.get_data(as_text=True)

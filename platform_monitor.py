@@ -1561,6 +1561,14 @@ def system_report(db_path=None) -> dict:
                           "dropped": http_layer.dropped_counts()}
     except Exception as e:
         report["http"] = {"error": str(e)[:120]}
+    try:
+        # The console's own API cut-offs, so the Engineering card labels a
+        # class with the server's rule, not a copy (admin audit 10/27/26 C10).
+        import admin_ops as _ao_th
+        report["http"]["thresholds"] = {k: v for k, v in _ao_th.console_thresholds().items()
+                                        if k.startswith("api_")}
+    except Exception as e:
+        log.warning("console thresholds unreadable: %s", e)
     report["rollups_24h"] = request_rollup_summary(24, db_path)
     report["rollups_24h"]["tenants"] = tenant_load(24, db_path=db_path)
     report["server_errors_24h"] = recent_server_errors(24, 50, db_path)

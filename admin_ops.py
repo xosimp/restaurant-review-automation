@@ -2392,9 +2392,24 @@ SOURCE_FAIL_ISSUE = int(os.getenv("ADMIN_SOURCE_FAIL_ISSUE", "3"))
 # A job failing for stores is critical past this share of the customer stores
 # (and at least JOB_FAIL_MIN_STORES of them); its failures with no store at
 # JOB_FAIL_CRITICAL (Audit #23 A6-04).
-JOB_FAIL_STORE_SHARE = 0.05
-JOB_FAIL_MIN_STORES = 2
-JOB_FAIL_CRITICAL = 5
+JOB_FAIL_STORE_SHARE = float(os.getenv("ADMIN_JOB_FAIL_STORE_SHARE", "0.05"))
+JOB_FAIL_MIN_STORES = int(os.getenv("ADMIN_JOB_FAIL_MIN_STORES", "2"))
+JOB_FAIL_CRITICAL = int(os.getenv("ADMIN_JOB_FAIL_CRITICAL", "5"))
+# The console's API verdict (ops_state's api system and the platform
+# error-rate issue): bad at API_5XX_BAD_PCT % of customer requests failing
+# with at least API_5XX_MIN_REQUESTS of them in the window, slow past
+# API_P95_WARN_MS at p95 (admin audit 10/27/26 C10: literals beside their
+# env siblings; the page read copies of them). platform_monitor's pager
+# rule (HTTP_5XX_ALERT_RATE / _MIN_REQUESTS) is a separate, stricter page.
+API_5XX_BAD_PCT = float(os.getenv("ADMIN_API_5XX_BAD_PCT", "5"))
+API_5XX_MIN_REQUESTS = int(os.getenv("ADMIN_API_5XX_MIN_REQUESTS", "20"))
+API_P95_WARN_MS = float(os.getenv("ADMIN_API_P95_WARN_MS", "2000"))
+# A push waiting longer than this to go out turns the push system amber.
+PUSH_WAIT_WARN_MINUTES = float(os.getenv("ADMIN_PUSH_WAIT_WARN_MINUTES", "30"))
+# Operations → RPOWER's request strip: amber past these shares of the day's
+# requests answered 429 or held back (skipped).
+RPOWER_429_WARN_SHARE = float(os.getenv("ADMIN_RPOWER_429_WARN_SHARE", "0.01"))
+RPOWER_SKIPPED_WARN_SHARE = float(os.getenv("ADMIN_RPOWER_SKIPPED_WARN_SHARE", "0.05"))
 # Sources whose failure is an issue sooner. The invoice feed's failure is
 # recorded once a day, and only after two business days with no file
 # (email_intake.watch_feeds) — it is already late when it is first recorded
@@ -3359,7 +3374,7 @@ def _platform_issues(recs, d):
         from http_layer import request_metrics
         rm = request_metrics()
         facts["request_metrics"] = rm
-        if rm["requests"] >= 20 and rm["server_error_rate"] >= 5.0:
+        if rm["requests"] >= API_5XX_MIN_REQUESTS and rm["server_error_rate"] >= API_5XX_BAD_PCT:
             add("platform:error_rate", f"{rm['server_error_rate']:.0f}% of requests are 5xx", "critical",
                 detail=f"{rm['requests']} requests in the last {rm['window_seconds'] // 60} minutes.",
                 resolvable=False, action="Open engineering", action_kind="link", action_href="#engineering")
@@ -3928,6 +3943,9 @@ def rpower_health_view(health=None, q=None, data_type=None, bucket=None, partner
         fleet["as_of"] = _iso_z(fleet["as_of"], "UTC")
     return {"ok": True, "fleet": fleet, "rules": rules, "trend": trend, "health_states": list(rh.HEALTH_STATES),
             "data_types": list(rh.DATA_TYPES), **pg, "errors": errors,
+            # The strip's cut-offs (admin audit 10/27/26 C10): the 429 and
+            # held-back shares, the nightly budget's alert percent.
+            "thresholds": rpower_thresholds(),
             "generated_at": _iso_z(_utc_stamp(), "UTC")}
 
 
@@ -8432,6 +8450,42 @@ def _ago_z(minutes):
     return (_utcnow() - timedelta(minutes=float(minutes))).strftime(_ZFMT) if minutes is not None else None
 
 
+def console_thresholds():
+    """Every cut-off the server judges the console's systems by, for the
+    page to label with instead of keeping copies (admin audit 10/27/26 C10).
+    Carried as `thresholds` on /admin/api/ops/state and /admin/api/system
+    (`http.thresholds`), and the RPOWER ones on /admin/api/rpower-health."""
+    out = {"api_5xx_bad_pct": API_5XX_BAD_PCT, "api_5xx_min_requests": API_5XX_MIN_REQUESTS,
+           "api_p95_warn_ms": API_P95_WARN_MS,
+           "heartbeat_stale_minutes": _jobs_registry.HEARTBEAT_STALE_MINUTES,
+           "push_wait_warn_minutes": PUSH_WAIT_WARN_MINUTES,
+           "email_bounce_warn_pct": EMAIL_BOUNCE_WARN_PCT, "email_bounce_crit_pct": EMAIL_BOUNCE_CRIT_PCT,
+           "email_complaint_warn_pct": EMAIL_COMPLAINT_WARN_PCT,
+           "email_complaint_crit_pct": EMAIL_COMPLAINT_CRIT_PCT, "email_min_sends": EMAIL_RATE_MIN_SENDS,
+           "ai_blocked_min_calls": None}
+    try:
+        import ai_utils as _ai_th
+        out["ai_blocked_min_calls"] = _ai_th.AI_STATUS_MIN_CALLS
+    except Exception as e:
+        log.warning("AI threshold unreadable: %s", e)
+    out.update(rpower_thresholds())
+    return out
+
+
+def rpower_thresholds():
+    """Operations → RPOWER's strip cut-offs: the 429 and held-back request
+    shares, and the nightly lane's budget use pos_capacity alerts at
+    (POS_BUDGET_ALERT_PCT)."""
+    out = {"rpower_429_share_warn": RPOWER_429_WARN_SHARE, "rpower_skipped_share_warn": RPOWER_SKIPPED_WARN_SHARE,
+           "rpower_nightly_budget_warn_pct": None}
+    try:
+        import pos_capacity as _pc_th
+        out["rpower_nightly_budget_warn_pct"] = _pc_th.UTIL_ALERT_PCT
+    except Exception as e:
+        log.warning("RPOWER budget threshold unreadable: %s", e)
+    return out
+
+
 # The rail polls /admin/api/ops/state every two minutes per open tab (WS-3):
 # on a request thread one reading is kept this long and shared, single-
 # flight, so a poll is not the email-rate, webhook and job-SLA reads again
@@ -8649,7 +8703,7 @@ def _ops_state_build():
         win = max(1, rm.get("window_seconds", 300) // 60)
         facts = {"rpm": rm.get("rpm"), "p95_ms": rm.get("p95_ms"), "server_error_rate": rm.get("server_error_rate"),
                  "requests": rm.get("requests")}
-        if rm["requests"] >= 20 and rm["server_error_rate"] >= 5.0:
+        if rm["requests"] >= API_5XX_MIN_REQUESTS and rm["server_error_rate"] >= API_5XX_BAD_PCT:
             return _sys("bad", f"{rm['server_error_rate']:g}% of customer requests failed (5xx) in the last "
                                f"{_dur(win)}.", "now", **facts)
         try:
@@ -8662,7 +8716,7 @@ def _ops_state_build():
             latest = (recent.get("latest") or [{}])[0]
             return _sys("warn", f"{recent['total']} server error{'s' if recent['total'] != 1 else ''} in the last hour.",
                         _iso_z(latest.get("created_at"), "UTC"), **facts)
-        if rm.get("p95_ms") and rm["p95_ms"] > 2000:
+        if rm.get("p95_ms") and rm["p95_ms"] > API_P95_WARN_MS:
             return _sys("warn", f"Slow: p95 {rm['p95_ms']:.0f} ms over the last {_dur(win)}.", "now", **facts)
         if not rm["requests"]:
             return _sys("ok", f"No customer traffic in the last {_dur(win)}.", None, **facts)
@@ -8734,7 +8788,7 @@ def _ops_state_build():
         import push as _push_state
         ob = _push_state.outbox_counts(db_path=path)
         oldest = _age_hours(ob.get("oldest_pending_at"), "UTC")
-        if oldest is not None and oldest * 60 > 30:
+        if oldest is not None and oldest * 60 > PUSH_WAIT_WARN_MINUTES:
             return _sys("warn", f"A push has waited {_dur(oldest * 60)} to go out.",
                         _iso_z(ob.get("oldest_pending_at"), "UTC"))
         if ob.get("failed_24h"):
@@ -8819,7 +8873,8 @@ def _ops_state_build():
                      ("push", push), ("ai", ai), ("integrations", integrations)):
         guard(name, fn)
     worst = max((s["state"] for s in systems.values()), key=lambda st: _STATE_RANK.get(st, 1), default="unknown")
-    return {"ok": True, "systems": systems, "worst": worst, "generated_at": _utcnow().strftime(_ZFMT)}
+    return {"ok": True, "systems": systems, "worst": worst, "generated_at": _utcnow().strftime(_ZFMT),
+            "thresholds": console_thresholds()}
 
 
 # ── AI routes: the orchestration console (design 10/7/26, phase 6) ──────────
