@@ -2848,8 +2848,17 @@ let _ops = null, _opsAt = 0, _opsFresh = false, _opsTab = 'jobs', _aid = 30, _ef
 // A6-15): the page each is on; a filter change goes back to page 1.
 var _ip = 1, _dsp = 1;
 const OPS_TABS = {jobs:'jobs', email:'email', messages:'email', emails:'email', sms:'email', push:'push', alerts:'push', ai:'ai', integrations:'integrations', rpower:'rpower', events:'events', calendar:'events'};
-function dayKeys(n){ const out = []; const d = new Date(); d.setHours(0,0,0,0); for(let i=n-1;i>=0;i--){ const x = new Date(d); x.setDate(d.getDate()-i); out.push(x); } return out; }
-function perDay(rows, key, n, pred){ const days = dayKeys(n); return days.map(ds => { const de = new Date(ds); de.setDate(ds.getDate()+1); return rows.filter(r => { const t = parseTs(r[key]); return t && t >= ds && t < de && (!pred || pred(r)); }).length; }); }
+// A subsystem card's 7-day trend is the server's own daily series (admin
+// audit 10/27/26, O6/P-11): counted in SQL over the whole window, Central
+// days, oldest first, zero-filled — jobs().failures_daily (kind 'job'),
+// notifications().push_daily, emails().daily. The page used to bucket the
+// newest 100 failures / 200 pushes into local days itself, so at fleet volume
+// every bar landed "today". A series the server doesn't send is `false`: the
+// card says the trend is unavailable, never seven zeros. ES5.
+function daySeries(rows, key){
+  if(!Array.isArray(rows)) return false;
+  return rows.slice(-7).map(function(x){ return +(x && x[key]) || 0; });
+}
 
 // ── reading a payload honestly (fix round, UI-2) ──
 // The failed read behind a figure, or null: the whole payload (ok:false, an
@@ -2946,12 +2955,17 @@ function opsSentence(sys){
 // A subsystem card: its state is the icon's tone, the border when failing,
 // and the first word of the line under the trend — six fit one row.
 const ST_COLOR = {good:'var(--green-t)', warn:'var(--amber-t)', bad:'var(--red-t)', neu:'var(--ink4)'};
-function subCard(tab, icn, label, tone, value, unit, sub, trend, color, href){
+// `trend`: the 7-day series (null: none for this card or its read failed —
+// the figure says so; false: the server sends no series — said, never zeros);
+// `tip`: what the series counts and on which days (Central, or UTC for AI).
+function subCard(tab, icn, label, tone, value, unit, sub, trend, color, href, tip){
   const on = !href && _opsTab === tab, word = ST_WORD[tone] || '—';
+  const tr = trend ? `<div title="${esc(tip || '')}">${spark(trend, 200, 32, color, 'sp-' + tab)}</div>`
+    : (trend === false ? `<span class="dim" style="height:32px;display:flex;align-items:center;font-size:12px" title="${esc(tip || '')}">7-day trend not sent by the server</span>` : '<span style="height:32px"></span>');
   return `<a class="card" href="${href || '#operations/' + tab}" aria-label="${esc(label.replace(/&amp;/g, '&'))}: ${esc(word)} — ${esc(sub)}" style="padding:16px 16px 14px;display:flex;flex-direction:column;gap:9px;min-width:0;${on ? 'box-shadow:var(--glow);' : ''}${tone === 'bad' ? 'border-color:var(--red);' : ''}">
     <span style="display:flex;align-items:center;gap:9px;min-width:0"><span class="ico ${tone}" title="${esc(word)}">${ico(icn)}</span><span class="lbl" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span></span>
     <span style="display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 6px;min-width:0"><span class="n" style="font-size:var(--fig-l);font-weight:600;line-height:1">${value}</span><span class="n muted" style="font-size:12.5px">${unit}</span></span>
-    ${trend ? spark(trend, 200, 32, color, 'sp-' + tab) : '<span style="height:32px"></span>'}
+    ${tr}
     <span class="muted" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(word)} — ${esc(sub)}"><b style="color:${ST_COLOR[tone] || 'var(--ink4)'}">${esc(word)}</b> · ${esc(sub)}</span></a>`;
 }
 async function operations(tab){
@@ -2964,9 +2978,11 @@ async function operations(tab){
   const o = _ops, k = readErr(o.ov) ? {} : o.ov.kpis, sys = opsState(o), st = {}; sys.forEach(s => { st[s.key] = s; });
   const worse = (a, b) => ({bad:3, warn:2, neu:1, good:0}[a] >= {bad:3, warn:2, neu:1, good:0}[b] ? a : b);
   const jobsT = worse(st.jobs.tone, st.scheduler.tone), emT = worse(st.email.tone, st.sms.tone);
-  const jobTrend = readErr(o.jb) ? null : perDay((o.jb.failures || []).filter(f => (f.kind || 'job') === 'job'), 'created_at', 7);
-  const emTrend = readErr(o.em) ? null : (o.em.daily || []).slice(-7).map(x => x.n);
-  const pushTrend = readErr(o.nt) ? null : perDay(o.nt.pushes || [], 'created_at', 7);
+  // One day boundary for the counts the server buckets (Central); the AI
+  // series stays on UTC days like its ledger and ceilings, and says so.
+  const jobTrend = readErr(o.jb) ? null : daySeries(o.jb.failures_daily, 'n');
+  const emTrend = readErr(o.em) ? null : daySeries(o.em.daily, 'n');
+  const pushTrend = readErr(o.nt) ? null : daySeries(o.nt.push_daily, 'n');
   const aiTrend = readErr(o.ai) ? null : fillUtcDays(o.ai.daily, 7).map(x => x.calls || 0);
   const ovE = readErr(o.ov);
   const emToday = ovE ? unknownV(ovE) : fmtN(k.emails_today);
@@ -2974,10 +2990,10 @@ async function operations(tab){
   $('view').innerHTML = head('Operations', 'Operations', opsSentence(sys), right)
     + errBanner(o.ov)
     + `<section class="grid g6">
-      ${subCard('jobs', 'clock', 'Jobs', jobsT, readErr(o.jb) ? unknownV(readErr(o.jb)) : st.jobs.value, 'healthy', st.scheduler.tone === 'good' ? st.jobs.sub : 'Scheduler: ' + st.scheduler.sub, jobTrend, st.jobs.bad ? 'var(--red-t)' : 'var(--green-t)')}
-      ${subCard('email', 'mail', 'Email &amp; SMS', emT, emToday, 'sent today', st.email.tone !== 'good' || st.sms.tone === 'good' ? st.email.sub : 'SMS: ' + st.sms.sub, emTrend, 'var(--ember2)')}
-      ${subCard('push', 'bell', 'Push &amp; alerts', st.push.tone, ovE ? unknownV(ovE) : fmtN(k.push_today), 'delivered today', st.push.sub, pushTrend, 'var(--green-t)')}
-      ${subCard('ai', 'spark', 'AI', st.ai.tone, ovE ? unknownV(ovE) : fmtN(k.ai_calls_today), 'calls today', st.ai.sub, aiTrend, 'var(--ember2)')}
+      ${subCard('jobs', 'clock', 'Jobs', jobsT, readErr(o.jb) ? unknownV(readErr(o.jb)) : st.jobs.value, 'healthy', st.scheduler.tone === 'good' ? st.jobs.sub : 'Scheduler: ' + st.scheduler.sub, jobTrend, st.jobs.bad ? 'var(--red-t)' : 'var(--green-t)', null, 'Failed job runs a day · 7 days, Central days')}
+      ${subCard('email', 'mail', 'Email &amp; SMS', emT, emToday, 'sent today', st.email.tone !== 'good' || st.sms.tone === 'good' ? st.email.sub : 'SMS: ' + st.sms.sub, emTrend, 'var(--ember2)', null, 'Emails sent a day · 7 days, Central days')}
+      ${subCard('push', 'bell', 'Push &amp; alerts', st.push.tone, ovE ? unknownV(ovE) : fmtN(k.push_today), 'delivered today', st.push.sub, pushTrend, 'var(--green-t)', null, 'Push deliveries a day · 7 days, Central days')}
+      ${subCard('ai', 'spark', 'AI', st.ai.tone, ovE ? unknownV(ovE) : fmtN(k.ai_calls_today), 'calls today', st.ai.sub, aiTrend, 'var(--ember2)', null, 'AI calls a day · 7 days, UTC days (like the ledger and the ceilings)')}
       ${subCard('integrations', 'plug', 'Integrations', st.integrations.tone, ovE ? unknownV(ovE) : fmtN(k.integrations_active), 'live', st.integrations.sub, null)}
       ${subCard('api', 'gauge', 'API', st.api.tone, ovE ? unknownV(ovE) : (k.p95_ms == null ? '—' : fmtN(Math.round(k.p95_ms))), k.p95_ms == null ? '' : 'ms p95 · ' + esc(k.api_window_label || 'last 5 minutes'), st.api.sub, null, null, '#engineering')}
     </section>`
