@@ -7059,27 +7059,44 @@ def admin_api_suppressions(current_user):
     marketing | guest, comma-joined when several) and whether it is an
     operator address. ?q= filters by address; ?restaurant_id= keeps the
     addresses that client's mail goes to, each with its roles (#45)."""
-    from models import get_email_suppressions
+    from models import get_email_suppressions, suppression_liftable
     rid = request.args.get("restaurant_id", type=int)
     rows = get_email_suppressions(limit=min(request.args.get("limit", 200, type=int), 1000),
                                   q=(request.args.get("q") or "").strip() or None, restaurant_id=rid)
+    for row in rows:
+        # The person's own opt-out or spam complaint is never reinstated by an
+        # admin (S2): the page offers Reinstate only where this is true.
+        row["reinstatable"] = suppression_liftable(row.get("reason"))
     return jsonify(ok=True, suppressions=rows, restaurant_id=rid)
 
 
 @admin_bp.route("/admin/api/suppressions/reinstate", methods=["POST"])
 @admin_required
 def admin_api_suppression_reinstate(current_user):
-    """Lift a suppression — body {"email", "reason"?}. Audited (who, the row
-    as it was, why). 404 when the address is not suppressed (#45)."""
+    """Lift a bounce — body {"email", "reason"?, "restaurant_id"?}. Audited
+    through the typed call (who with their id, the row as it was, why, and
+    the client: the one named, or the one the address belongs to). 404 when
+    the address is not suppressed; 409 when the suppression is the person's
+    own unsubscribe or spam complaint, which only they can undo (admin
+    audit 10/27/26 S2, C7)."""
     from models import unsuppress_email
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     if "@" not in email:
         return jsonify(ok=False, error="An email address is required."), 400
-    lifted = unsuppress_email(email, actor=current_user.get("username") or "admin",
-                              reason=(data.get("reason") or "").strip()[:300] or None)
+    try:
+        rid = int(data["restaurant_id"]) if data.get("restaurant_id") not in (None, "") else None
+    except (TypeError, ValueError):
+        rid = None
+    if rid is not None and not get_restaurant(rid):
+        rid = None
+    lifted = unsuppress_email(email, actor=current_user,
+                              reason=(data.get("reason") or "").strip()[:300] or None, restaurant_id=rid)
     if not lifted:
         return jsonify(ok=False, error="That address isn't suppressed."), 404
+    if lifted.get("refused"):
+        return jsonify(ok=False, refused=True, email=email, reason=lifted.get("reason"),
+                       error=lifted["refused"]), 409
     return jsonify(ok=True, email=email, lifted=lifted)
 
 
