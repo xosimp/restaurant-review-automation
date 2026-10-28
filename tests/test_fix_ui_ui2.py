@@ -306,7 +306,9 @@ def test_ai_reads_vendors_outcomes_ceilings_health_quality_and_the_trace(page):
 
 
 def test_integrations_read_revocation_webhooks_and_data_sources(page):
-    i = _fn(page, "opsIntegrations")
+    # The data sources panel draws in its own functions since admin audit
+    # 10/27/26 (O9: a stale state and filter), dsQuery / dsHtml.
+    i = _fn(page, "opsIntegrations") + _fn(page, "dsQuery") + _fn(page, "dsHtml")
     # The server pages the list since Audit #23 A6-15, so fresh rides as
     # "&fresh=1" after the filter and page.
     for key in ("r.revoked_at", "r.error_since", "d.webhooks_inbound", "/admin/api/data-sources", "x.summary",

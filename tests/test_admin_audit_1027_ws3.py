@@ -92,8 +92,9 @@ def _page_js(page, fns=(), decls=()):
 # ── W4/C2: a write whose answer never came back ─────────────────────────────
 
 def test_a_write_that_gets_no_answer_says_so_and_a_read_still_throws(page):
-    js = _page_js(page, ("isWrite", "api", "post", "okRes", "errText", "say", "opsWrite"),
-                  ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP")) + r"""
+    # api() takes its turn in the page's read queue since round 2 (P-05).
+    js = _page_js(page, ("isWrite", "readDone", "readNow", "readTurn", "readPump", "api", "post", "okRes", "errText", "say", "opsWrite"),
+                  ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP", "READ_MAX")) + r"""
     function reauth(){ return Promise.resolve(false); }
     var fetch = function(){ return Promise.reject(new TypeError('Failed to fetch')); };
     (async function(){
@@ -116,7 +117,8 @@ def test_a_write_that_gets_no_answer_says_so_and_a_read_still_throws(page):
 
 
 def test_a_read_the_admin_left_is_dropped_and_a_page_read_carries_the_abort_signal(page):
-    js = _page_js(page, ("isWrite", "api"), ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP")) + r"""
+    js = _page_js(page, ("isWrite", "readDone", "readNow", "readTurn", "readPump", "api"),
+                  ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP", "READ_MAX")) + r"""
     function reauth(){ return Promise.resolve(false); }
     var seen = [];
     var fetch = function(path, o){ seen.push([path, !!o.signal]);
@@ -210,7 +212,7 @@ def _st(**states):
             "systems": {n: {"state": states.get(n, "ok"), "reason": n + " reason", "since": None} for n in SYSTEMS}}
 
 
-VERDICT_FNS = ("okRes", "errText", "parseTs", "mdy", "fmtT", "fmtDT", "durMin", "ago", "agoWord", "esc_", "sysLabel",
+VERDICT_FNS = ("okRes", "errText", "parseTs", "mdy", "fmtT", "fmtDT", "durMin", "ago", "minsAgo", "agoWord", "esc_", "sysLabel",
                "systemsOf", "sysOf", "railHealth", "platformSystems", "healthRing", "healthCard", "opsStateKeep",
                "opsStateCached", "opsStateRead", "pulse")
 
@@ -218,7 +220,7 @@ VERDICT_FNS = ("okRes", "errText", "parseTs", "mdy", "fmtT", "fmtDT", "durMin", 
 def _verdict_js(page):
     fns = tuple(n for n in VERDICT_FNS if n != "esc_")
     return _page_js(page, fns, ("esc", "fmtN", "SYS_COLOR", "SYS_TEXT", "OPS_SYSTEMS", "OPS_STATE_TTL", "HEART",
-                                "RING_TONE"))
+                                "RING_TONE", "RING_DOT"))   # RING_DOT: the ring legend's .dot (round 2, V23)
 
 
 def test_the_systems_are_the_servers_and_a_failed_or_missing_reading_is_unknown(page):
