@@ -778,6 +778,41 @@ def heavy_slot(what):
         _heavy_slots.release()
 
 
+# The console's heavy GET reads, bounded on the server (admin audit 10/27/26
+# P-05): concurrency was policed only in the browser, per page, at 3-4 — the
+# whole of gunicorn's four request threads — so one Operations landing could
+# hold three of them for 10-20 s at 1,500 restaurants while owners, iOS,
+# webhooks and /health shared the fourth. At most ADMIN_READ_CONCURRENCY run
+# at once on request threads; past ADMIN_READ_WAIT_SECONDS the request is
+# refused with AdminBusy (503 + Retry-After — the page retries once).
+# admin_routes takes the slot for every /admin/api/ GET on admin_bp except
+# its slim reads (_ADMIN_SLIM_READS: the rail poll, search, single-row reads
+# and task polls; /admin/api/ops/state is status_bp's and never takes one).
+# Per process by design, like ASK_MAX_CONCURRENT: it guards this process's
+# own request threads.
+ADMIN_READ_CONCURRENCY = int(os.getenv("ADMIN_READ_CONCURRENCY", "2"))
+ADMIN_READ_WAIT_SECONDS = float(os.getenv("ADMIN_READ_WAIT_SECONDS", "2"))
+_read_slots = threading.BoundedSemaphore(max(1, ADMIN_READ_CONCURRENCY))
+
+
+def admin_read_acquire(what="the pages already open"):
+    """Take one heavy-read slot, or raise AdminBusy past the short wait.
+    Returns True when a slot was taken (the caller must release it), False
+    when the cap is off (ADMIN_READ_CONCURRENCY <= 0) or off a request."""
+    if ADMIN_READ_CONCURRENCY <= 0 or not _in_request():
+        return False
+    if not _read_slots.acquire(timeout=max(0.0, ADMIN_READ_WAIT_SECONDS)):
+        raise AdminBusy(what)
+    return True
+
+
+def admin_read_release():
+    try:
+        _read_slots.release()
+    except ValueError:
+        log.warning("an admin read slot was released twice")
+
+
 def _payload_meta(meta, *buckets):
     """What every fleet payload carries about itself."""
     probs = _merge_problems(meta, *buckets)

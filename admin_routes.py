@@ -4540,7 +4540,7 @@ def admin_api_email_rows(current_user):
     try:
         out = admin_ops.email_rows(status=a.get("status", ""), email_type=a.get("type", ""), limit=a.get("limit"))
     except admin_ops.RowFilterError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     return jsonify(**out)
 
 
@@ -4563,7 +4563,7 @@ def admin_api_push_rows(current_user):
     try:
         out = admin_ops.push_rows(status=a.get("status", ""), limit=a.get("limit"))
     except admin_ops.RowFilterError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     return jsonify(**out)
 
 
@@ -6836,6 +6836,47 @@ def _admin_busy(e):
     resp.headers["Retry-After"] = str(e.retry_after)
     resp.headers["X-Admin-Busy"] = "1"
     return resp
+
+
+# The console reads that never take a heavy-read slot (admin audit 10/27/26
+# P-05, admin_ops.ADMIN_READ_CONCURRENCY): the rail's poll, search, the task
+# and job polls, and reads of one row by its id. Every other GET under
+# /admin/api/ on this blueprint takes one; /admin/api/ops/state (status_bp)
+# never does. An endpoint is named here by its view function.
+_ADMIN_SLIM_READS = frozenset({
+    # the rail poll and the palette
+    "admin_api_badges", "admin_api_search",
+    # task and job polls
+    "admin_api_task", "admin_api_admin_job", "admin_api_pos_export_status", "admin_client_setup_status",
+    "admin_menu_extract_status",
+    # one row, or one restaurant's own short list, by id
+    "admin_api_ai_call", "admin_get_brand", "admin_api_client_settings", "admin_api_user_security",
+    "admin_list_templates", "admin_api_support_notes", "admin_api_rpower_store", "admin_api_brief_deliveries",
+    "admin_api_intake", "admin_api_offboarding", "admin_api_job_runs", "admin_api_issue_resolutions",
+})
+
+
+@admin_bp.before_request
+def _admin_read_slot_take():
+    """A heavy console GET takes one of the process's admin read slots
+    before it runs (P-05); past the short wait it is refused 503 busy with
+    Retry-After by _admin_busy. A request with no session cookie is answered
+    401 by admin_required without reading anything, so it takes no slot."""
+    from flask import g as _g_rs
+    if (request.method != "GET" or not (request.path or "").startswith("/admin/api/")
+            or (request.endpoint or "").rsplit(".", 1)[-1] in _ADMIN_SLIM_READS
+            or not request.cookies.get("session_token")):
+        return None
+    if _admin_ops_c.admin_read_acquire():
+        _g_rs._admin_read_slot = True
+    return None
+
+
+@admin_bp.teardown_request
+def _admin_read_slot_give(exc):
+    from flask import g as _g_rs
+    if _g_rs.pop("_admin_read_slot", False):
+        _admin_ops_c.admin_read_release()
 
 
 @admin_bp.after_app_request

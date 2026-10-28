@@ -305,3 +305,49 @@ def test_w15h_parts_get_the_same_checks_as_a_new_note(app, db_path, parts, word)
     assert models.get_staff_notes(rid, db_path=db_path) == [], "refused whole, nothing written"
     assert _post(c, f"/admin/staff-notes/{rid}", {"employee_name": "", "notes": "x",
                                                    "parts": [{"text": "x"}]}).status_code == 400
+
+
+# ── P-05 contract 7: the server caps the console's heavy reads ───────────────
+
+def _hold_all_read_slots(monkeypatch):
+    import threading
+    sem = threading.BoundedSemaphore(2)
+    assert sem.acquire(timeout=1) and sem.acquire(timeout=1)
+    monkeypatch.setattr(admin_ops, "_read_slots", sem)
+    monkeypatch.setattr(admin_ops, "ADMIN_READ_WAIT_SECONDS", 0.05)
+    return sem
+
+
+def test_p05_a_heavy_read_past_the_cap_is_refused_busy_with_retry_after(app, db_path, monkeypatch):
+    c, _uid = _admin(app, db_path)
+    _hold_all_read_slots(monkeypatch)
+    r = c.get("/admin/api/overview")
+    assert r.status_code == 503 and r.headers["Retry-After"] == str(admin_ops.BUSY_RETRY_AFTER)
+    d = r.get_json()
+    assert d["busy"] is True and d["retry_after"] == admin_ops.BUSY_RETRY_AFTER and r.headers["X-Admin-Busy"] == "1"
+    for slim in ("/admin/api/badges", "/admin/api/search?q=gr", "/admin/api/tasks/nope"):
+        assert c.get(slim).status_code != 503, f"{slim} is a slim read and never waits"
+
+
+def test_p05_a_slot_is_given_back_after_every_read_even_a_failed_one(app, db_path, monkeypatch):
+    import threading
+    sem = threading.BoundedSemaphore(2)
+    monkeypatch.setattr(admin_ops, "_read_slots", sem)
+    c, _uid = _admin(app, db_path)
+    monkeypatch.setattr(admin_ops, "emails", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+    for _ in range(3):
+        assert c.get("/admin/api/emails").status_code == 500
+        assert c.get("/admin/api/notifications").status_code == 200
+    assert sem.acquire(timeout=0.01) and sem.acquire(timeout=0.01), "both slots came back"
+    sem.release()
+    sem.release()
+
+
+def test_p05_an_anonymous_request_takes_no_slot_and_off_a_request_nothing_waits(app, db_path, monkeypatch):
+    _hold_all_read_slots(monkeypatch)
+    assert app.test_client().get("/admin/api/overview").status_code == 401, "answered by admin_required, no slot"
+    assert admin_ops.admin_read_acquire() is False, "the scheduler, scripts and tests never take a slot"
+    monkeypatch.setattr(admin_ops, "ADMIN_READ_CONCURRENCY", 0)
+    c, _uid = _admin(app, db_path)
+    assert c.get("/admin/api/emails").status_code == 200, "0 turns the cap off"
