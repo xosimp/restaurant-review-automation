@@ -3366,6 +3366,8 @@ def overview():
             "integrations_active": sum(1 for r in real for i in r["integrations"] if i["state"] == "connected"),
             "integrations_failing": sum(1 for r in real for i in r["integrations"] if i["state"] == "error"),
             "ai_calls_today": ai_today.get("n") or 0, "ai_cost_today": float(ai_today.get("cost") or 0),
+            # Which clock "today" is (K-09): the AI page's budget day is UTC.
+            "ai_today_label": WINDOW_LABELS["today"],
             "ai_failures_24h": ai_failed_24h.get("n") or 0,
             "ai_failed_scope": AI_FAILED_SCOPE, "ai_failed_label": AI_FAILED_LABEL,
             # AI-quality findings are reported apart from failed jobs (#58).
@@ -4094,6 +4096,11 @@ def ai_ops(days=30):
                              f"SUM(CASE WHEN {_OUTCOME_SQL}='blocked' THEN COALESCE(attempts,1) ELSE 0 END) AS blocked "
                              f"FROM ai_usage WHERE created_at >= ?", (since,)) or {}
     t_today = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
+    # The owner's day beside the budget's (admin audit 10/27/26 K-09): the
+    # ceilings reset at midnight UTC, Overview and the Operations card count
+    # from midnight Central — both are here, each named, so the page never
+    # shows one clock's "today" under the other's.
+    t_today_ct = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (_utc_stamp(_today_start()),)) or {}
     t_month = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (month,)) or {}
     by_action = _by_action(conn, since)
     by_client = _rows_dict(conn, f"SELECT a.restaurant_id, r.name, r.location_group, SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END) AS calls, "
@@ -4172,8 +4179,9 @@ def ai_ops(days=30):
     daily = [by_day.get(day) or {"day": day, "calls": 0, "cost": 0.0, "data_api_cost": 0.0}
              for day in ((first + timedelta(days=i)).isoformat() for i in range(days))]
     return {"ok": True, "days": days, "window_tz": "UTC", "generated_at": _utcnow().strftime(_ZFMT),
-            "labels": {"cost_card": "AI & data APIs"},
-            "totals": {**totals, "today": t_today, "month": t_month}, "by_action": by_action,
+            "labels": {"cost_card": "AI & data APIs", "today": "today (UTC, the budget's day)",
+                       "today_ct": "today (since midnight Central)", "month": "this month (UTC)"},
+            "totals": {**totals, "today": t_today, "today_ct": t_today_ct, "month": t_month}, "by_action": by_action,
             "by_client": by_client, "daily": daily, "by_provider": by_provider, "by_vendor": by_vendor,
             "outcomes": outcomes, "blocked": blocked, "rate_limit_hits": rate_hits,
             "failures": failures, "recent": recent, "anomalies": anomalies,

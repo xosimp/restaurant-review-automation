@@ -285,3 +285,22 @@ def test_k08_failed_ai_calls_mean_one_thing_on_every_screen(db_path):
     rec = next(r for r in admin_ops.clients()["clients"] if r["id"] == rid)["ai"]
     assert ov["ai_failures_24h"] == tab["n_24h"] == rec["failed_7d"] == rec["failed_30d"] == 1
     assert tab["not_ok_24h"] == 3 and tab["scope"] == ov["ai_failed_scope"] == rec["failed_scope"] == "Claude"
+
+
+# ── K-09: each "today" names its clock, and the AI page carries both ───────
+
+def test_k09_the_ai_page_carries_the_owner_day_beside_the_budget_day(db_path):
+    rid = _rest(db_path, "Clock Cafe", billing_status="active")
+    now = datetime.now(timezone.utc)
+    utc_mid = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    ct_mid = admin_ops._today_start().astimezone(timezone.utc)
+    lo, hi = sorted([utc_mid, ct_mid])
+    mid = lo + (hi - lo) / 2
+    ai_utils.log_ai_usage(rid, "insights", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=1.0)
+    _sql(db_path, "UPDATE ai_usage SET created_at=?", (mid.strftime("%Y-%m-%d %H:%M:%S"),))
+    ov = admin_ops.overview()["kpis"]
+    ai = admin_ops.ai_ops(30)
+    assert ai["totals"]["today_ct"]["calls"] == ov["ai_calls_today"]
+    assert ai["totals"]["today"]["calls"] != ai["totals"]["today_ct"]["calls"]
+    assert "UTC" in ai["labels"]["today"] and "Central" in ai["labels"]["today_ct"]
+    assert "Central" in ov["ai_today_label"]
