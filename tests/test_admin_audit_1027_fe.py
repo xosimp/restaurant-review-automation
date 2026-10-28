@@ -418,3 +418,13 @@ def test_one_dot_one_pill_and_the_house_check_disc():
     assert h == '<span class="pill bad"><i></i>Critical</span>' and i == '<span class="pill bad"><i></i>Error</span>'
     assert unk == "off"
     assert 'class="dot ring ${JOB_DOT[j.state]' in _fn("jobRow") and 'class="dot ring ${c}"' in _fn("changesList")
+
+
+def test_the_integrations_list_has_a_labelled_header_on_fixed_columns():
+    head = _decl("INT_HEAD")
+    for w, label in (("190px", ">State<"), ("56px", ">Last ok<")):
+        assert w in head and label in head
+    ig = _fn("opsIntegrations")
+    assert "${rows.length ? INT_HEAD : ''}" in ig
+    for w in ("width:190px;flex-shrink:0", "width:56px;flex-shrink:0", "width:180px;flex-shrink:0"):
+        assert w in ig, w                                        # each row uses the header's widths
