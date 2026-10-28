@@ -388,6 +388,32 @@ def _merge_problems(*buckets):
     return out
 
 
+def _reports_failures(fn):
+    """A payload function's reads under one collection scope (admin audit
+    10/27/26 O5): _rows_dict / _one_dict never raise, and with no scope on
+    the stack a failed read reached no payload — a failed job_failures read
+    drew "No job failures recorded", a failed by-action read an empty table.
+    The returned dict now carries `query_errors`, `unavailable` and
+    `read_failed` (the failed queries' labels), and `errors` where that key
+    is free, which the console's errBanner / readFailed already draw."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _collecting() as bucket:
+            out = fn(*args, **kwargs)
+        if isinstance(out, dict):
+            probs = _merge_problems(bucket)
+            out.setdefault("errors", probs["errors"])
+            out["query_errors"] = probs["errors"] + [e for e in out.get("query_errors") or []
+                                                     if e not in probs["errors"]]
+            out["unavailable"] = probs["unavailable"] + [e for e in out.get("unavailable") or []
+                                                         if e not in probs["unavailable"]]
+            out["read_failed"] = sorted({e.get("query") for e in out["query_errors"] if e.get("query")})
+        return out
+    return wrapper
+
+
 # ── boot-time schema (never on a request path) ──────────────────────────────
 
 _BOOT_SQL = (
@@ -4150,6 +4176,7 @@ def ai_anomaly_issues(anomalies=None):
     return out
 
 
+@_reports_failures
 def ai_ops(days=30):
     """The AI page (Operations → AI): spend, calls and every outcome by
     vendor, action and client; blocked calls by reason; p50/p95 latency by
@@ -4159,75 +4186,77 @@ def ai_ops(days=30):
     ceilings use (AIOPS-20)."""
     import ai_utils as _ai
     conn = get_conn()
-    since = _utc_since(days)
-    today = _utc_today()
-    month = _utc_month()
-    calls_sql = f"SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END)"
-    totals = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost, COALESCE(SUM(input_tokens),0) AS tin, COALESCE(SUM(output_tokens),0) AS tout, "
-                             f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),0),2) AS data_api_cost, "
-                             f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}<>'google_places' THEN cost_usd ELSE 0 END),0),2) AS ai_cost, "
-                             f"SUM(CASE WHEN {_OUTCOME_SQL}='blocked' THEN COALESCE(attempts,1) ELSE 0 END) AS blocked "
-                             f"FROM ai_usage WHERE created_at >= ?", (since,)) or {}
-    t_today = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
-    # The owner's day beside the budget's (admin audit 10/27/26 K-09): the
-    # ceilings reset at midnight UTC, Overview and the Operations card count
-    # from midnight Central — both are here, each named, so the page never
-    # shows one clock's "today" under the other's.
-    t_today_ct = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (_utc_stamp(_today_start()),)) or {}
-    t_month = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (month,)) or {}
-    # What customer accounts cost — the numerator of "per account" (admin
-    # audit 10/27/26 K-12): the window's total also carries demo and internal
-    # accounts and the platform's own unattributed calls, and dividing it by
-    # the customer accounts overstated what one customer costs.
-    cust = f"(restaurant_id IS NOT NULL AND restaurant_id NOT IN ({_INTERNAL_RIDS_SQL}))"
-    t_customer = _one_dict(conn, f"SELECT ROUND(COALESCE(SUM(CASE WHEN {cust} THEN cost_usd ELSE 0 END),0),2) AS cost, "
-                                 f"ROUND(COALESCE(SUM(CASE WHEN {cust} AND {_VENDOR_SQL}<>'google_places' THEN cost_usd ELSE 0 END),0),2) AS ai_cost, "
-                                 f"ROUND(COALESCE(SUM(CASE WHEN {cust} AND {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),0),2) AS data_api_cost, "
-                                 f"COUNT(DISTINCT CASE WHEN {cust} THEN restaurant_id END) AS accounts "
-                                 f"FROM ai_usage WHERE created_at >= ?", (since,)) or {}
-    by_action = _by_action(conn, since)
-    by_client = _rows_dict(conn, f"SELECT a.restaurant_id, r.name, r.location_group, SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END) AS calls, "
-                                 f"ROUND(SUM(a.cost_usd),4) AS cost, "
-                                 f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN a.cost_usd ELSE 0 END),4) AS data_api_cost, "
-                                 f"SUM(CASE WHEN {_OUTCOME_SQL} NOT IN ('ok','blocked') THEN 1 ELSE 0 END) AS not_ok "
-                                 f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? "
-                                 f"GROUP BY a.restaurant_id, r.name, r.location_group ORDER BY cost DESC", (since,))
-    daily = _rows_dict(conn, f"SELECT substr(created_at,1,10) AS day, {calls_sql} AS calls, ROUND(SUM(cost_usd),4) AS cost, "
-                             f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),4) AS data_api_cost "
-                             f"FROM ai_usage WHERE created_at >= ? GROUP BY day ORDER BY day", (since,))
-    by_vendor = _rows_dict(conn, f"SELECT {_VENDOR_SQL} AS vendor, {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),4) AS cost, "
-                                 f"SUM(CASE WHEN {_OUTCOME_SQL}='error' THEN 1 ELSE 0 END) AS errors, "
+    try:
+        since = _utc_since(days)
+        today = _utc_today()
+        month = _utc_month()
+        calls_sql = f"SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END)"
+        totals = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost, COALESCE(SUM(input_tokens),0) AS tin, COALESCE(SUM(output_tokens),0) AS tout, "
+                                 f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),0),2) AS data_api_cost, "
+                                 f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}<>'google_places' THEN cost_usd ELSE 0 END),0),2) AS ai_cost, "
                                  f"SUM(CASE WHEN {_OUTCOME_SQL}='blocked' THEN COALESCE(attempts,1) ELSE 0 END) AS blocked "
-                                 f"FROM ai_usage WHERE created_at >= ? GROUP BY 1 ORDER BY cost DESC", (since,))
-    outcomes = {o: 0 for o in _OUTCOME_KEYS}
-    for r in _rows_dict(conn, f"SELECT {_OUTCOME_SQL} AS outcome, SUM({_WEIGHT_SQL}) AS n FROM ai_usage WHERE created_at >= ? GROUP BY 1", (since,)):
-        outcomes[r["outcome"] if r["outcome"] in outcomes else "error"] += int(r["n"] or 0)
-    blocked = _rows_dict(conn, f"SELECT COALESCE(reason,'unknown') AS reason, {_VENDOR_SQL} AS vendor, SUM(COALESCE(attempts,1)) AS n, "
-                               f"MAX(created_at) AS last_at FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL}='blocked' "
-                               f"GROUP BY 1, 2 ORDER BY n DESC", (since,))
-    rate_hits = _rows_dict(conn, "SELECT bucket, SUM(hits) AS hits FROM ai_rate_hits WHERE day >= date(?) GROUP BY bucket ORDER BY hits DESC", (since,))
-    # The latest error per group, not the alphabetically greatest (AIOPS-20).
-    failures = _rows_dict(conn, f"""SELECT g.job, g.model, g.outcome, g.n, g.last_at, b.error AS sample FROM (
-                                       SELECT action AS job, model, {_OUTCOME_SQL} AS outcome, COUNT(*) AS n,
-                                              MAX(created_at) AS last_at, MAX(id) AS last_id
-                                       FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL} NOT IN ('ok','blocked')
-                                       GROUP BY 1, 2, 3) g
-                                   JOIN ai_usage b ON b.id = g.last_id ORDER BY g.n DESC""", (since,))
-    failed_total = _one_dict(conn, f"SELECT SUM(CASE WHEN {_FAILED_CALL_SQL} THEN 1 ELSE 0 END) AS n, "
-                                   f"SUM(CASE WHEN {_FAILED_CALL_SQL} AND created_at >= ? THEN 1 ELSE 0 END) AS n_24h, "
-                                   f"SUM(CASE WHEN {_NOT_OK_CALL_SQL} THEN 1 ELSE 0 END) AS not_ok, "
-                                   f"SUM(CASE WHEN {_NOT_OK_CALL_SQL} AND created_at >= ? THEN 1 ELSE 0 END) AS not_ok_24h "
-                                   f"FROM ai_usage WHERE created_at >= ?", (_utc_since(1), _utc_since(1), since)) or {}
-    recent = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name, a.action, a.model, {_VENDOR_SQL} AS vendor, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, "
-                              f"COALESCE(a.status,'ok') AS status, {_OUTCOME_SQL} AS outcome, a.stop_reason, a.reason, a.attempts, a.latency_ms, a.\"trigger\" AS \"trigger\", a.call_id, a.correlation_id, a.error "
-                              f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
-    recent_failed = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.created_at, {_OUTCOME_SQL} AS outcome, a.reason, a.error, a.call_id "
-                                     f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE {_OUTCOME_SQL} NOT IN ('ok','blocked') ORDER BY a.id DESC LIMIT 40")
-    watch = budget_watch(conn)
-    anomalies = ai_anomalies(days=min(days, 14), conn=conn)
-    quality = _rows_dict(conn, "SELECT surface, kind, SUM(n) AS n, MAX(created_at) AS last_at FROM ai_quality_events "
-                               "WHERE created_at >= ? GROUP BY surface, kind ORDER BY n DESC", (since,))
-    conn.close()
+                                 f"FROM ai_usage WHERE created_at >= ?", (since,)) or {}
+        t_today = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
+        # The owner's day beside the budget's (admin audit 10/27/26 K-09): the
+        # ceilings reset at midnight UTC, Overview and the Operations card count
+        # from midnight Central — both are here, each named, so the page never
+        # shows one clock's "today" under the other's.
+        t_today_ct = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (_utc_stamp(_today_start()),)) or {}
+        t_month = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (month,)) or {}
+        # What customer accounts cost — the numerator of "per account" (admin
+        # audit 10/27/26 K-12): the window's total also carries demo and internal
+        # accounts and the platform's own unattributed calls, and dividing it by
+        # the customer accounts overstated what one customer costs.
+        cust = f"(restaurant_id IS NOT NULL AND restaurant_id NOT IN ({_INTERNAL_RIDS_SQL}))"
+        t_customer = _one_dict(conn, f"SELECT ROUND(COALESCE(SUM(CASE WHEN {cust} THEN cost_usd ELSE 0 END),0),2) AS cost, "
+                                     f"ROUND(COALESCE(SUM(CASE WHEN {cust} AND {_VENDOR_SQL}<>'google_places' THEN cost_usd ELSE 0 END),0),2) AS ai_cost, "
+                                     f"ROUND(COALESCE(SUM(CASE WHEN {cust} AND {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),0),2) AS data_api_cost, "
+                                     f"COUNT(DISTINCT CASE WHEN {cust} THEN restaurant_id END) AS accounts "
+                                     f"FROM ai_usage WHERE created_at >= ?", (since,)) or {}
+        by_action = _by_action(conn, since)
+        by_client = _rows_dict(conn, f"SELECT a.restaurant_id, r.name, r.location_group, SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END) AS calls, "
+                                     f"ROUND(SUM(a.cost_usd),4) AS cost, "
+                                     f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN a.cost_usd ELSE 0 END),4) AS data_api_cost, "
+                                     f"SUM(CASE WHEN {_OUTCOME_SQL} NOT IN ('ok','blocked') THEN 1 ELSE 0 END) AS not_ok "
+                                     f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? "
+                                     f"GROUP BY a.restaurant_id, r.name, r.location_group ORDER BY cost DESC", (since,))
+        daily = _rows_dict(conn, f"SELECT substr(created_at,1,10) AS day, {calls_sql} AS calls, ROUND(SUM(cost_usd),4) AS cost, "
+                                 f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),4) AS data_api_cost "
+                                 f"FROM ai_usage WHERE created_at >= ? GROUP BY day ORDER BY day", (since,))
+        by_vendor = _rows_dict(conn, f"SELECT {_VENDOR_SQL} AS vendor, {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),4) AS cost, "
+                                     f"SUM(CASE WHEN {_OUTCOME_SQL}='error' THEN 1 ELSE 0 END) AS errors, "
+                                     f"SUM(CASE WHEN {_OUTCOME_SQL}='blocked' THEN COALESCE(attempts,1) ELSE 0 END) AS blocked "
+                                     f"FROM ai_usage WHERE created_at >= ? GROUP BY 1 ORDER BY cost DESC", (since,))
+        outcomes = {o: 0 for o in _OUTCOME_KEYS}
+        for r in _rows_dict(conn, f"SELECT {_OUTCOME_SQL} AS outcome, SUM({_WEIGHT_SQL}) AS n FROM ai_usage WHERE created_at >= ? GROUP BY 1", (since,)):
+            outcomes[r["outcome"] if r["outcome"] in outcomes else "error"] += int(r["n"] or 0)
+        blocked = _rows_dict(conn, f"SELECT COALESCE(reason,'unknown') AS reason, {_VENDOR_SQL} AS vendor, SUM(COALESCE(attempts,1)) AS n, "
+                                   f"MAX(created_at) AS last_at FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL}='blocked' "
+                                   f"GROUP BY 1, 2 ORDER BY n DESC", (since,))
+        rate_hits = _rows_dict(conn, "SELECT bucket, SUM(hits) AS hits FROM ai_rate_hits WHERE day >= date(?) GROUP BY bucket ORDER BY hits DESC", (since,))
+        # The latest error per group, not the alphabetically greatest (AIOPS-20).
+        failures = _rows_dict(conn, f"""SELECT g.job, g.model, g.outcome, g.n, g.last_at, b.error AS sample FROM (
+                                           SELECT action AS job, model, {_OUTCOME_SQL} AS outcome, COUNT(*) AS n,
+                                                  MAX(created_at) AS last_at, MAX(id) AS last_id
+                                           FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL} NOT IN ('ok','blocked')
+                                           GROUP BY 1, 2, 3) g
+                                       JOIN ai_usage b ON b.id = g.last_id ORDER BY g.n DESC""", (since,))
+        failed_total = _one_dict(conn, f"SELECT SUM(CASE WHEN {_FAILED_CALL_SQL} THEN 1 ELSE 0 END) AS n, "
+                                       f"SUM(CASE WHEN {_FAILED_CALL_SQL} AND created_at >= ? THEN 1 ELSE 0 END) AS n_24h, "
+                                       f"SUM(CASE WHEN {_NOT_OK_CALL_SQL} THEN 1 ELSE 0 END) AS not_ok, "
+                                       f"SUM(CASE WHEN {_NOT_OK_CALL_SQL} AND created_at >= ? THEN 1 ELSE 0 END) AS not_ok_24h "
+                                       f"FROM ai_usage WHERE created_at >= ?", (_utc_since(1), _utc_since(1), since)) or {}
+        recent = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name, a.action, a.model, {_VENDOR_SQL} AS vendor, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, "
+                                  f"COALESCE(a.status,'ok') AS status, {_OUTCOME_SQL} AS outcome, a.stop_reason, a.reason, a.attempts, a.latency_ms, a.\"trigger\" AS \"trigger\", a.call_id, a.correlation_id, a.error "
+                                  f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
+        recent_failed = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.created_at, {_OUTCOME_SQL} AS outcome, a.reason, a.error, a.call_id "
+                                         f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE {_OUTCOME_SQL} NOT IN ('ok','blocked') ORDER BY a.id DESC LIMIT 40")
+        watch = budget_watch(conn)
+        anomalies = ai_anomalies(days=min(days, 14), conn=conn)
+        quality = _rows_dict(conn, "SELECT surface, kind, SUM(n) AS n, MAX(created_at) AS last_at FROM ai_quality_events "
+                                   "WHERE created_at >= ? GROUP BY surface, kind ORDER BY n DESC", (since,))
+    finally:
+        conn.close()
     by_provider = [{"provider": _PROVIDER_LABELS.get(v["vendor"], v["vendor"]), "calls": v["calls"], "cost": v["cost"]}
                    for v in by_vendor]
     for v in by_vendor:
@@ -4278,6 +4307,7 @@ def ai_ops(days=30):
             "recent_failed": recent_failed}
 
 
+@_reports_failures
 def validation_rates(days=30):
     """Response Validation Layer catch rates (internal only): per surface
     the outputs validated and their verdicts, and per surface × rule how
@@ -4331,6 +4361,7 @@ def validation_rates(days=30):
             "modes": modes, "shadow": [m["surface"] for m in modes if m["mode"] == "shadow"], "trend": trend}
 
 
+@_reports_failures
 def ai_quality(days=30, restaurant_id=None):
     """The AI Quality panel (#69): the validation verdict mix and top rules
     by surface with a trend and each surface's mode; the model in force per
@@ -4462,6 +4493,7 @@ def _client_validation(restaurant_id, since):
     return {"by_surface": out}
 
 
+@_reports_failures
 def ai_client(rid, days=30):
     """One client's AI (#48, #122, #124): spend against its own ceilings
     (AI by tier, and Google Places) with pct, warn and when a pause lifts;
@@ -4559,6 +4591,7 @@ def _month_word(m):
         return str(m or "")
 
 
+@_reports_failures
 def ai_calls(restaurant_id=None, action=None, correlation_id=None, limit=50):
     """Traced calls, newest first (#117) — ids, hashes, outcome and timing;
     no prompt or output text (ai_call_detail has that)."""
@@ -4580,6 +4613,7 @@ def ai_calls(restaurant_id=None, action=None, correlation_id=None, limit=50):
     return {"ok": True, "calls": rows}
 
 
+@_reports_failures
 def ai_call_detail(call_id):
     """One traced call: its prompt and output (guest contact details and
     names redacted, kept for the newest calls only), the ledger row, the
@@ -5068,7 +5102,7 @@ def _job_rows(conn, overdue):
             r["state"] = ("running" if r["finished_at"] is None else _RUN_STATES.get(r["ok"], "failed"))
             hist.setdefault(r["job"], []).append(r)
     except Exception as e:
-        log.warning("job history unreadable: %s", e)
+        _note_failure("job_runs_history", e)
     stats = {r["job"]: r for r in _rows_dict(
         conn, "SELECT job, MAX(CASE WHEN ok IN (1,2) THEN finished_at END) AS last_ok, "
               "ROUND(AVG(CASE WHEN ok IN (1,2) THEN duration_ms END)) AS avg_ms, COUNT(*) AS runs, "
@@ -5106,54 +5140,57 @@ def _job_rows(conn, overdue):
     return out
 
 
+@_reports_failures
 def jobs():
     import ops as _ops
     conn = get_conn()
-    # Windows in SQL, against the UTC stamps job_runs and job_failures carry:
-    # Python's local now() was right only on a UTC host (JOBS-5).
-    failures = _rows_dict(conn, "SELECT id, job, error, context, created_at, restaurant_id, kind FROM job_failures "
-                                "ORDER BY id DESC LIMIT 100") if _has_cols(conn, "job_failures", ("restaurant_id", "kind")) \
-        else _rows_dict(conn, "SELECT id, job, error, context, created_at FROM job_failures ORDER BY id DESC LIMIT 100")
-    # One group per job AND kind (#58): an AI output finding or a console
-    # request error is never folded into a job's failure count — the page
-    # guessed each group's kind from the newest hundred rows.
-    if _has_cols(conn, "job_failures", ("kind",)):
-        # The kind is folded once in a derived table, so the sample's
-        # subquery compares a grouped column (Postgres refuses a subquery on
-        # an ungrouped f.kind; SQLite took it).
-        grouped = _rows_dict(conn, "SELECT f.job, f.kind, COUNT(*) AS n, MAX(f.created_at) AS last_at, "
-                                   "MIN(f.created_at) AS first_at, (SELECT g.error FROM job_failures g WHERE g.job=f.job "
-                                   "AND COALESCE(g.kind,'job')=f.kind ORDER BY g.id DESC LIMIT 1) AS sample "
-                                   "FROM (SELECT job, COALESCE(kind,'job') AS kind, created_at FROM job_failures "
-                                   "WHERE created_at >= datetime('now', '-7 days')) f "
-                                   "GROUP BY f.job, f.kind ORDER BY n DESC")
-    else:
-        grouped = _rows_dict(conn, "SELECT f.job, COUNT(*) AS n, MAX(f.created_at) AS last_at, MIN(f.created_at) AS first_at, "
-                                   "(SELECT g.error FROM job_failures g WHERE g.job=f.job ORDER BY g.id DESC LIMIT 1) AS sample "
-                                   "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') GROUP BY f.job ORDER BY n DESC")
-        for g in grouped:
-            g["kind"] = _job_failure_kind({"job": g["job"], "error": g["sample"]}, False)
-    runs = _rows_dict(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
-    last_ok = _rows_dict(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs "
-                               "FROM job_runs WHERE ok IN (1, 2) AND started_at >= datetime('now', '-7 days') GROUP BY job")
-    overdue = _ops.jobs_overdue()
-    job_rows = _job_rows(conn, overdue)
-    # "Stuck" is each job's own bound now, not a flat 30 minutes.
-    stuck = [{"id": None, "job": j["job"], "started_at": j["running_since"], "context": None,
-              "bound_minutes": j["stuck_after_minutes"]} for j in job_rows if j["state"] == "stuck"]
     try:
-        posts = _rows_dict(conn, "SELECT p.id, r.name AS restaurant, p.platform, p.topic, p.scheduled_for, p.status, "
-                                 "p.attempts, p.error FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id "
-                                 "WHERE p.status IN ('scheduled','publishing','failed') ORDER BY p.scheduled_for LIMIT 40")
-    except Exception:
-        posts = []
-    try:
-        missed = _rows_dict(conn, "SELECT m.job, m.restaurant_id, r.name AS restaurant, m.local_date, m.detail, m.created_at "
-                                  "FROM missed_windows m LEFT JOIN restaurants r ON r.id=m.restaurant_id "
-                                  "WHERE m.created_at >= datetime('now', '-7 days') ORDER BY m.id DESC LIMIT 50")
-    except Exception:
-        missed = []
-    conn.close()
+        # Windows in SQL, against the UTC stamps job_runs and job_failures carry:
+        # Python's local now() was right only on a UTC host (JOBS-5).
+        failures = _rows_dict(conn, "SELECT id, job, error, context, created_at, restaurant_id, kind FROM job_failures "
+                                    "ORDER BY id DESC LIMIT 100") if _has_cols(conn, "job_failures", ("restaurant_id", "kind")) \
+            else _rows_dict(conn, "SELECT id, job, error, context, created_at FROM job_failures ORDER BY id DESC LIMIT 100")
+        # One group per job AND kind (#58): an AI output finding or a console
+        # request error is never folded into a job's failure count — the page
+        # guessed each group's kind from the newest hundred rows.
+        if _has_cols(conn, "job_failures", ("kind",)):
+            # The kind is folded once in a derived table, so the sample's
+            # subquery compares a grouped column (Postgres refuses a subquery on
+            # an ungrouped f.kind; SQLite took it).
+            grouped = _rows_dict(conn, "SELECT f.job, f.kind, COUNT(*) AS n, MAX(f.created_at) AS last_at, "
+                                       "MIN(f.created_at) AS first_at, (SELECT g.error FROM job_failures g WHERE g.job=f.job "
+                                       "AND COALESCE(g.kind,'job')=f.kind ORDER BY g.id DESC LIMIT 1) AS sample "
+                                       "FROM (SELECT job, COALESCE(kind,'job') AS kind, created_at FROM job_failures "
+                                       "WHERE created_at >= datetime('now', '-7 days')) f "
+                                       "GROUP BY f.job, f.kind ORDER BY n DESC")
+        else:
+            grouped = _rows_dict(conn, "SELECT f.job, COUNT(*) AS n, MAX(f.created_at) AS last_at, MIN(f.created_at) AS first_at, "
+                                       "(SELECT g.error FROM job_failures g WHERE g.job=f.job ORDER BY g.id DESC LIMIT 1) AS sample "
+                                       "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') GROUP BY f.job ORDER BY n DESC")
+            for g in grouped:
+                g["kind"] = _job_failure_kind({"job": g["job"], "error": g["sample"]}, False)
+        runs = _rows_dict(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
+        last_ok = _rows_dict(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs "
+                                   "FROM job_runs WHERE ok IN (1, 2) AND started_at >= datetime('now', '-7 days') GROUP BY job")
+        overdue = _ops.jobs_overdue()
+        job_rows = _job_rows(conn, overdue)
+        # "Stuck" is each job's own bound now, not a flat 30 minutes.
+        stuck = [{"id": None, "job": j["job"], "started_at": j["running_since"], "context": None,
+                  "bound_minutes": j["stuck_after_minutes"]} for j in job_rows if j["state"] == "stuck"]
+        try:
+            posts = _rows_dict(conn, "SELECT p.id, r.name AS restaurant, p.platform, p.topic, p.scheduled_for, p.status, "
+                                     "p.attempts, p.error FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id "
+                                     "WHERE p.status IN ('scheduled','publishing','failed') ORDER BY p.scheduled_for LIMIT 40")
+        except Exception:
+            posts = []
+        try:
+            missed = _rows_dict(conn, "SELECT m.job, m.restaurant_id, r.name AS restaurant, m.local_date, m.detail, m.created_at "
+                                      "FROM missed_windows m LEFT JOIN restaurants r ON r.id=m.restaurant_id "
+                                      "WHERE m.created_at >= datetime('now', '-7 days') ORDER BY m.id DESC LIMIT 50")
+        except Exception:
+            missed = []
+    finally:
+        conn.close()
     import status_manager
     try:
         heartbeat = status_manager.scheduler_state(_current_db_path())
@@ -5170,8 +5207,8 @@ def jobs():
         for j in _ops.inflight_async_jobs(limit=20):
             inflight.append({"kind": j["kind"], "id": j["job_id"], "status": j["status"],
                              "restaurant_id": j.get("restaurant_id"), "started": j.get("created_at")})
-    except Exception:
-        pass
+    except Exception as e:
+        _note_failure("async_jobs", e)
     try:
         import scheduler as _sched
         local_refused = not _sched.scheduling_allowed()
@@ -5180,8 +5217,9 @@ def jobs():
     try:
         from dsr import pipeline as _dsr_pipeline
         dsr_missing = _dsr_pipeline.nights_missing()
-    except Exception:
+    except Exception as e:
         dsr_missing = []
+        _note_failure("dsr_nights_missing", e)
     schedule = [{"job": j["job"], "cadence": j["cadence"], "runnable": j["runnable"], "sends": j["sends"],
                  "what": j["what"]} for j in job_rows]
     return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "heartbeat_minutes": hb, "failures": failures,
@@ -5319,6 +5357,7 @@ def unresolve_issue(key, actor=None):
     return {"ok": True}
 
 
+@_reports_failures
 def resolved_issues(limit=500):
     """Every resolution in force (a cleared condition retires its own, so
     this no longer grows without bound) and the newest history."""
@@ -5877,6 +5916,7 @@ def _weight_bucket(w):
     return "no weight logged"
 
 
+@_reports_failures
 def rank_learning(days=90, restaurant_id=None, include_internal=False):
     """Acceptance and measured outcome of shown recommendations, grouped by
     the effectiveness model's version and by the weight it gave (from each
@@ -6210,6 +6250,7 @@ def _google_connected(conn):
         return frozenset()
 
 
+@_reports_failures
 def recommendation_calibration(days=365, restaurant_id=None):
     """Each recommendation's predicted dollars (what it was shown with,
     rec_instances.dollar_value) against what its tracker measured
@@ -6468,6 +6509,7 @@ def confidence_calibration(days=365, restaurant_id=None):
                      "observed rate only at the floor; order judged on support-score snapshots only")}
 
 
+@_reports_failures
 def missed_detections(days=30, restaurant_id=None, limit=200):
     """Problems that surfaced — an alert, an issue, a close-out 86 — with no
     recommendation covering their subject shown in the days before
@@ -7509,6 +7551,7 @@ def client_timeline(rid, types=None, limit=100, before=None):
             "next_before": page[-1]["at"] if len(ev) > limit else None, **_merge_problems(bucket)}
 
 
+@_reports_failures
 def billing_live(rid):
     """One client's subscriptions straight from Stripe — for its own billing
     tab only, never the fleet list (#37). An error is this client's alone.

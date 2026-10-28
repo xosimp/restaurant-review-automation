@@ -388,3 +388,42 @@ def test_reinstate_is_offered_only_for_a_bounce_suppression(db_path):
     o = next(i for i in recs[opted]["issues"] if ":suppressed:" in i["key"])
     assert b["action_route"] == "/admin/api/suppressions/reinstate" and b["action_payload"] == {"email": "b@ex.com"}
     assert o["action_route"] is None and o["action_kind"] == "link" and "opted out" in o["detail"]
+
+
+# ── O5: a failed read is flagged, never drawn as zero or empty ─────────────
+
+def _fail_label(monkeypatch, label_or_table):
+    real_rows, real_one = admin_ops._rows_dict, admin_ops._one_dict
+
+    def hit(sql, label):
+        return (label or admin_ops._label_of(sql)) == label_or_table
+
+    def rows(conn, sql, args=(), label=None, optional=False):
+        if hit(sql, label):
+            admin_ops._note_failure(label or admin_ops._label_of(sql), RuntimeError("database is locked"))
+            return []
+        return real_rows(conn, sql, args, label=label, optional=optional)
+
+    def one(conn, sql, args=(), label=None, optional=False):
+        if hit(sql, label):
+            admin_ops._note_failure(label or admin_ops._label_of(sql), RuntimeError("database is locked"))
+            return None
+        return real_one(conn, sql, args, label=label, optional=optional)
+    monkeypatch.setattr(admin_ops, "_rows_dict", rows)
+    monkeypatch.setattr(admin_ops, "_one_dict", one)
+
+
+def test_o5_a_failed_job_failures_read_reaches_the_jobs_payload(db_path, monkeypatch):
+    _fail_label(monkeypatch, "job_failures")
+    out = admin_ops.jobs()
+    assert out["ok"] is True and out["failures"] == []
+    assert "job_failures" in out["read_failed"]
+    assert any(e["query"] == "job_failures" for e in out["query_errors"])
+
+
+def test_o5_a_failed_ai_read_reaches_the_ai_payload(db_path, monkeypatch):
+    _fail_label(monkeypatch, "ai_usage")
+    out = admin_ops.ai_ops(30)
+    assert "ai_usage" in out["read_failed"] and out["errors"]
+    client = admin_ops.ai_client(_rest(db_path, "Any Place", billing_status="active"))
+    assert "ai_usage" in client["read_failed"]
