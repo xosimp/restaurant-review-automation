@@ -608,6 +608,9 @@ Changed by the blind re-audit fix round (10/20/26, R6-F4/F5/F10 — `home_snapsh
 
 | Variable | Default | Read in |
 |---|---|---|
+| `ADMIN_API_5XX_BAD_PCT` | `"5"` | admin_ops.py — the console's API verdict is bad at this % of customer requests failing (5xx) in the window… (admin audit 10/27/26 C10; on `/admin/api/ops/state` and `/admin/api/system` as `thresholds.api_5xx_bad_pct`) |
+| `ADMIN_API_5XX_MIN_REQUESTS` | `"20"` | admin_ops.py — …with at least this many requests in it (`api_5xx_min_requests`) |
+| `ADMIN_API_P95_WARN_MS` | `"2000"` | admin_ops.py — the API reads slow (amber) past this p95 (`api_p95_warn_ms`) |
 | `ADMIN_BADGES_MAX_AGE_SECONDS` | `"300"` | admin_ops.py |
 | `ADMIN_BUSY_RETRY_AFTER` | `"5"` | admin_ops.py |
 | `ADMIN_CHURN_ISSUE_DAYS` | `"7"` | admin_ops.py |
@@ -617,10 +620,19 @@ Changed by the blind re-audit fix round (10/20/26, R6-F4/F5/F10 — `home_snapsh
 | `ADMIN_FLEET_WAIT_SECONDS` | `"30"` | admin_ops.py |
 | `ADMIN_HEAVY_CONCURRENCY` | `"1"` | admin_ops.py |
 | `ADMIN_HEAVY_WAIT_SECONDS` | `"2"` | admin_ops.py |
+| `ADMIN_JOB_FAIL_CRITICAL` | `"5"` | admin_ops.py — a job's failures with no store are a critical issue at this many in 24 hours (Audit #23 A6-04; env since admin audit 10/27/26 C10) |
+| `ADMIN_JOB_FAIL_MIN_STORES` | `"2"` | admin_ops.py — a job failing for stores is critical only for at least this many… |
+| `ADMIN_JOB_FAIL_STORE_SHARE` | `"0.05"` | admin_ops.py — …and more than this share of the customer stores |
 | `ADMIN_JOB_WORKERS` | `"2"` | admin_routes.py |
+| `ADMIN_MESSAGING_HEALTH_TTL_SECONDS` | `"60"` | admin_ops.py — how long a request thread shares one `/admin/api/messaging/health` reading (0 reads fresh every time; admin audit 10/27/26 P-20) |
 | `ADMIN_OPS_STATE_TTL_SECONDS` | `"60"` | admin_ops.py — how long a request thread shares one `/admin/api/ops/state` reading (0 reads fresh every time) |
 | `ADMIN_PLATFORM_ISSUES_TTL_SECONDS` | `"60"` | admin_ops.py — how long the platform issues are kept with the fleet memo on request threads (P-01) |
+| `ADMIN_PUSH_WAIT_WARN_MINUTES` | `"30"` | admin_ops.py — the push system turns amber when a push has waited longer than this to go out (`thresholds.push_wait_warn_minutes`) |
+| `ADMIN_READ_CONCURRENCY` | `"2"` | admin_ops.py — heavy console GET reads at once on this process's request threads; past `ADMIN_READ_WAIT_SECONDS` a read is refused 503 busy with `Retry-After` (the rail poll, search, task polls and single-row reads never wait; `0` turns the cap off — admin audit 10/27/26 P-05) |
+| `ADMIN_READ_WAIT_SECONDS` | `"2"` | admin_ops.py — how long a heavy console read waits for a slot before the 503 |
 | `ADMIN_RESOLUTION_MAX_DAYS` | `"30"` | admin_ops.py |
+| `ADMIN_RPOWER_429_WARN_SHARE` | `"0.01"` | admin_ops.py — Operations → RPOWER's requests cell is amber past this share of the day's requests answered 429 (`/admin/api/rpower-health` `thresholds.rpower_429_share_warn`) |
+| `ADMIN_RPOWER_SKIPPED_WARN_SHARE` | `"0.05"` | admin_ops.py — …or past this share held back (`rpower_skipped_share_warn`); the nightly budget cell's cut-off is `POS_BUDGET_ALERT_PCT` (`rpower_nightly_budget_warn_pct`) |
 | `ADMIN_SIGNED_UNPAID_CRIT_DAYS` | `"30"` | admin_ops.py |
 | `ADMIN_SIGNED_UNPAID_WARN_DAYS` | `"7"` | admin_ops.py |
 | `ADMIN_SOURCE_FAIL_ISSUE` | `"3"` | admin_ops.py |

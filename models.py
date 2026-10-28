@@ -8840,7 +8840,7 @@ def _write_parts(conn, note_id, parts, updated_by=None):
 
 def save_staff_note(restaurant_id: int, employee_name: str,
                     notes: str, db_path: str = DB_PATH, replace: bool = False,
-                    expires_on=None, updated_by: str = None, today=None) -> dict:
+                    expires_on=None, updated_by: str = None, today=None, restore_parts: list = None) -> dict:
     """Add a scheduling constraint for one person; {"id", "notes", "appended",
     "expires_on"}.
 
@@ -8855,7 +8855,12 @@ def save_staff_note(restaurant_id: int, employee_name: str,
 
     Each constraint is dated the day it was noted, and ends on `expires_on`
     (ISO or M/D/YY) or the date its own words give ("out until 6/1") —
-    after which every reader leaves it out (memory audit 9/29/26)."""
+    after which every reader leaves it out (memory audit 9/29/26).
+
+    `restore_parts` (the undo of a removal, admin audit 10/27/26 W15-h): the
+    removed constraints exactly as they were — each with its own noted and
+    end date — put back in place of `notes`. Any the person has again by
+    now (the same text) are not added twice; nothing they have is replaced."""
     from datetime import date
     name = (employee_name or "").strip()
     text = (notes or "").strip()
@@ -8863,6 +8868,13 @@ def save_staff_note(restaurant_id: int, employee_name: str,
     ends = _iso_or_none(expires_on) or staff_note_expiry(text, noted)
     part = {"text": text, "noted": noted, "expires": ends, "confirmed": None,
             "by": (updated_by or "").strip()[:120] or None}
+    restored = [{"text": str(p.get("text")).strip(), "noted": _iso_or_none(p.get("noted")) or noted,
+                 "expires": _iso_or_none(p.get("expires")), "confirmed": _iso_or_none(p.get("confirmed")),
+                 "by": (str(p.get("by") or "").strip()[:120] or None)}
+                for p in (restore_parts or []) if isinstance(p, dict) and str(p.get("text") or "").strip()]
+    if restored:
+        soonest = sorted(p["expires"] for p in restored if p.get("expires"))
+        ends = soonest[0] if soonest else None
     conn = get_conn(db_path)
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -8871,8 +8883,14 @@ def save_staff_note(restaurant_id: int, employee_name: str,
         appended = False
         if row is None:
             cur = conn.execute("INSERT INTO staff_notes (restaurant_id, employee_name, notes) VALUES (?,?,?)",
-                               (restaurant_id, name, text))
-            note_id, parts = cur.lastrowid, [part]
+                               (restaurant_id, name, _join_parts(restored) if restored else text))
+            note_id, parts = cur.lastrowid, (restored or [part])
+        elif restored:
+            note_id = row["id"]
+            existing = _note_parts(row)
+            have = {p["text"].lower() for p in existing}
+            new = [p for p in restored if p["text"].lower() not in have]
+            parts, appended = existing + new, bool(existing and new)
         else:
             note_id = row["id"]
             existing = _note_parts(row)
@@ -9049,13 +9067,16 @@ def delete_staff_note(note_id: int, db_path: str = DB_PATH, restaurant_id: int =
     went (fix round #142)."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT id, restaurant_id, employee_name, notes FROM staff_notes WHERE id=?",
-                           (note_id,)).fetchone()
+        row = conn.execute("SELECT * FROM staff_notes WHERE id=?", (note_id,)).fetchone()
         if row is None or (restaurant_id is not None and int(row["restaurant_id"]) != int(restaurant_id)):
             return None
         conn.execute("DELETE FROM staff_notes WHERE id=?", (note_id,))
         conn.commit()
-        return dict(row)
+        # `parts` too — each constraint with its own noted / end date — so an
+        # undo puts back every end date, not one for the joined text (admin
+        # audit 10/27/26 W15-h).
+        return {"id": row["id"], "restaurant_id": row["restaurant_id"], "employee_name": row["employee_name"],
+                "notes": row["notes"], "parts": _note_parts(row) or None}
     finally:
         conn.close()
 

@@ -701,13 +701,37 @@ def _served(m):
     return m["recs"], m["d"], dict(m["meta"], cached=True, age_seconds=round(time.monotonic() - m["at"], 1))
 
 
+_one_build = threading.local()
+
+
+@contextmanager
+def one_fleet_build():
+    """Off a request thread every payload builds the fleet fresh — a job
+    that read overview() and clients() built it twice (admin audit 10/27/26
+    P-16: the Monday operator digest). Inside this block the first build is
+    shared by every payload this thread reads, then dropped at the end, so a
+    long-running job still sees rows change between its runs."""
+    prev = getattr(_one_build, "held", None)
+    _one_build.held = {} if prev is None else prev
+    try:
+        yield
+    finally:
+        _one_build.held = prev
+
+
 def _records_cached():
     """(recs, d, meta) for a payload. meta = {generated_at, errors,
     unavailable, cached, age_seconds}."""
     if not _in_request() or FLEET_TTL_SECONDS <= 0:
+        held = getattr(_one_build, "held", None)
+        if held is not None and held.get("key") == _memo_key():
+            return held["recs"], held["d"], dict(held["meta"], cached=True)
         with _collecting() as bucket:
             recs, d = _records()
-        return recs, d, _build_meta(bucket)
+        meta = _build_meta(bucket)
+        if held is not None and not meta["errors"]:
+            held.update(key=_memo_key(), recs=recs, d=d, meta=meta)
+        return recs, d, meta
     deadline = time.monotonic() + FLEET_WAIT_SECONDS
     # ?fresh=1 (the console's Refresh) accepts a memo only seconds old —
     # still single-flight, so a burst of refreshes shares one build.
@@ -776,6 +800,41 @@ def heavy_slot(what):
         yield
     finally:
         _heavy_slots.release()
+
+
+# The console's heavy GET reads, bounded on the server (admin audit 10/27/26
+# P-05): concurrency was policed only in the browser, per page, at 3-4 — the
+# whole of gunicorn's four request threads — so one Operations landing could
+# hold three of them for 10-20 s at 1,500 restaurants while owners, iOS,
+# webhooks and /health shared the fourth. At most ADMIN_READ_CONCURRENCY run
+# at once on request threads; past ADMIN_READ_WAIT_SECONDS the request is
+# refused with AdminBusy (503 + Retry-After — the page retries once).
+# admin_routes takes the slot for every /admin/api/ GET on admin_bp except
+# its slim reads (_ADMIN_SLIM_READS: the rail poll, search, single-row reads
+# and task polls; /admin/api/ops/state is status_bp's and never takes one).
+# Per process by design, like ASK_MAX_CONCURRENT: it guards this process's
+# own request threads.
+ADMIN_READ_CONCURRENCY = int(os.getenv("ADMIN_READ_CONCURRENCY", "2"))
+ADMIN_READ_WAIT_SECONDS = float(os.getenv("ADMIN_READ_WAIT_SECONDS", "2"))
+_read_slots = threading.BoundedSemaphore(max(1, ADMIN_READ_CONCURRENCY))
+
+
+def admin_read_acquire(what="the pages already open"):
+    """Take one heavy-read slot, or raise AdminBusy past the short wait.
+    Returns True when a slot was taken (the caller must release it), False
+    when the cap is off (ADMIN_READ_CONCURRENCY <= 0) or off a request."""
+    if ADMIN_READ_CONCURRENCY <= 0 or not _in_request():
+        return False
+    if not _read_slots.acquire(timeout=max(0.0, ADMIN_READ_WAIT_SECONDS)):
+        raise AdminBusy(what)
+    return True
+
+
+def admin_read_release():
+    try:
+        _read_slots.release()
+    except ValueError:
+        log.warning("an admin read slot was released twice")
 
 
 def _payload_meta(meta, *buckets):
@@ -1548,6 +1607,16 @@ def _pos_integration(r, name, label, configured, auth):
             **({"error_since": _iso_z(auth_failed, "UTC")} if auth_failed else {})}
 
 
+def rpower_store_unchosen(r):
+    """A RPOWER token on file — the partner credential, or a legacy token —
+    with no store bound (rpower_store_mid): saved, but every call needs the
+    store, so nothing syncs until one is chosen (admin audit 10/27/26 F12;
+    rpower.is_connected's own rule)."""
+    get = r.get if isinstance(r, dict) else (lambda k, d=None: getattr(r, k, d))
+    return bool((get("rpower_credential_id") or str(get("rpower_token") or "").strip())
+                and not str(get("rpower_store_mid") or "").strip())
+
+
 def review_source(r):
     """(source, label) for how this location's Google reviews arrive.
     Places — a place id with reviews_live and no Business Profile — returns
@@ -1640,8 +1709,14 @@ def _integrations_for(r, hooks, d=None):
                          "token" if r.get("square_access_token") else "none"),
         _pos_integration(r, "clover", "Clover POS", bool(r.get("clover_api_token")),
                          "token" if r.get("clover_api_token") else "none"),
-        _pos_integration(r, "rpower", "RPOWER POS", bool(r.get("rpower_token") or r.get("rpower_store_mid")),
-                         "credential" if r.get("rpower_credential_id") else "token" if r.get("rpower_token") else "none"),
+        # A partner credential bound with no store chosen yet is configured
+        # — half-set-up, not "off" (admin audit 10/27/26 F12): it raises
+        # rpower_store_unchosen.
+        dict(_pos_integration(r, "rpower", "RPOWER POS",
+                              bool(r.get("rpower_token") or r.get("rpower_store_mid") or r.get("rpower_credential_id")),
+                              "credential" if r.get("rpower_credential_id") else "token" if r.get("rpower_token")
+                              else "none"),
+             store_unchosen=rpower_store_unchosen(r)),
         {"key": "instagram", "label": "Instagram & Facebook",
          "connected": bool(r.get("ig_token")) and (ig_days_left is None or ig_days_left >= 0),
          "configured": bool(r.get("ig_token")),
@@ -2317,9 +2392,24 @@ SOURCE_FAIL_ISSUE = int(os.getenv("ADMIN_SOURCE_FAIL_ISSUE", "3"))
 # A job failing for stores is critical past this share of the customer stores
 # (and at least JOB_FAIL_MIN_STORES of them); its failures with no store at
 # JOB_FAIL_CRITICAL (Audit #23 A6-04).
-JOB_FAIL_STORE_SHARE = 0.05
-JOB_FAIL_MIN_STORES = 2
-JOB_FAIL_CRITICAL = 5
+JOB_FAIL_STORE_SHARE = float(os.getenv("ADMIN_JOB_FAIL_STORE_SHARE", "0.05"))
+JOB_FAIL_MIN_STORES = int(os.getenv("ADMIN_JOB_FAIL_MIN_STORES", "2"))
+JOB_FAIL_CRITICAL = int(os.getenv("ADMIN_JOB_FAIL_CRITICAL", "5"))
+# The console's API verdict (ops_state's api system and the platform
+# error-rate issue): bad at API_5XX_BAD_PCT % of customer requests failing
+# with at least API_5XX_MIN_REQUESTS of them in the window, slow past
+# API_P95_WARN_MS at p95 (admin audit 10/27/26 C10: literals beside their
+# env siblings; the page read copies of them). platform_monitor's pager
+# rule (HTTP_5XX_ALERT_RATE / _MIN_REQUESTS) is a separate, stricter page.
+API_5XX_BAD_PCT = float(os.getenv("ADMIN_API_5XX_BAD_PCT", "5"))
+API_5XX_MIN_REQUESTS = int(os.getenv("ADMIN_API_5XX_MIN_REQUESTS", "20"))
+API_P95_WARN_MS = float(os.getenv("ADMIN_API_P95_WARN_MS", "2000"))
+# A push waiting longer than this to go out turns the push system amber.
+PUSH_WAIT_WARN_MINUTES = float(os.getenv("ADMIN_PUSH_WAIT_WARN_MINUTES", "30"))
+# Operations → RPOWER's request strip: amber past these shares of the day's
+# requests answered 429 or held back (skipped).
+RPOWER_429_WARN_SHARE = float(os.getenv("ADMIN_RPOWER_429_WARN_SHARE", "0.01"))
+RPOWER_SKIPPED_WARN_SHARE = float(os.getenv("ADMIN_RPOWER_SKIPPED_WARN_SHARE", "0.05"))
 # Sources whose failure is an issue sooner. The invoice feed's failure is
 # recorded once a day, and only after two business days with no file
 # (email_intake.watch_feeds) — it is already late when it is first recorded
@@ -2569,6 +2659,13 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
             add(f"int:{i['key']}", f"{i['label']} needs attention", sev, i.get("error_since") or i.get("last_success"),
                 label, route, detail, zone="UTC", occurrence=i.get("error_since") or i.get("last_success"),
                 occurrence_zone="UTC", action_kind=kind, action_href=href)
+    # A token saved, no store bound (F12): a multi-store partner token waits
+    # for the store choice, or a single store's bootstrap failed — nothing
+    # syncs, and it read RPOWER "off" with no prompt at all.
+    if rpower_store_unchosen(r):
+        add("rpower_store_unchosen", "RPOWER store not chosen", "warning", None, "Choose the store", None,
+            "A token is saved but no RPOWER store is bound, so nothing syncs. Open RPOWER token & sync and pick "
+            "the store the token can see.", action_kind="link", action_href=data_tab)
     # The rest of an RPOWER store's health from its rollup row (A6-01, A6-03,
     # A6-19, A6-23): the archive, the integrity checks, the data checks.
     rrow = (d.get("rpower") or {}).get(rid)
@@ -3277,7 +3374,7 @@ def _platform_issues(recs, d):
         from http_layer import request_metrics
         rm = request_metrics()
         facts["request_metrics"] = rm
-        if rm["requests"] >= 20 and rm["server_error_rate"] >= 5.0:
+        if rm["requests"] >= API_5XX_MIN_REQUESTS and rm["server_error_rate"] >= API_5XX_BAD_PCT:
             add("platform:error_rate", f"{rm['server_error_rate']:.0f}% of requests are 5xx", "critical",
                 detail=f"{rm['requests']} requests in the last {rm['window_seconds'] // 60} minutes.",
                 resolvable=False, action="Open engineering", action_kind="link", action_href="#engineering")
@@ -3751,21 +3848,24 @@ def _client_messaging(rid):
     return out
 
 
-def _client_job_rows(conn, rid, d):
+def _client_job_rows(conn, rid, d, before=None):
     """(job failures, job runs, AI-quality findings) for one restaurant — by
     job_failures.restaurant_id / job_runs.restaurant_id (workstream D) when
     the columns exist; before that, the context text matched exactly
-    ('restaurant_id=5' or 'rid=5', never 'rid=50'), never by name (#67)."""
+    ('restaurant_id=5' or 'rid=5', never 'rid=50'), never by name (#67).
+    `before` (a UTC 'YYYY-MM-DD HH:MM:SS') keeps the failures and findings
+    older than it, in the SQL — the timeline's older pages (P-18)."""
     rx = re.compile(r"\b(?:restaurant_id|rid)=%d\b" % int(rid))
+    b_sql, b_args = (" AND created_at < ?", (before,)) if before else ("", ())
     jf_cols = _columns(conn, "job_failures")
     kind_col = ", kind" if "kind" in jf_cols else ""
     if "restaurant_id" in jf_cols:
         rows = _rows_dict(conn, f"SELECT job, error, context, created_at{kind_col} FROM job_failures "
-                                "WHERE restaurant_id=? ORDER BY id DESC LIMIT 80", (rid,))
+                                f"WHERE restaurant_id=?{b_sql} ORDER BY id DESC LIMIT 80", (rid, *b_args))
     else:
         rows = [j for j in _rows_dict(conn, "SELECT job, error, context, created_at FROM job_failures "
-                                            "WHERE context LIKE ? OR context LIKE ? ORDER BY id DESC LIMIT 400",
-                                      (f"%restaurant_id={rid}%", f"%rid={rid}%"))
+                                            f"WHERE (context LIKE ? OR context LIKE ?){b_sql} ORDER BY id DESC LIMIT 400",
+                                      (f"%restaurant_id={rid}%", f"%rid={rid}%", *b_args))
                 if rx.search(j.get("context") or "")][:80]
     has_kind = "kind" in jf_cols
     jobs = [j for j in rows if _job_failure_kind(j, has_kind) == "job"][:40]
@@ -3775,7 +3875,7 @@ def _client_job_rows(conn, rid, d):
     # Shaped like a failure row (job = the surface, error = the detail) so
     # every reader of this list keeps working.
     for e in _rows_dict(conn, "SELECT surface, kind, action, detail, n, call_id, created_at FROM ai_quality_events "
-                              "WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,), optional=True):
+                              f"WHERE restaurant_id=?{b_sql} ORDER BY id DESC LIMIT 40", (rid, *b_args), optional=True):
         quality.append({"job": e["surface"], "error": e["detail"], "created_at": e["created_at"], "kind": "ai_quality",
                         "finding": e["kind"], "action": e["action"], "n": e["n"], "call_id": e["call_id"],
                         "source": "ai_quality_events"})
@@ -3843,6 +3943,9 @@ def rpower_health_view(health=None, q=None, data_type=None, bucket=None, partner
         fleet["as_of"] = _iso_z(fleet["as_of"], "UTC")
     return {"ok": True, "fleet": fleet, "rules": rules, "trend": trend, "health_states": list(rh.HEALTH_STATES),
             "data_types": list(rh.DATA_TYPES), **pg, "errors": errors,
+            # The strip's cut-offs (admin audit 10/27/26 C10): the 429 and
+            # held-back shares, the nightly budget's alert percent.
+            "thresholds": rpower_thresholds(),
             "generated_at": _iso_z(_utc_stamp(), "UTC")}
 
 
@@ -3919,6 +4022,8 @@ def integrations(f="all", q=None, page=None, per_page=None, include_internal=Non
                              # The per-location list's POS reading (CA3 F6), carried to the
                              # fleet list too so both say the same thing.
                              "sync_state": i.get("sync_state"), "age_days": i.get("age_days"),
+                             # RPOWER saved with no store chosen yet (F12).
+                             "store_unchosen": bool(i.get("store_unchosen")),
                              # A POS row reads pos_health's state — the registry's one
                              # POS rule (re-audit B6#5) — not its own 3-day cut.
                              # A connection with no sync of its own (Instagram — a token, not a
@@ -3933,11 +4038,7 @@ def integrations(f="all", q=None, page=None, per_page=None, include_internal=Non
             if row["state"] == "error" and row["segment"] == "customer":
                 systemic.setdefault(row["label"], 0)
                 systemic[row["label"]] += 1
-        conn = get_conn()
-        try:
-            inbound = _webhook_health(conn)
-        finally:
-            conn.close()
+        inbound = _webhook_health_for(_d)
     customer_rows = [r for r in rows if r["segment"] == "customer"]
     internal_rows = [r for r in rows if r["segment"] != "customer"]
     counts = {k: sum(1 for r in customer_rows if fn(r)) for k, fn in INTEGRATION_FILTERS.items()}
@@ -3960,6 +4061,38 @@ def integrations(f="all", q=None, page=None, per_page=None, include_internal=Non
             "internal_included": bool(include_internal), **paging,
             "systemic": [{"label": k, "failing": v} for k, v in systemic.items() if v >= 2],
             "webhooks_inbound": inbound, **_payload_meta(meta, bucket)}
+
+
+def _webhook_health_for(d):
+    """_webhook_health, reused within the fleet memo's window on a request
+    thread (admin audit 10/27/26 P-20): the Integrations tab recomputed it —
+    a ledger read, the email_log, sms_log and admin_events MAXes, a send
+    count — on every page and filter click. The platform issues' own
+    reading is taken when it is fresh (they read it too), else one is
+    computed and kept on the memo's data for PLATFORM_ISSUES_TTL_SECONDS. A
+    reading with a failed read is not kept. Off a request, always fresh."""
+    def fresh():
+        conn = get_conn()
+        try:
+            return _webhook_health(conn)
+        finally:
+            conn.close()
+    if not _in_request() or PLATFORM_ISSUES_TTL_SECONDS <= 0 or d is None:
+        return fresh()
+    with _platform_lock:
+        now = time.monotonic()
+        plat = d.get("_platform_cache")
+        if plat and now - plat[0] <= PLATFORM_ISSUES_TTL_SECONDS and (plat[2] or {}).get("webhooks"):
+            return plat[2]["webhooks"]
+        hit = d.get("_webhook_cache")
+        if hit and now - hit[0] <= PLATFORM_ISSUES_TTL_SECONDS:
+            return hit[1]
+    with _collecting() as own:      # a failure reaches the caller's scope too (_note_failure)
+        out = fresh()
+    if not own["errors"]:
+        with _platform_lock:
+            d["_webhook_cache"] = (time.monotonic(), out)
+    return out
 
 
 def _utc_since(days):
@@ -4324,7 +4457,10 @@ def ai_ops(days=30):
         since = _utc_since(days)
         today = _utc_today()
         month = _utc_month()
-        calls_sql = f"SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END)"
+        # COALESCE: a window with no rows is zero calls, never None — "today
+        # (Central)" read None before the first call of the Central day while
+        # Overview's count read 0 (round 2: test_k09 failed every afternoon).
+        calls_sql = f"COALESCE(SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END), 0)"
         totals = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost, COALESCE(SUM(input_tokens),0) AS tin, COALESCE(SUM(output_tokens),0) AS tout, "
                                  f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),0),2) AS data_api_cost, "
                                  f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}<>'google_places' THEN cost_usd ELSE 0 END),0),2) AS ai_cost, "
@@ -4775,6 +4911,99 @@ def ai_call_detail(call_id):
     return {"ok": True, "call": call, "usage": usage, "validation": validation, "quality": quality, "related": related}
 
 
+_EMAIL_ROW_SQL = ("SELECT e.id, e.restaurant_id, r.name AS restaurant, r.location_group AS brand, e.email_type, "
+                  "e.to_email, e.subject, e.sent_at, e.status, e.error FROM email_log e "
+                  "LEFT JOIN restaurants r ON r.id=e.restaurant_id")
+_PUSH_ROW_SQL = ("SELECT p.id, p.restaurant_id, r.name AS restaurant, p.device_token_id, d.user_id, u.username, "
+                 "p.alert_type, p.status, p.ok, p.attempts, p.error, p.created_at FROM push_deliveries p "
+                 "LEFT JOIN restaurants r ON r.id=p.restaurant_id LEFT JOIN device_tokens d ON d.id=p.device_token_id "
+                 "LEFT JOIN users u ON u.id=d.user_id")
+# The light filtered row reads (admin audit 10/27/26 P-11): the Email page's
+# "Undeliverable" and type filters and the Push page's "Failed" ran in the
+# browser over the newest 200 rows — about ten minutes of mail at 1,500
+# restaurants, so "Undeliverable 0" could show while bounces sat just
+# outside the sample. Filtered by the database, the LIMIT after the WHERE,
+# over the same 30-day window the pages' other figures use (the indexed
+# sent_at / created_at bounds the scan when nothing matches).
+ROW_READ_DEFAULT_LIMIT = 200
+ROW_READ_MAX_LIMIT = 500
+# `undeliverable` is the page's Undeliverable filter exactly: failed (never
+# accepted by Resend), bounced or complained. The rest are one status each;
+# '' is every row.
+EMAIL_ROW_STATUSES = {"undeliverable": ("failed", "bounced", "complained"), "failed": ("failed",),
+                      "bounced": ("bounced",), "complained": ("complained",), "sent": ("sent",),
+                      "delayed": ("delayed",), "delivered": ("delivered",), "": ()}
+PUSH_ROW_STATUSES = ("failed", "")
+
+
+class RowFilterError(ValueError):
+    """A row read asked for a filter it does not have: the route answers 400."""
+
+
+def _row_limit(limit):
+    try:
+        n = int(limit) if limit not in (None, "") else ROW_READ_DEFAULT_LIMIT
+    except (TypeError, ValueError):
+        n = ROW_READ_DEFAULT_LIMIT
+    return max(1, min(n, ROW_READ_MAX_LIMIT))
+
+
+@_reports_failures
+def email_rows(status="", email_type="", limit=ROW_READ_DEFAULT_LIMIT):
+    """email_log rows in the shape of emails().rows, newest first, filtered
+    in SQL: `status` one of EMAIL_ROW_STATUSES ('undeliverable' = failed,
+    bounced or complained), `email_type` one type exactly ('' every type),
+    over the last 30 days, at most ROW_READ_MAX_LIMIT. Raises RowFilterError
+    for a status it does not know."""
+    status = (status or "").strip().lower()
+    email_type = (email_type or "").strip()[:80]
+    if status not in EMAIL_ROW_STATUSES:
+        raise RowFilterError(f"Unknown status {status!r} — one of: "
+                             + ", ".join(s for s in EMAIL_ROW_STATUSES if s) + ", or none.")
+    n = _row_limit(limit)
+    where, args = ["e.sent_at >= ?"], [_windows()["month"]]
+    wanted = EMAIL_ROW_STATUSES[status]
+    if wanted == ("sent",):
+        where.append("COALESCE(e.status, 'sent') = 'sent'")
+    elif wanted:
+        where.append("e.status IN (" + ",".join("?" * len(wanted)) + ")")
+        args.extend(wanted)
+    if email_type:
+        where.append("e.email_type = ?")
+        args.append(email_type)
+    conn = get_conn()
+    try:
+        rows = _rows_dict(conn, f"{_EMAIL_ROW_SQL} WHERE {' AND '.join(where)} ORDER BY e.id DESC LIMIT ?",
+                          tuple(args) + (n,), label="email_log")
+    finally:
+        conn.close()
+    return {"ok": True, "rows": rows, "filter": {"status": status, "type": email_type}, "limit": n,
+            "window": WINDOW_LABELS["month"], "generated_at": _utcnow().strftime(_ZFMT)}
+
+
+@_reports_failures
+def push_rows(status="", limit=ROW_READ_DEFAULT_LIMIT):
+    """push_deliveries rows in the shape of notifications().pushes, newest
+    first, filtered in SQL: `status` 'failed' (ok=0) or '' (every delivery),
+    over the last 30 days, at most ROW_READ_MAX_LIMIT. Raises
+    RowFilterError for a status it does not know."""
+    status = (status or "").strip().lower()
+    if status not in PUSH_ROW_STATUSES:
+        raise RowFilterError(f"Unknown status {status!r} — 'failed', or none.")
+    n = _row_limit(limit)
+    where, args = ["p.created_at >= ?"], [_windows()["month"]]
+    if status == "failed":
+        where.append("p.ok = 0")
+    conn = get_conn()
+    try:
+        rows = _rows_dict(conn, f"{_PUSH_ROW_SQL} WHERE {' AND '.join(where)} ORDER BY p.id DESC LIMIT ?",
+                          tuple(args) + (n,), label="push_deliveries")
+    finally:
+        conn.close()
+    return {"ok": True, "pushes": rows, "filter": {"status": status}, "limit": n,
+            "window": WINDOW_LABELS["month"], "generated_at": _utcnow().strftime(_ZFMT)}
+
+
 def emails(limit=200):
     """The Email page. email_log.sent_at is UTC; "today" is midnight Central
     (#89). A bounce or a complaint counts against delivery, with 7- and
@@ -4785,7 +5014,7 @@ def emails(limit=200):
         w = _windows()
         conn = get_conn()
         try:
-            rows = _rows_dict(conn, "SELECT e.id, e.restaurant_id, r.name AS restaurant, r.location_group AS brand, e.email_type, e.to_email, e.subject, e.sent_at, e.status, e.error FROM email_log e LEFT JOIN restaurants r ON r.id=e.restaurant_id ORDER BY e.id DESC LIMIT ?", (limit,))
+            rows = _rows_dict(conn, f"{_EMAIL_ROW_SQL} ORDER BY e.id DESC LIMIT ?", (limit,))
             by_type = _rows_dict(conn, "SELECT email_type, COUNT(*) AS n, "
                                        "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
                                        "SUM(CASE WHEN status='bounced' THEN 1 ELSE 0 END) AS bounced, "
@@ -4851,6 +5080,19 @@ def emails(limit=200):
             "windows": _window_meta(), **_merge_problems(bucket)}
 
 
+# The Operations cards' 7-day sparklines (jobs().failures_daily,
+# notifications().push_daily): Chicago days, oldest first, zero-filled.
+TREND_DAYS = 7
+
+
+def _ct_days_floor(days):
+    """The UTC stamp of midnight Central `days - 1` days back — the start of
+    a `days`-long run of Chicago days ending today, for a WHERE on a UTC
+    ledger. Chicago midnight is a whole UTC hour, so per-hour counts from
+    here bucket into Chicago days exactly (_days_from_hours)."""
+    return _utc_stamp(_today_start() - timedelta(days=max(1, int(days)) - 1))
+
+
 def _days_from_hours(hours, days):
     """[{day, n, failed}] for every Chicago day of the window, zero-filled,
     from per-UTC-hour counts ({hr: 'YYYY-MM-DD HH', n, bad})."""
@@ -4907,7 +5149,7 @@ def notifications(limit=200):
         w = _windows()
         conn = get_conn()
         try:
-            pushes = _rows_dict(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.device_token_id, d.user_id, u.username, p.alert_type, p.status, p.ok, p.attempts, p.error, p.created_at FROM push_deliveries p LEFT JOIN restaurants r ON r.id=p.restaurant_id LEFT JOIN device_tokens d ON d.id=p.device_token_id LEFT JOIN users u ON u.id=d.user_id ORDER BY p.id DESC LIMIT ?", (limit,))
+            pushes = _rows_dict(conn, f"{_PUSH_ROW_SQL} ORDER BY p.id DESC LIMIT ?", (limit,))
             devices = _rows_dict(conn, "SELECT d.id, d.restaurant_id, r.name AS restaurant, u.username, d.environment, d.created_at, d.last_success_at, d.consecutive_failures, d.disabled_reason FROM device_tokens d LEFT JOIN restaurants r ON r.id=d.restaurant_id LEFT JOIN users u ON u.id=d.user_id ORDER BY d.id DESC LIMIT 500")
             devices_total = (_one_dict(conn, "SELECT COUNT(*) AS n FROM device_tokens") or {}).get("n") or 0
             # channels (fix round E, #14): "sms,email,push" as they went
@@ -4940,24 +5182,40 @@ def notifications(limit=200):
                                           "SUM(CASE WHEN status IN ('scheduled','pending','publishing') THEN 1 ELSE 0 END) AS scheduled, "
                                           "COUNT(*) AS n FROM marketing_scheduled_posts") or {}
             today_push = _one_dict(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (w["today"],)) or {}
+            # The 7-day push trend counted by the database (admin audit
+            # 10/27/26 O6/P-11): the page bucketed the newest 200 deliveries
+            # — minutes of traffic at fleet volume, so every bar was "today".
+            # Per UTC hour, bucketed into Chicago days as emails() does (P-03).
+            push_hours = _rows_dict(conn, "SELECT substr(created_at, 1, 13) AS hr, COUNT(*) AS n, "
+                                          "SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS bad FROM push_deliveries "
+                                          "WHERE created_at >= ? GROUP BY substr(created_at, 1, 13)",
+                                    (_ct_days_floor(TREND_DAYS),), label="push_deliveries")
             # Whether any of it was worth sending. Thirty days rather than
             # seven: several of these types fire weekly. The denominator is
             # pushes DELIVERED of that type (a push per device), the numerator
             # the opens recorded for that type — both per device, both push.
+            # One grouped read of each ledger, joined by type (admin audit
+            # 10/27/26 P-15): two correlated subqueries per alert type scanned
+            # 30 days of push_deliveries and notification_opens again for
+            # every type — about fifteen scans a load.
             engagement = _rows_dict(conn,
-                "SELECT a.alert_type, COUNT(*) AS alerts, "
-                "(SELECT COUNT(*) FROM push_deliveries p WHERE p.alert_type=a.alert_type AND p.ok=1 "
-                " AND p.created_at >= ?) AS delivered, "
-                "(SELECT COUNT(*) FROM notification_opens o WHERE o.alert_type=a.alert_type "
-                " AND o.opened_at >= ?) AS opened "
-                "FROM alert_log a WHERE a.fired_at >= ? GROUP BY a.alert_type ORDER BY alerts DESC",
-                (w["month"], w["month"], w["month"]))
+                "SELECT a.alert_type, a.alerts, COALESCE(p.delivered, 0) AS delivered, "
+                "COALESCE(o.opened, 0) AS opened "
+                "FROM (SELECT alert_type, COUNT(*) AS alerts FROM alert_log WHERE fired_at >= ? "
+                "      GROUP BY alert_type) a "
+                "LEFT JOIN (SELECT alert_type, COUNT(*) AS delivered FROM push_deliveries "
+                "           WHERE ok=1 AND created_at >= ? GROUP BY alert_type) p ON p.alert_type=a.alert_type "
+                "LEFT JOIN (SELECT alert_type, COUNT(*) AS opened FROM notification_opens "
+                "           WHERE opened_at >= ? GROUP BY alert_type) o ON o.alert_type=a.alert_type "
+                "ORDER BY a.alerts DESC",
+                (w["month"], w["month"], w["month"]), label="alert_log")
         finally:
             conn.close()
     for row in engagement:
         row["open_rate"] = (round(100.0 * row["opened"] / row["delivered"], 1) if row["delivered"] else None)
     ignored = [r for r in engagement if (r["delivered"] or 0) >= 20 and not r["opened"]]
     return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "pushes": pushes, "devices": devices,
+            "push_daily": _days_from_hours(push_hours, TREND_DAYS),
             "devices_total": devices_total, "alerts": alerts,
             "by_type": by_type, "storms": storms, "caps": caps,
             "storm_counts": {"today": len(storms), "storm_days_7d": len(storm_days),
@@ -5388,6 +5646,17 @@ def jobs():
                                        "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') GROUP BY f.job ORDER BY n DESC")
             for g in grouped:
                 g["kind"] = _job_failure_kind({"job": g["job"], "error": g["sample"]}, False)
+        # The 7-day failure trend counted by the database (admin audit
+        # 10/27/26 O6/P-11): the Operations sparkline bucketed the newest
+        # hundred rows in the browser, so at fleet volume every bar landed
+        # "today". Kind 'job' only — an AI finding or a console request error
+        # is not a failed job (the page's `(f.kind || 'job') === 'job'`) — per
+        # UTC hour, bucketed into Chicago days, zero-filled.
+        kind_sql = (" AND COALESCE(NULLIF(kind,''),'job')='job'" if _has_cols(conn, "job_failures", ("kind",))
+                    else "")
+        fail_hours = _rows_dict(conn, "SELECT substr(created_at, 1, 13) AS hr, COUNT(*) AS n FROM job_failures "
+                                      f"WHERE created_at >= ?{kind_sql} GROUP BY substr(created_at, 1, 13)",
+                                (_ct_days_floor(TREND_DAYS),), label="job_failures")
         runs = _rows_dict(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
         last_ok = _rows_dict(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs "
                                    "FROM job_runs WHERE ok IN (1, 2) AND started_at >= datetime('now', '-7 days') GROUP BY job")
@@ -5443,6 +5712,7 @@ def jobs():
                  "what": j["what"]} for j in job_rows]
     requests, request_counts = _run_requests_view(_ops)
     return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "heartbeat_minutes": hb, "failures": failures,
+            "failures_daily": [{"day": x["day"], "n": x["n"]} for x in _days_from_hours(fail_hours, TREND_DAYS)],
             "grouped": grouped, "runs": runs, "last_ok": last_ok,
             "stuck": stuck, "scheduled_posts": posts, "inflight": inflight, "schedule": schedule,
             # Fix round D (#40, #121, #1, #27, #153, #131, #17): one row per
@@ -5519,15 +5789,17 @@ def _has_cols(conn, table, cols):
 def issues():
     """The Support queue: the open customer and platform issues (the first
     ISSUES_IN_OVERVIEW, as the console has always read them) with the counts
-    of the FULL set per segment. issues_page() pages and filters them all."""
-    ov = overview()
-    # The fleet payload meta every other read carries (C's #36, #47, #89).
-    meta = {k: ov.get(k) for k in ("generated_at", "cached", "age_seconds", "errors", "query_errors",
-                                   "unavailable", "windows")}
-    meta["errors"], meta["unavailable"] = meta["errors"] or [], meta["unavailable"] or []
-    meta["query_errors"] = meta["query_errors"] or meta["errors"]
-    return {"ok": True, "issues": ov["issues"], "issues_total": ov["issues_total"],
-            "issue_counts": ov["issue_counts"], **meta}
+    of the FULL set per segment. issues_page() pages and filters them all.
+
+    From the fleet memo and the issue builder alone (admin audit 10/27/26
+    P-19): it ran a whole overview() — the KPIs, the AI, email and push
+    reads and the series — to hand back three of its keys."""
+    with _collecting() as bucket:
+        recs, d, meta = _records_cached()
+        issues, _facts = _all_issues(recs, d)
+    visible = [i for i in issues if i.get("segment") != "internal"]
+    return {"ok": True, "issues": visible[:ISSUES_IN_OVERVIEW], "issues_total": len(visible),
+            "issue_counts": _issue_counts(issues), **_payload_meta(meta, bucket)}
 
 
 def _current_issue(key):
@@ -5712,71 +5984,110 @@ def _digits_sql(col):
     return expr
 
 
+# What a restaurant can be found by exactly, strongest first (#63).
+_SEARCH_EXACT_FIELDS = (("google_place_id", "Google Place ID"), ("docusign_envelope_id", "DocuSign envelope"),
+                        ("stripe_customer_id", "Stripe customer"), ("toast_restaurant_guid", "Toast restaurant"),
+                        ("square_location_id", "Square location"), ("clover_merchant_id", "Clover merchant"),
+                        ("rpower_store_mid", "RPOWER store"), ("gmb_location_id", "Business Profile location"))
+SEARCH_MAX_RESULTS = 40
+# One scale for every way a restaurant matches: the exact ids, a Stripe
+# subscription, the phones, then a name — a row is listed once, by its best.
+_SEARCH_RANK = {"restaurant id": 0, **{label: i + 1 for i, (_c, label) in enumerate(_SEARCH_EXACT_FIELDS)},
+                "Stripe subscription": 20, "owner phone": 21, "alert contact phone": 22, "name or owner": 23}
+
+
 def search(q):
     """Restaurants and logins by name, email, phone (digits only, the last
     ten), Google Place ID, DocuSign envelope, Stripe customer or subscription,
     and POS identifiers — each result says what matched (#63). A number is
-    matched EXACTLY against restaurant and login ids, labelled apart."""
+    matched EXACTLY against restaurant and login ids, labelled apart.
+
+    One statement over restaurants (admin audit 10/27/26 P-17): it was about
+    fifteen per keystroke — eight `col = ? OR col LIKE ?` lookups, the phone
+    and the name scans each reading the whole restaurants heap — and now
+    every way a row can match is one CASE, the strongest labelled, best
+    first, over an explicit narrow column list. A prefix match on an
+    identifier needs six characters; the Stripe subscription is looked up
+    only for a `sub_` id; logins are one statement."""
     q = (q or "").strip()
     if len(q) < 2:
         return {"ok": True, "results": []}
     like = f"%{q}%"
     digits = _DIGITS.sub("", q)
-    res = []
+    is_id = bool(digits) and digits == q and digits.isdigit()
+    tail = digits[-10:] if len(digits) >= 7 else None
+    res, cands = [], []
     with _collecting() as bucket:
         conn = get_conn()
         try:
             rcols = _columns(conn, "restaurants")
-            exact_fields = [("google_place_id", "Google Place ID"), ("docusign_envelope_id", "DocuSign envelope"),
-                            ("stripe_customer_id", "Stripe customer"), ("toast_restaurant_guid", "Toast restaurant"),
-                            ("square_location_id", "Square location"), ("clover_merchant_id", "Clover merchant"),
-                            ("rpower_store_mid", "RPOWER store"), ("gmb_location_id", "Business Profile location")]
-            exact_fields = [(c, l) for c, l in exact_fields if c in rcols]
-            seen = set()
-
-            def add_loc(r, match, how):
-                if r["id"] in seen:         # one row per restaurant: its strongest match
-                    return
-                seen.add(r["id"])
-                res.append({"type": "location", "id": r["id"], "title": r["name"], "match": match, "match_how": how,
-                            "sub": " · ".join(x for x in [r.get("location_group"), r.get("location_name"), r.get("neighborhood")] if x) or r.get("owner_email")})
-
-            base = "SELECT id, name, location_group, location_name, neighborhood, owner_email FROM restaurants"
-            if digits and digits == q.strip() and digits.isdigit():
-                for r in _rows_dict(conn, f"{base} WHERE id = ?", (int(digits),)):
-                    add_loc(r, "restaurant id", "exact")
-            for c, label in exact_fields:
-                for r in _rows_dict(conn, f"{base} WHERE {c} = ? OR ({c} LIKE ? AND LENGTH(?) >= 6) LIMIT 10",
-                                    (q, f"{q}%", q)):
-                    add_loc(r, label, "exact")
-            if len(digits) >= 7:
-                tail = digits[-10:]
-                for r in _rows_dict(conn, f"{base} WHERE {_digits_sql('owner_phone')} LIKE ? LIMIT 10", (f"%{tail}",)):
-                    add_loc(r, "owner phone", "digits")
+            # (condition, args, match, how) — the CASE's order is the strength.
+            ways = []
+            if is_id:
+                ways.append(("id = ?", [int(digits)], "restaurant id", "exact"))
+            for c, label in _SEARCH_EXACT_FIELDS:
+                if c not in rcols:
+                    continue
+                if len(q) >= 6:
+                    ways.append((f"({c} = ? OR {c} LIKE ?)", [q, f"{q}%"], label, "exact"))
+                else:
+                    ways.append((f"{c} = ?", [q], label, "exact"))
+            if tail:
+                ways.append((f"{_digits_sql('owner_phone')} LIKE ?", [f"%{tail}"], "owner phone", "digits"))
+            ways.append(("(name LIKE ? OR location_group LIKE ? OR location_name LIKE ? OR neighborhood LIKE ? "
+                         "OR owner_email LIKE ? OR owner_name LIKE ?)", [like] * 6, "name or owner", "contains"))
+            case = "CASE " + " ".join(f"WHEN {cond} THEN {i}" for i, (cond, _a, _m, _h) in enumerate(ways)) + " END"
+            args = [a for _c, w_args, _m, _h in ways for a in w_args]
+            for r in _rows_dict(conn, "SELECT id, name, location_group, location_name, neighborhood, owner_email, rk "
+                                      "FROM (SELECT id, name, location_group, location_name, neighborhood, "
+                                      f"owner_email, {case} AS rk FROM restaurants) t WHERE rk IS NOT NULL "
+                                      "ORDER BY rk, name LIMIT ?", tuple(args) + (SEARCH_MAX_RESULTS,),
+                                label="restaurants"):
+                _m, how = ways[int(r["rk"])][2], ways[int(r["rk"])][3]
+                cands.append((_SEARCH_RANK[_m], r, _m, how))
+            if q.startswith("sub_"):
+                for r in _rows_dict(conn, "SELECT s.restaurant_id AS id, r.name, r.location_group, r.location_name, "
+                                          "r.neighborhood, r.owner_email FROM stripe_subscriptions s JOIN restaurants r "
+                                          "ON r.id=s.restaurant_id WHERE s.subscription_id = ? LIMIT 5", (q,),
+                                    optional=True):
+                    cands.append((_SEARCH_RANK["Stripe subscription"], r, "Stripe subscription", "exact"))
+            if tail:
                 for r in _rows_dict(conn, "SELECT r.id, r.name, r.location_group, r.location_name, r.neighborhood, "
                                           f"r.owner_email FROM alert_contacts c JOIN restaurants r ON r.id=c.restaurant_id "
                                           f"WHERE {_digits_sql('c.phone')} LIKE ? LIMIT 10", (f"%{tail}",)):
-                    add_loc(r, "alert contact phone", "digits")
-            for r in _rows_dict(conn, f"{base} WHERE name LIKE ? OR location_group LIKE ? OR location_name LIKE ? "
-                                      "OR neighborhood LIKE ? OR owner_email LIKE ? OR owner_name LIKE ? LIMIT 20",
-                                (like, like, like, like, like, like)):
-                add_loc(r, "name or owner", "contains")
-            subs = _rows_dict(conn, "SELECT s.restaurant_id AS id, r.name, r.location_group, r.location_name, "
-                                    "r.neighborhood, r.owner_email FROM stripe_subscriptions s JOIN restaurants r "
-                                    "ON r.id=s.restaurant_id WHERE s.subscription_id = ? LIMIT 5", (q,),
-                              optional=True)
-            for r in subs:
-                add_loc(r, "Stripe subscription", "exact")
-            if digits and digits == q.strip() and digits.isdigit():
-                for u in _rows_dict(conn, "SELECT u.id, u.username, u.email, u.role, u.restaurant_id, r.name FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id WHERE u.id = ?", (int(digits),)):
-                    res.append({"type": "owner" if u["role"] in ("client", "owner") else "login", "id": u["restaurant_id"], "user_id": u["id"], "title": u["username"], "match": "login id", "match_how": "exact", "sub": f"{u['email']} · {u['name'] or 'no restaurant'} · {u['role']}"})
-            for u in _rows_dict(conn, "SELECT u.id, u.username, u.email, u.role, u.restaurant_id, r.name FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id WHERE u.username LIKE ? OR u.email LIKE ? LIMIT 20", (like, like)):
-                res.append({"type": "owner" if u["role"] in ("client", "owner") else "login", "id": u["restaurant_id"], "user_id": u["id"], "title": u["username"], "match": "login name or email", "match_how": "contains", "sub": f"{u['email']} · {u['name'] or 'no restaurant'} · {u['role']}"})
-            for g in _rows_dict(conn, "SELECT location_group AS g, COUNT(*) AS n FROM restaurants WHERE location_group LIKE ? GROUP BY location_group LIMIT 10", (like,)):
-                res.append({"type": "brand", "id": None, "title": g["g"], "match": "brand", "match_how": "contains", "sub": f"{g['n']} locations"})
+                    cands.append((_SEARCH_RANK["alert contact phone"], r, "alert contact phone", "digits"))
+            users = _rows_dict(conn, "SELECT u.id, u.username, u.email, u.role, u.restaurant_id, r.name, "
+                                     + ("CASE WHEN u.id = ? THEN 0 ELSE 1 END" if is_id else "1") + " AS rk "
+                                     "FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id WHERE "
+                                     + ("u.id = ? OR " if is_id else "") + "u.username LIKE ? OR u.email LIKE ? "
+                                     "ORDER BY rk, u.id LIMIT 20",
+                               ((int(digits), int(digits)) if is_id else ()) + (like, like), label="users")
+            brands = _rows_dict(conn, "SELECT location_group AS g, COUNT(*) AS n FROM restaurants WHERE location_group "
+                                      "LIKE ? GROUP BY location_group LIMIT 10", (like,))
         finally:
             conn.close()
-    return {"ok": True, "results": res[:40], **_merge_problems(bucket)}
+    seen = set()
+    for _rank, r, match, how in sorted(cands, key=lambda c: (c[0], str(c[1].get("name") or "").lower())):
+        if r["id"] in seen:         # one row per restaurant: its strongest match
+            continue
+        seen.add(r["id"])
+        res.append({"type": "location", "id": r["id"], "title": r["name"], "match": match, "match_how": how,
+                    "sub": " · ".join(x for x in [r.get("location_group"), r.get("location_name"),
+                                                 r.get("neighborhood")] if x) or r.get("owner_email")})
+    seen_users = set()
+    for u in users:
+        if u["id"] in seen_users:
+            continue
+        seen_users.add(u["id"])
+        exact = is_id and int(u["rk"] or 1) == 0
+        res.append({"type": "owner" if u["role"] in ("client", "owner") else "login", "id": u["restaurant_id"],
+                    "user_id": u["id"], "title": u["username"], "match": "login id" if exact else "login name or email",
+                    "match_how": "exact" if exact else "contains",
+                    "sub": f"{u['email']} · {u['name'] or 'no restaurant'} · {u['role']}"})
+    for g in brands:
+        res.append({"type": "brand", "id": None, "title": g["g"], "match": "brand", "match_how": "contains",
+                    "sub": f"{g['n']} locations"})
+    return {"ok": True, "results": res[:SEARCH_MAX_RESULTS], **_merge_problems(bucket)}
 
 
 # ── recommendation acceptance (internal only) ────────────────────────────────
@@ -7328,18 +7639,23 @@ def snapshot_business_metrics(db_path=None, day=None):
                           json.dumps({k: round(v, 4) for k, v in costs.items()}), json.dumps(fixed["by_vendor"]),
                           json.dumps(state)))
             # Churn risk level and since when (#83): unchanged level keeps its
-            # 'since'; a new level starts now.
+            # 'since'; a new level starts now. One batched statement each
+            # (admin audit 10/27/26 P-16), not a round trip per restaurant.
             stamp = _utc_stamp(now)
+            unscored, scored = [], []
             for r in real:
                 c = r["churn_risk"]
                 if not c.get("scored"):
-                    conn.execute("DELETE FROM account_risk_state WHERE restaurant_id=?", (r["id"],))
+                    unscored.append((r["id"],))
                     continue
                 prior = (d.get("risk_state") or {}).get(r["id"]) or {}
                 since = prior.get("since") if prior.get("level") == c["level"] else stamp
-                conn.execute("INSERT OR REPLACE INTO account_risk_state (restaurant_id, level, since, points, "
-                             "reasons_json, updated_at) VALUES (?,?,?,?,?,?)",
-                             (r["id"], c["level"], since, c.get("points"), json.dumps(c.get("reasons") or []), stamp))
+                scored.append((r["id"], c["level"], since, c.get("points"), json.dumps(c.get("reasons") or []), stamp))
+            if unscored:
+                conn.executemany("DELETE FROM account_risk_state WHERE restaurant_id=?", unscored)
+            if scored:
+                conn.executemany("INSERT OR REPLACE INTO account_risk_state (restaurant_id, level, since, points, "
+                                 "reasons_json, updated_at) VALUES (?,?,?,?,?,?)", scored)
             conn.commit()
         finally:
             conn.close()
@@ -7460,7 +7776,17 @@ def _slim(r):
             # conversion, or paying (or paused) now. A trial that never paid
             # is not a retained customer.
             "converted_at": b.get("converted_at"),
-            "ever_paid": bool(b.get("converted_at")) or b["status"] in PAYING_STATES + ("paused",)}
+            "ever_paid": bool(b.get("converted_at")) or b["status"] in PAYING_STATES + ("paused",),
+            # The fleet list's Data cell (admin audit 10/27/26 O9): the POS
+            # by pos_health's own state, else the review fetch's age — what
+            # admin.html's _fleetDataCell reads.
+            "freshness": _slim_freshness(r)}
+
+
+def _slim_freshness(r):
+    f = r.get("freshness") or {}
+    return {"pos_state": f.get("pos_state") or None, "reviews": f.get("reviews") or None,
+            "pos": f.get("pos") or None}
 
 
 def clients_page(q=None, health=None, segment="customer", status=None, sort="name", page=1, per_page=50,
@@ -7713,11 +8039,73 @@ def queues():
     return {"ok": True, "queues": out, **_merge_problems(bucket)}
 
 
-def data_sources(segment="customer", page=None, per_page=None, failing=False, source=None):
+DATA_SOURCE_STATES = ("failing", "stale", "ok")
+_DS_STATE_RANK = {s: i for i, s in enumerate(DATA_SOURCE_STATES)}
+
+
+def source_stale_after_hours(source):
+    """How long a data source may go without a good read before it is stale
+    (admin audit 10/27/26 O9) — from data_health's own clock: the longest
+    gap between the scheduler's refreshes of it (data_health.SLOTS, held in
+    step with the scheduler by tests/test_data_health_owner.py; a weekly
+    slot is 168 hours, and the reviews gap is the longer of the regular and
+    the quiet Places-only slots, so a quiet store is never called stale on
+    the regular clock) plus data_health.CADENCE_SLACK_HOURS. None for a
+    source nothing refreshes on a clock — weather is fetched on read,
+    invoices arrive by email, counts and deliveries are the owner's — which
+    is therefore never stale."""
+    try:
+        import data_health as _dh_c
+        slot = (_dh_c.SLOTS or {}).get(source)
+        if not slot:
+            return None
+        hours, weekday = slot
+        if weekday is not None:
+            gap = 168
+        else:
+            sets = [tuple(hours)]
+            if source == "reviews":
+                try:
+                    import fetcher as _f_c
+                    sets.append(tuple(_f_c.QUIET_SLOTS))
+                except Exception as e:
+                    log.warning("quiet review slots unreadable: %s", e)
+            gap = 0
+            for hs in sets:
+                hs = sorted(int(h) for h in hs)
+                if not hs:
+                    continue
+                gaps = [b - a for a, b in zip(hs, hs[1:])] + [24 - hs[-1] + hs[0]]
+                gap = max(gap, max(gaps))
+        return float(gap + _dh_c.CADENCE_SLACK_HOURS) if gap else None
+    except Exception as e:
+        log.warning("data source cadence unreadable for %s: %s", source, e)
+        return None
+
+
+def _source_state(failures, last_ok_at, stale_after):
+    """failing | stale | ok: stale is zero failures but the last good read
+    older than the source's stale_after hours (O9) — a feed that stopped
+    attempting read "ok" beside the healthy rows. A source with no known
+    cadence, or no good read on record, is never stale."""
+    if failures:
+        return "failing"
+    if stale_after is not None:
+        age = _age_hours(last_ok_at, "UTC")
+        if age is not None and age > stale_after:
+            return "stale"
+    return "ok"
+
+
+def data_sources(segment="customer", page=None, per_page=None, failing=False, source=None, state=None):
     """Every data source's sync state per restaurant (#46): failures in a
-    row, since when, the last error, the next retry — failing first. With
-    `page` the server pages (Audit #23 A6-15) and filters (`failing`, one
-    `source`); the summary is over the full set."""
+    row, since when, the last error, the next retry. Each row's `state` is
+    failing | stale | ok (O9: stale = no failures but no good read within
+    its cadence, `stale_after_hours`), sorted failing, then stale (oldest
+    good read first), then ok. With `page` the server pages (Audit #23
+    A6-15) and filters (`state` failing|stale, `failing` — the same as
+    state=failing — and one `source`); the summary is over the full set and
+    counts `failing` and `stale` per source."""
     with _collecting() as bucket:
         recs, d, meta = _records_cached()
     try:
@@ -7725,32 +8113,46 @@ def data_sources(segment="customer", page=None, per_page=None, failing=False, so
         labels = getattr(_dh, "OWNER_LABEL", {}) or {}
     except Exception:
         labels = {}
-    rows, summary = [], {}
+    rows, summary, cadence = [], {}, {}
     for rec in recs:
         if segment != "all" and rec["segment"] != segment:
             continue
         for s in (d.get("source_health") or {}).get(rec["id"], []):
             n = int(s.get("consecutive_failures") or 0)
+            if s["source"] not in cadence:
+                cadence[s["source"]] = source_stale_after_hours(s["source"])
+            st = _source_state(n, s.get("last_ok_at"), cadence[s["source"]])
             rows.append({"restaurant_id": rec["id"], "restaurant": rec["name"], "brand": rec["brand"],
                          "source": s["source"], "label": labels.get(s["source"], s["source"]),
-                         "provider": s.get("provider"), "failures": n, "state": "failing" if n else "ok",
+                         "provider": s.get("provider"), "failures": n, "state": st,
+                         "stale_after_hours": cadence[s["source"]],
                          "since": _iso_z(s.get("first_failed_at"), "UTC"), "last_error": (s.get("last_error") or "")[:200],
                          "error_class": s.get("error_class"), "next_retry_at": _iso_z(s.get("next_retry_at"), "UTC"),
                          "last_ok_at": _iso_z(s.get("last_ok_at"), "UTC"),
                          "last_attempt_at": _iso_z(s.get("last_attempt_at"), "UTC"), "data_through": s.get("data_through")})
             agg = summary.setdefault(s["source"], {"source": s["source"], "label": labels.get(s["source"], s["source"]),
-                                                   "restaurants": 0, "failing": 0})
+                                                   "restaurants": 0, "failing": 0, "stale": 0,
+                                                   "stale_after_hours": cadence[s["source"]]})
             agg["restaurants"] += 1
-            agg["failing"] += 1 if n else 0
-    rows.sort(key=lambda x: (-x["failures"], (x["restaurant"] or "").lower(), x["source"]))
+            agg["failing"] += 1 if st == "failing" else 0
+            agg["stale"] += 1 if st == "stale" else 0
+    rows.sort(key=lambda x: (_DS_STATE_RANK[x["state"]], -x["failures"],
+                             (x["last_ok_at"] or "") if x["state"] == "stale" else "",
+                             (x["restaurant"] or "").lower(), x["source"]))
     real = _real(recs)
     paging = {}
+    want = (state or "").strip().lower() or ("failing" if failing else None)
+    if want not in (None, "failing", "stale"):
+        want = None
     if page is not None:
-        sel = [r for r in rows if (not failing or r["failures"]) and (not source or r["source"] == source)]
+        sel = [r for r in rows if (not want or r["state"] == want) and (not source or r["source"] == source)]
         rows, pg, pp, total, pages = _page(sel, page, per_page)
-        paging = {"page": pg, "per_page": pp, "total": total, "pages": pages}
-    return {"ok": True, "rows": rows, **paging,
-            "summary": sorted(summary.values(), key=lambda x: (-x["failing"], x["source"])),
+        paging = {"page": pg, "per_page": pp, "total": total, "pages": pages, "state": want}
+    return {"ok": True, "rows": rows, **paging, "states": list(DATA_SOURCE_STATES),
+            "state_counts": {"failing": sum(a["failing"] for a in summary.values()),
+                             "stale": sum(a["stale"] for a in summary.values()),
+                             "ok": sum(a["restaurants"] - a["failing"] - a["stale"] for a in summary.values())},
+            "summary": sorted(summary.values(), key=lambda x: (-x["failing"], -x["stale"], x["source"])),
             "data_health_median": _median([r["data_health"]["overall"] for r in real
                                            if r["data_health"].get("overall") is not None and not r["data_health"].get("stale")]),
             "stale_snapshots": sum(1 for r in real if r["data_health"].get("stale")),
@@ -7769,6 +8171,19 @@ def client_timeline(rid, types=None, limit=100, before=None):
     want = {t for t in (types or TIMELINE_TYPES) if t in TIMELINE_TYPES}
     limit = max(1, min(int(limit or 100), 500))
     cut = _parse_utc(before, "UTC") if before else None
+    # `before` goes into each source's own SQL (admin audit 10/27/26 P-18):
+    # it was applied in Python after each source's newest 2×limit rows, so
+    # an "older" page ran dry past the newest ~200 rows of a source. The
+    # UTC ledgers compare in their own form ("YYYY-MM-DD HH:MM:SS");
+    # activity_log is Chicago wall time with a 'T'. The Python check in add()
+    # stays, exact.
+    ut = _utc_stamp(cut) if cut else None
+    ct_cut = _ct(cut).strftime("%Y-%m-%dT%H:%M:%S") if cut else None
+
+    def older(col, bound=None):
+        """(' AND col < ?', (bound,)) on an older page, ('', ()) on the first."""
+        b = ut if bound is None else bound
+        return (f" AND {col} < ?", (b,)) if b else ("", ())
     ev = []
     with _collecting() as bucket:
         conn = get_conn()
@@ -7782,64 +8197,76 @@ def client_timeline(rid, types=None, limit=100, before=None):
                 if z and (cut is None or (_parse_utc(z, "UTC") or cut) < cut):
                     ev.append({"at": z, "type": kind, "label": label, "tone": tone, "detail": detail, **extra})
             if "email" in want:
+                w_sql, w_args = older("sent_at")
                 for e in _rows_dict(conn, "SELECT email_type, to_email, subject, sent_at, status, error FROM email_log "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     bad = e["status"] in ("failed", "bounced", "complained")
                     add(e["sent_at"], "UTC", "email", f"Email {e['status'] or 'sent'} · {e['email_type']}",
                         "bad" if bad else "neutral", e["error"] if bad else e["subject"], to=e["to_email"])
             if "sms" in want:
+                w_sql, w_args = older("created_at")
                 for s in _rows_dict(conn, "SELECT use_case, to_last4, status, error, created_at FROM sms_log "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n), optional=True):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n),
+                                    optional=True):
                     bad = (s.get("status") or "") in ("failed", "undelivered", "error")
                     add(s["created_at"], "UTC", "sms", f"Text {s.get('status') or 'sent'} · {s.get('use_case') or 'sms'}",
                         "bad" if bad else "neutral", s.get("error"), to_last4=s.get("to_last4"))
             if "push" in want:
-                for p in _rows_dict(conn, "SELECT alert_type, ok, error, created_at FROM push_deliveries WHERE restaurant_id=? "
-                                          "ORDER BY id DESC LIMIT ?", (rid, n)):
+                w_sql, w_args = older("created_at")
+                for p in _rows_dict(conn, "SELECT alert_type, ok, error, created_at FROM push_deliveries WHERE restaurant_id=?"
+                                          f"{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     add(p["created_at"], "UTC", "push", f"Push {'delivered' if p['ok'] else 'failed'} · {p['alert_type']}",
                         "neutral" if p["ok"] else "bad", p["error"])
             if "alert" in want:
-                for a in _rows_dict(conn, "SELECT alert_type, fired_at FROM alert_log WHERE restaurant_id=? "
-                                          "ORDER BY id DESC LIMIT ?", (rid, n)):
+                w_sql, w_args = older("fired_at")
+                for a in _rows_dict(conn, "SELECT alert_type, fired_at FROM alert_log WHERE restaurant_id=?"
+                                          f"{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     add(a["fired_at"], "UTC", "alert", f"Alert fired · {a['alert_type']}", "warn")
             if "login" in want:
+                w_sql, w_args = older("created_at")
                 for l in _rows_dict(conn, "SELECT event, device_type, ip_address, created_at FROM login_history "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     add(l["created_at"], "UTC", "login", _login_label(l.get("event"), l.get("device_type")),
                         _LOGIN_TONE.get(l.get("event"), "neutral"), None, event=l.get("event") or "login",
                         ip_address=l.get("ip_address"))
             if want & {"billing", "admin"}:
+                w_sql, w_args = older("created_at")
                 for e in _rows_dict(conn, "SELECT source, event_type, amount, summary, created_at FROM admin_events "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     kind = "billing" if e["source"] in ("stripe", "docusign") else "admin"
                     if kind in want:
                         bad = any(x in (e["event_type"] or "") for x in ("failed", "deleted", "canceled", "dispute"))
                         add(e["created_at"], "UTC", kind, f"{e['source'].capitalize()} · {e['summary'] or e['event_type']}",
                             "bad" if bad else "neutral", amount=e.get("amount"))
             if "job" in want:
-                jobs, _runs, quality = _client_job_rows(conn, rid, None)
+                jobs, _runs, quality = _client_job_rows(conn, rid, None, before=ut)
                 for j in jobs:
                     add(j["created_at"], "UTC", "job", f"Job failed · {j['job']}", "bad", (j["error"] or "")[:200])
                 for j in quality:
                     add(j["created_at"], "UTC", "ai", f"AI output check · {j['job']}", "warn", (j["error"] or "")[:200])
             if "ai" in want:
+                w_sql, w_args = older("created_at")
                 for a in _rows_dict(conn, "SELECT action, model, error, created_at FROM ai_usage WHERE restaurant_id=? "
-                                          "AND COALESCE(status,'ok')='error' ORDER BY id DESC LIMIT ?", (rid, n),
-                                    optional=True):
+                                          f"AND COALESCE(status,'ok')='error'{w_sql} ORDER BY id DESC LIMIT ?",
+                                    (rid, *w_args, n), optional=True):
                     add(a["created_at"], "UTC", "ai", f"AI call failed · {a['action']}", "bad", (a["error"] or "")[:200])
             if "webhook" in want:
+                w_sql, w_args = older("created_at")
                 for h in _rows_dict(conn, "SELECT event_type, ok, error, created_at FROM webhook_deliveries "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     add(h["created_at"], "UTC", "webhook", f"Webhook {'delivered' if h['ok'] else 'failed'} · {h['event_type']}",
                         "neutral" if h["ok"] else "bad", h["error"])
             if "note" in want:
-                for s in _rows_dict(conn, "SELECT author, body, created_at FROM support_notes WHERE restaurant_id=? "
-                                          "ORDER BY id DESC LIMIT ?", (rid, n), optional=True):
+                w_sql, w_args = older("created_at")
+                for s in _rows_dict(conn, "SELECT author, body, created_at FROM support_notes WHERE restaurant_id=?"
+                                          f"{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n), optional=True):
                     add(s["created_at"], "UTC", "note", f"Note by {s.get('author') or 'admin'}", "neutral",
                         (s.get("body") or "")[:300])
             if "activity" in want:
+                w_sql, w_args = older("created_at", ct_cut)
                 for a in _rows_dict(conn, "SELECT event_type, created_at FROM activity_log WHERE restaurant_id=? "
-                                          "AND event_type != 'tab_view' ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"AND event_type != 'tab_view'{w_sql} ORDER BY id DESC LIMIT ?",
+                                    (rid, *w_args, n)):
                     label = _ACTIVITY_LABELS.get(a["event_type"]) or (a["event_type"] or "").replace("_", " ").capitalize()
                     add(a["created_at"], OPERATOR_TZ, "activity", label)
         finally:
@@ -8026,6 +8453,42 @@ def _ago_z(minutes):
     return (_utcnow() - timedelta(minutes=float(minutes))).strftime(_ZFMT) if minutes is not None else None
 
 
+def console_thresholds():
+    """Every cut-off the server judges the console's systems by, for the
+    page to label with instead of keeping copies (admin audit 10/27/26 C10).
+    Carried as `thresholds` on /admin/api/ops/state and /admin/api/system
+    (`http.thresholds`), and the RPOWER ones on /admin/api/rpower-health."""
+    out = {"api_5xx_bad_pct": API_5XX_BAD_PCT, "api_5xx_min_requests": API_5XX_MIN_REQUESTS,
+           "api_p95_warn_ms": API_P95_WARN_MS,
+           "heartbeat_stale_minutes": _jobs_registry.HEARTBEAT_STALE_MINUTES,
+           "push_wait_warn_minutes": PUSH_WAIT_WARN_MINUTES,
+           "email_bounce_warn_pct": EMAIL_BOUNCE_WARN_PCT, "email_bounce_crit_pct": EMAIL_BOUNCE_CRIT_PCT,
+           "email_complaint_warn_pct": EMAIL_COMPLAINT_WARN_PCT,
+           "email_complaint_crit_pct": EMAIL_COMPLAINT_CRIT_PCT, "email_min_sends": EMAIL_RATE_MIN_SENDS,
+           "ai_blocked_min_calls": None}
+    try:
+        import ai_utils as _ai_th
+        out["ai_blocked_min_calls"] = _ai_th.AI_STATUS_MIN_CALLS
+    except Exception as e:
+        log.warning("AI threshold unreadable: %s", e)
+    out.update(rpower_thresholds())
+    return out
+
+
+def rpower_thresholds():
+    """Operations → RPOWER's strip cut-offs: the 429 and held-back request
+    shares, and the nightly lane's budget use pos_capacity alerts at
+    (POS_BUDGET_ALERT_PCT)."""
+    out = {"rpower_429_share_warn": RPOWER_429_WARN_SHARE, "rpower_skipped_share_warn": RPOWER_SKIPPED_WARN_SHARE,
+           "rpower_nightly_budget_warn_pct": None}
+    try:
+        import pos_capacity as _pc_th
+        out["rpower_nightly_budget_warn_pct"] = _pc_th.UTIL_ALERT_PCT
+    except Exception as e:
+        log.warning("RPOWER budget threshold unreadable: %s", e)
+    return out
+
+
 # The rail polls /admin/api/ops/state every two minutes per open tab (WS-3):
 # on a request thread one reading is kept this long and shared, single-
 # flight, so a poll is not the email-rate, webhook and job-SLA reads again
@@ -8035,6 +8498,68 @@ _ops_state_lock = threading.Lock()
 _ops_state_memo = {}
 import process_caches as _process_caches   # noqa: E402 (beside the definition, the registry's rule)
 _process_caches.register("admin_ops._ops_state_memo", _ops_state_memo)
+
+
+# Operations' messaging health (/admin/api/messaging/health): email delivery
+# over 7 days, the inbound webhooks, SMS over 24 hours, both outboxes, the
+# storm caps and the operator addresses on the suppression list — seven
+# reads, three of them over email_log. One reading is kept and shared on
+# request threads for this long (admin audit 10/27/26 P-20), single-flight,
+# like ops/state: every Operations landing in every tab re-ran them.
+MESSAGING_HEALTH_TTL_SECONDS = float(os.getenv("ADMIN_MESSAGING_HEALTH_TTL_SECONDS", "60"))
+_messaging_lock = threading.Lock()
+_messaging_memo = {}
+_process_caches.register("admin_ops._messaging_memo", _messaging_memo)
+
+
+def messaging_health():
+    """The messaging health payload (#14, #59, #74, #75, #92), kept for
+    MESSAGING_HEALTH_TTL_SECONDS on request threads (`cached`,
+    `age_seconds`); off one, read fresh. A reading with a failed read is
+    not kept."""
+    if not _in_request() or MESSAGING_HEALTH_TTL_SECONDS <= 0:
+        return _messaging_health_build()
+    key = _memo_key()
+    with _messaging_lock:
+        hit = _messaging_memo.get("v")
+        if hit and hit[1] == key and time.monotonic() - hit[0] <= MESSAGING_HEALTH_TTL_SECONDS:
+            return dict(hit[2], cached=True, age_seconds=round(time.monotonic() - hit[0], 1))
+        out = _messaging_health_build()
+        if not out.get("read_failed"):
+            _messaging_memo["v"] = (time.monotonic(), key, out)
+        return dict(out, cached=False, age_seconds=0.0)
+
+
+@_reports_failures
+def _messaging_health_build():
+    import notify
+    import push
+    import webhooks
+
+    def read(label, fn, default):
+        try:
+            return fn()
+        except Exception as e:
+            _note_failure(label, e)
+            return default
+    conn = get_conn()
+    try:
+        caps = _rows_dict(conn, "SELECT c.*, r.name AS restaurant FROM alert_storm_caps c LEFT JOIN restaurants r "
+                                "ON r.id=c.restaurant_id WHERE c.until_at > datetime('now') AND c.lifted_at IS NULL "
+                                "ORDER BY c.id DESC", label="alert_storm_caps")
+    finally:
+        conn.close()
+    return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT),
+            "problems": read("messaging_problems", notify.messaging_problems, []),
+            "inbound_webhooks": read("inbound_webhook_health", _models_mod.inbound_webhook_health, None),
+            "email": read("email_delivery_stats", lambda: _models_mod.email_delivery_stats(days=7), None),
+            "sms": read("sms_stats", lambda: notify.sms_stats(hours=24), None),
+            "push_outbox": read("push_outbox", push.outbox_counts, None),
+            "webhook_outbox": read("webhook_outbox", webhooks.outbox_counts, None),
+            "storm_caps": caps,
+            "operator_suppressed": [r for r in read("email_suppressions",
+                                                    lambda: _models_mod.get_email_suppressions(limit=1000), [])
+                                    if r.get("operator")]}
 
 
 def ops_state():
@@ -8181,7 +8706,7 @@ def _ops_state_build():
         win = max(1, rm.get("window_seconds", 300) // 60)
         facts = {"rpm": rm.get("rpm"), "p95_ms": rm.get("p95_ms"), "server_error_rate": rm.get("server_error_rate"),
                  "requests": rm.get("requests")}
-        if rm["requests"] >= 20 and rm["server_error_rate"] >= 5.0:
+        if rm["requests"] >= API_5XX_MIN_REQUESTS and rm["server_error_rate"] >= API_5XX_BAD_PCT:
             return _sys("bad", f"{rm['server_error_rate']:g}% of customer requests failed (5xx) in the last "
                                f"{_dur(win)}.", "now", **facts)
         try:
@@ -8194,7 +8719,7 @@ def _ops_state_build():
             latest = (recent.get("latest") or [{}])[0]
             return _sys("warn", f"{recent['total']} server error{'s' if recent['total'] != 1 else ''} in the last hour.",
                         _iso_z(latest.get("created_at"), "UTC"), **facts)
-        if rm.get("p95_ms") and rm["p95_ms"] > 2000:
+        if rm.get("p95_ms") and rm["p95_ms"] > API_P95_WARN_MS:
             return _sys("warn", f"Slow: p95 {rm['p95_ms']:.0f} ms over the last {_dur(win)}.", "now", **facts)
         if not rm["requests"]:
             return _sys("ok", f"No customer traffic in the last {_dur(win)}.", None, **facts)
@@ -8266,7 +8791,7 @@ def _ops_state_build():
         import push as _push_state
         ob = _push_state.outbox_counts(db_path=path)
         oldest = _age_hours(ob.get("oldest_pending_at"), "UTC")
-        if oldest is not None and oldest * 60 > 30:
+        if oldest is not None and oldest * 60 > PUSH_WAIT_WARN_MINUTES:
             return _sys("warn", f"A push has waited {_dur(oldest * 60)} to go out.",
                         _iso_z(ob.get("oldest_pending_at"), "UTC"))
         if ob.get("failed_24h"):
@@ -8351,7 +8876,8 @@ def _ops_state_build():
                      ("push", push), ("ai", ai), ("integrations", integrations)):
         guard(name, fn)
     worst = max((s["state"] for s in systems.values()), key=lambda st: _STATE_RANK.get(st, 1), default="unknown")
-    return {"ok": True, "systems": systems, "worst": worst, "generated_at": _utcnow().strftime(_ZFMT)}
+    return {"ok": True, "systems": systems, "worst": worst, "generated_at": _utcnow().strftime(_ZFMT),
+            "thresholds": console_thresholds()}
 
 
 # ── AI routes: the orchestration console (design 10/7/26, phase 6) ──────────

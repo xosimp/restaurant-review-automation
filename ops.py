@@ -6018,12 +6018,16 @@ def send_operator_weekly_digest():
     import html as _html
     import emails as _emails_ops
     import admin_ops
-    ov = admin_ops.overview()
-    k = ov.get("kpis") or {}
-    try:
-        recs = admin_ops.clients().get("clients") or []
-    except Exception:
-        recs = []
+    # One fleet build for both reads (admin audit 10/27/26 P-16): each built
+    # the whole fleet on the scheduler thread.
+    with admin_ops.one_fleet_build():
+        ov = admin_ops.overview()
+        k = ov.get("kpis") or {}
+        try:
+            recs = admin_ops.clients().get("clients") or []
+        except Exception as e:
+            log.warning("operator digest: the client records could not be read: %s", e)
+            recs = []
     # The console's records: customer accounts only (C's segment), their
     # churn read under `churn_risk` (level, reasons, points) — this read
     # `churn`/`score`, keys the records never carried, so the at-risk list

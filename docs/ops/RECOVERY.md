@@ -464,7 +464,11 @@ of stacking under the next night's. The nightly backup and the monthly
 restore drill are queue rows too (`scheduled_job`, the one-at-a-time
 `maintenance` group — scale re-audit 10/20/26 R8-03): a deploy mid-backup
 hands the row back and the next process starts the backup again from the
-beginning (a crashed run's work files are cleared first). The queue claims
+beginning (a crashed run's work files are cleared first). The nightly
+business metrics (`business_metrics`, 11:50pm CT) are one too since admin
+audit 10/27/26 P-16 — a whole-fleet build that ran on the scheduler thread —
+and run for the night that was queued (`jobs_registry` `period_kwarg`), a
+night the loop queued late included. The queue claims
 nothing while `MAINTENANCE_READ_ONLY` or `RESTORE_FROM` is set or the
 restore guard holds a restored database (`job_queue.frozen`, R8-05). The
 Postgres cutover and its rollback are `docs/ops/POSTGRES_CUTOVER.md`.

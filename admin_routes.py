@@ -592,39 +592,88 @@ def client_data_page(restaurant_id, current_user):
 def save_staff_note_route(restaurant_id, current_user):
     """Add a scheduling constraint. A second one for the same person is
     added to the first, never written over it (models.save_staff_note,
-    fix round #142). {ok, id, notes (the person's full text), appended}."""
+    fix round #142). {ok, id, notes (the person's full text), appended}.
+
+    A form post, or JSON. The Undo of a removal posts JSON {employee_name,
+    notes, parts}: `parts` is the removed note's constraints exactly as the
+    delete returned them, put back verbatim — each keeps its own end date
+    (admin audit 10/27/26 W15-h) — after the same checks as a new note
+    (name and notes, the restaurant, each part's text and dates)."""
     from models import save_staff_note, _iso_or_none
-    name  = " ".join((request.form.get("employee_name") or "").split())[:80]
-    notes = (request.form.get("notes") or "").strip()[:500]
+    src = (request.get_json(silent=True) if request.is_json else None) or request.form
+    name  = " ".join(str(src.get("employee_name") or "").split())[:80]
+    notes = str(src.get("notes") or "").strip()[:500]
     if not name or not notes:
         return jsonify(ok=False, error="Name and notes required"), 400
     if not get_restaurant(restaurant_id):
         return jsonify(ok=False, error="Restaurant not found"), 404
     # An optional end date (memory audit 9/29/26): a constraint that says
     # "until 6/1" in its own words ends then without one.
-    ends = (request.form.get("expires_on") or "").strip()
+    ends = str(src.get("expires_on") or "").strip()
     if ends and not _iso_or_none(ends):
         return jsonify(ok=False, error="That end date isn't a date — use M/D/YY."), 400
+    parts, err = _staff_note_parts_in(src.get("parts") if request.is_json else None)
+    if err:
+        return jsonify(ok=False, error=err), 400
     result = save_staff_note(restaurant_id, name, notes, expires_on=ends or None,
-                             updated_by=(current_user.get("username") or current_user.get("email") or "admin"))
-    _record_staff_note(restaurant_id, current_user, "staff_note.saved", name,
-                       {"added": notes, "now": result["notes"], "appended": result["appended"]})
-    return jsonify(ok=True, **result)
+                             updated_by=(current_user.get("username") or current_user.get("email") or "admin"),
+                             restore_parts=parts)
+    detail = {"added": notes, "now": result["notes"], "appended": result["appended"]}
+    if parts:
+        detail["restored_parts"] = len(parts)
+    _record_staff_note(restaurant_id, current_user, "staff_note.saved", name, detail)
+    return jsonify(ok=True, restored=bool(parts), **result)
+
+
+STAFF_NOTE_MAX_PARTS = 50
+
+
+def _staff_note_parts_in(raw):
+    """(parts, error) for an Undo's `parts`: None (absent or empty) or a
+    list of {text, noted, expires, confirmed, by} — each text 1-500
+    characters, each date ISO or M/D/YY (the same rule as a new note's end
+    date), at most STAFF_NOTE_MAX_PARTS. Anything else is refused whole."""
+    from models import _iso_or_none
+    if raw in (None, "", []):
+        return None, None
+    if not isinstance(raw, list) or len(raw) > STAFF_NOTE_MAX_PARTS:
+        return None, "parts must be a list of the note's constraints."
+    out = []
+    for p in raw:
+        if not isinstance(p, dict):
+            return None, "parts must be a list of the note's constraints."
+        text = str(p.get("text") or "").strip()
+        if not text or len(text) > 500:
+            return None, "Every constraint needs its text (500 characters at most)."
+        part = {"text": text}
+        for k in ("noted", "expires", "confirmed"):
+            v = str(p.get(k) or "").strip()
+            if v and not _iso_or_none(v):
+                return None, "That end date isn't a date — use M/D/YY." if k == "expires" else \
+                    f"That {k} date isn't a date — use M/D/YY."
+            part[k] = _iso_or_none(v) if v else None
+        part["by"] = str(p.get("by") or "").strip()[:120] or None
+        out.append(part)
+    return out, None
 
 @admin_bp.route("/admin/staff-notes/<int:note_id>/delete", methods=["POST"])
 @admin_required
 def delete_staff_note_route(note_id, current_user):
     """Remove one person's constraints. Returns what was removed, so the
     page can offer an undo, and records it with its restaurant and text —
-    the audit row said neither (fix round #142)."""
+    the audit row said neither (fix round #142). `deleted.parts` is each
+    constraint as stored, with its own noted / end date (or null), which the
+    Undo posts back (admin audit 10/27/26 W15-h)."""
     from models import delete_staff_note
     deleted = delete_staff_note(note_id)
     if not deleted:
         return jsonify(ok=False, error="That constraint was already removed."), 404
     _record_staff_note(deleted["restaurant_id"], current_user, "staff_note.removed", deleted["employee_name"],
-                       {"removed": deleted["notes"]}, before={"notes": deleted["notes"]}, after={"notes": None})
+                       {"removed": deleted["notes"]}, before={"notes": deleted["notes"],
+                                                               "parts": deleted.get("parts")},
+                       after={"notes": None})
     return jsonify(ok=True, deleted={"employee_name": deleted["employee_name"], "notes": deleted["notes"],
-                                     "restaurant_id": deleted["restaurant_id"]})
+                                     "restaurant_id": deleted["restaurant_id"], "parts": deleted.get("parts")})
 
 
 def _record_staff_note(restaurant_id, current_user, event, employee_name, detail, before=None, after=None):
@@ -1173,7 +1222,9 @@ def add_alert_contact_route(restaurant_id, current_user):
         current_user, "alert_contact.added", restaurant_id=restaurant_id, target=f"alert_contact:{contact_id}",
         after={"contact_id": contact_id, "name": name, "phone_last4": phone[-4:], "sms_consent": False},
         summary=f"{current_user.get('username') or 'admin'} added {name or 'a contact'} …{phone[-4:]}")
-    return jsonify(ok=True, id=contact_id, name=name, phone=phone)
+    # The number back as its last four only (admin audit 10/27/26 S10): the
+    # caller typed it, and a response body is no place to repeat it whole.
+    return jsonify(ok=True, id=contact_id, name=name, phone_last4=phone[-4:])
 
 
 @admin_bp.route("/admin/alert-contacts/delete/<int:contact_id>", methods=["POST"])
@@ -4476,11 +4527,46 @@ def admin_api_emails(current_user):
     return jsonify(**admin_ops.emails())
 
 
+@admin_bp.route("/admin/api/emails/rows")
+@admin_required
+def admin_api_email_rows(current_user):
+    """The Email page's filtered rows, filtered by the database (admin audit
+    10/27/26 P-11): ?status=undeliverable|failed|bounced|complained|sent|
+    delayed|delivered (or none) &type=<email_type> &limit=<=500, default 200>.
+    {ok, rows (emails().rows' shape), filter: {status, type}, limit, window}.
+    `undeliverable` is failed, bounced or complained — the page's own filter.
+    The last 30 days. Read by admins and support (the support masking
+    applies, as on /admin/api/emails)."""
+    import admin_ops
+    a = request.args
+    try:
+        out = admin_ops.email_rows(status=a.get("status", ""), email_type=a.get("type", ""), limit=a.get("limit"))
+    except admin_ops.RowFilterError as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+    return jsonify(**out)
+
+
 @admin_bp.route("/admin/api/notifications")
 @admin_required
 def admin_api_notifications(current_user):
     import admin_ops
     return jsonify(**admin_ops.notifications())
+
+
+@admin_bp.route("/admin/api/notifications/pushes")
+@admin_required
+def admin_api_push_rows(current_user):
+    """The Push page's filtered deliveries, filtered by the database (admin
+    audit 10/27/26 P-11): ?status=failed (or none) &limit=<=500, default
+    200>. {ok, pushes (notifications().pushes' shape), filter: {status},
+    limit, window}. The last 30 days. Admins and support."""
+    import admin_ops
+    a = request.args
+    try:
+        out = admin_ops.push_rows(status=a.get("status", ""), limit=a.get("limit"))
+    except admin_ops.RowFilterError as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+    return jsonify(**out)
 
 
 @admin_bp.route("/admin/api/billing")
@@ -6754,6 +6840,47 @@ def _admin_busy(e):
     return resp
 
 
+# The console reads that never take a heavy-read slot (admin audit 10/27/26
+# P-05, admin_ops.ADMIN_READ_CONCURRENCY): the rail's poll, search, the task
+# and job polls, and reads of one row by its id. Every other GET under
+# /admin/api/ on this blueprint takes one; /admin/api/ops/state (status_bp)
+# never does. An endpoint is named here by its view function.
+_ADMIN_SLIM_READS = frozenset({
+    # the rail poll and the palette
+    "admin_api_badges", "admin_api_search",
+    # task and job polls
+    "admin_api_task", "admin_api_admin_job", "admin_api_pos_export_status", "admin_client_setup_status",
+    "admin_menu_extract_status",
+    # one row, or one restaurant's own short list, by id
+    "admin_api_ai_call", "admin_get_brand", "admin_api_client_settings", "admin_api_user_security",
+    "admin_list_templates", "admin_api_support_notes", "admin_api_rpower_store", "admin_api_brief_deliveries",
+    "admin_api_intake", "admin_api_offboarding", "admin_api_job_runs", "admin_api_issue_resolutions",
+})
+
+
+@admin_bp.before_request
+def _admin_read_slot_take():
+    """A heavy console GET takes one of the process's admin read slots
+    before it runs (P-05); past the short wait it is refused 503 busy with
+    Retry-After by _admin_busy. A request with no session cookie is answered
+    401 by admin_required without reading anything, so it takes no slot."""
+    from flask import g as _g_rs
+    if (request.method != "GET" or not (request.path or "").startswith("/admin/api/")
+            or (request.endpoint or "").rsplit(".", 1)[-1] in _ADMIN_SLIM_READS
+            or not request.cookies.get("session_token")):
+        return None
+    if _admin_ops_c.admin_read_acquire():
+        _g_rs._admin_read_slot = True
+    return None
+
+
+@admin_bp.teardown_request
+def _admin_read_slot_give(exc):
+    from flask import g as _g_rs
+    if _g_rs.pop("_admin_read_slot", False):
+        _admin_ops_c.admin_read_release()
+
+
 @admin_bp.after_app_request
 def _admin_fleet_invalidate(resp):
     """A write under /admin — on any blueprint — that succeeded and can
@@ -6894,14 +7021,17 @@ def admin_api_pos_traffic(current_user):
 @admin_bp.route("/admin/api/data-sources")
 @admin_required
 def admin_api_data_sources(current_user):
-    """Every data source's sync state per restaurant, failing first (#46),
-    paged by the server (Audit #23 A6-15). ?segment=customer|internal|all
-    &page= &per_page= &failing=1 &source="""
+    """Every data source's sync state per restaurant — failing, then stale
+    (no failures, but no good read within its cadence: admin audit 10/27/26
+    O9), then ok (#46) — paged by the server (Audit #23 A6-15).
+    ?segment=customer|internal|all &page= &per_page= &state=failing|stale
+    &failing=1 (the same as state=failing) &source="""
     return jsonify(**_admin_ops_c.data_sources(segment=request.args.get("segment", "customer"),
                                                page=request.args.get("page", 1, type=int),
                                                per_page=request.args.get("per_page", 50, type=int),
                                                failing=request.args.get("failing") == "1",
-                                               source=request.args.get("source") or None))
+                                               source=request.args.get("source") or None,
+                                               state=request.args.get("state") or None))
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/timeline")
@@ -7022,9 +7152,13 @@ def admin_api_ai_capacity(current_user):
 @admin_bp.route("/admin/api/ai/reset-breaker", methods=["POST"])
 @admin_required
 def admin_api_ai_reset_breaker(current_user):
-    """Close a provider's breaker in this process now (body {"provider":
-    "anthropic" | "perplexity" | "google_places"}, or none for all). The next
-    call goes straight to the provider."""
+    """Close a provider's breaker (body {"provider": "anthropic" |
+    "perplexity" | "google_places"}, or none for all) — in this process at
+    once, and in every other process within ai_utils.BREAKER_SYNC_SECONDS:
+    ai_utils.reset_breaker publishes the reset through the shared
+    `ai_breakers` rows, and a provider's reset closes its model-family and
+    tenant breakers too. The next call goes straight to the provider.
+    `breakers` in the answer is this process's view after the reset."""
     if not current_user.get("is_admin"):
         return jsonify(ok=False, error="Admins only."), 403
     import ai_utils
@@ -7046,11 +7180,17 @@ def admin_api_ai_emergency_stop(current_user):
     """Arm (body {"armed": true, "reason": "..."}) or clear ({"armed":
     false}) the emergency stop: every model call for every client refused,
     in every process within seconds, no deploy (blind re-audit 10/20/26
-    R4-02). AI_EMERGENCY_STOP in the environment still holds while set."""
+    R4-02). AI_EMERGENCY_STOP in the environment still holds while set.
+
+    `armed` must be said (admin audit 10/27/26 C8): a body without it read
+    as "clear", so an empty POST switched every model call back on. 400
+    without it, and nothing changes."""
     if not current_user.get("is_admin"):
         return jsonify(ok=False, error="Admins only."), 403
     import ai_utils
     body = request.get_json(silent=True) or {}
+    if body.get("armed") not in (True, False, 1, 0, "1", "0", "true", "false", "yes", "no"):
+        return jsonify(ok=False, error="Say armed: true to stop every AI call, or armed: false to clear it."), 400
     armed = body.get("armed") in (True, 1, "1", "true", "yes")
     before = ai_utils.emergency_stop_armed()
     if armed:
@@ -7069,11 +7209,20 @@ def admin_api_ai_emergency_stop(current_user):
 def admin_api_ai_fleet_brake_release(current_user):
     """Release the automatic fleet brake (R4-02): the paused background AI
     work resumes, and the brake does not re-arm by itself for
-    AI_FLEET_BRAKE_ACK_HOURS (the fleet page still fires)."""
+    AI_FLEET_BRAKE_ACK_HOURS (the fleet page still fires).
+
+    Refused 409 while no brake is on (admin audit 10/27/26 C8): a release
+    from a stale page or a second click wrote that hold-off anyway, so the
+    automatic brake could not arm for hours with nothing released."""
     if not current_user.get("is_admin"):
         return jsonify(ok=False, error="Admins only."), 403
     import ai_utils
     before = ai_utils.fleet_brake_scope()
+    if not before:
+        _audit_admin_action(current_user, "ai.fleet_brake_release", target="all", before={"brake": None},
+                            after={"brake": None}, result="refused",
+                            summary=f"AI fleet brake release refused (not on) for {current_user.get('username')}")
+        return jsonify(ok=False, error="The fleet brake isn't on — nothing to release.", fleet_brake=None), 409
     ai_utils.release_fleet_brake(actor=current_user.get("username"))
     _g_audit(current_user, "ai.fleet_brake_release", target="all", before={"brake": before},
              after={"brake": None}, summary=f"AI fleet brake released by {current_user.get('username')}")
@@ -7270,27 +7419,11 @@ def admin_api_messaging_health(current_user):
     the inbound webhooks (last verified event, signature failures, stale),
     email delivery over 7 days (bounce and complaint rates — a bounce is not
     a delivery), SMS over 24 hours, the push and webhook outboxes, and the
-    automatic alert-storm caps on today."""
-    import models as _m
-    import notify
-    import push
-    import webhooks
-    conn = _m.get_conn()
-    try:
-        caps = [dict(r) for r in conn.execute(
-            "SELECT c.*, r.name AS restaurant FROM alert_storm_caps c LEFT JOIN restaurants r ON r.id=c.restaurant_id "
-            "WHERE c.until_at > datetime('now') AND c.lifted_at IS NULL ORDER BY c.id DESC").fetchall()]
-    finally:
-        conn.close()
-    return jsonify(ok=True,
-                   problems=notify.messaging_problems(),
-                   inbound_webhooks=_m.inbound_webhook_health(),
-                   email=_m.email_delivery_stats(days=7),
-                   sms=notify.sms_stats(hours=24),
-                   push_outbox=push.outbox_counts(),
-                   webhook_outbox=webhooks.outbox_counts(),
-                   storm_caps=caps,
-                   operator_suppressed=[r for r in _m.get_email_suppressions(limit=1000) if r.get("operator")])
+    automatic alert-storm caps on today. One reading is shared for
+    ADMIN_MESSAGING_HEALTH_TTL_SECONDS (`cached`, `age_seconds` — admin audit
+    10/27/26 P-20: every Operations landing re-ran its seven reads); a part
+    that cannot be read is named in `read_failed`, never a 500 of the whole."""
+    return jsonify(**_admin_ops_c.messaging_health())
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/brief-deliveries")

@@ -6530,6 +6530,10 @@ def run_queued_scheduled_job(job):
     mod, fn_name = spec["target"]
     fn = getattr(importlib.import_module(mod), fn_name)
     kwargs = jobs_registry.run_kwargs(name, now=_chi_now())
+    if spec.get("period_kwarg") and request_id is None and payload.get("period"):
+        # The period's own day (P-16): the night the loop queued, whenever
+        # the worker gets to it.
+        kwargs[spec["period_kwarg"]] = str(payload["period"])
     outcome = {}
 
     def body(**kw):
@@ -7416,12 +7420,15 @@ def scheduler_loop():
             # 11:50pm CT — the day's business metrics (business_metrics_daily,
             # never pruned) and each account's churn-risk state (#18, #83).
             # Idempotent. A night the loop missed, or a failed run's retry,
-            # is taken before 6am for the day it belongs to.
+            # is taken before 6am for the day it belongs to. A row on the job
+            # queue's maintenance group (admin audit 10/27/26 P-16): the
+            # queue worker runs its whole-fleet build for the queued day
+            # (jobs_registry period_kwarg), off this loop and out of the web
+            # process.
             _metrics_day = today if (now.hour, now.minute) >= (23, 50) else (
                 today - timedelta(days=1) if now.hour < 6 else None)
             if _metrics_day is not None and _ops.claim_period("business_metrics", str(_metrics_day)):
-                from admin_ops import snapshot_business_metrics
-                _ops.run_job("business_metrics", snapshot_business_metrics, day=str(_metrics_day))
+                queue_scheduled_job("business_metrics", str(_metrics_day))
 
             # Every tick — morning briefs go at each restaurant's own local
             # hour and claim themselves per restaurant per day (a job run of

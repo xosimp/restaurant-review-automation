@@ -82,14 +82,21 @@ def test_the_owed_billing_mail_goes_every_tick(loop):
     assert "run_owed_sends" in _names(calls)
 
 
-def test_business_metrics_at_1150pm_for_today_and_a_missed_night_before_6am(loop):
+def test_business_metrics_at_1150pm_for_today_and_a_missed_night_before_6am(loop, monkeypatch):
+    # Queued for the queue worker since admin audit 10/27/26 P-16 — its
+    # whole-fleet build ran inline on the scheduler thread — for the day it
+    # belongs to, which the worker passes as `day` (period_kwarg).
+    queued = []
+    monkeypatch.setattr(scheduler, "queue_scheduled_job", lambda name, period, **k: queued.append((name, period)))
     only = lambda job, period: job == "business_metrics"  # noqa: E731
     calls, asked = loop(datetime(2026, 9, 29, 23, 55), only)
-    assert ("snapshot_business_metrics", {"day": "2026-09-29"}) in calls
+    assert ("business_metrics", "2026-09-29") in queued and "snapshot_business_metrics" not in _names(calls)
+    del queued[:]
     calls, _ = loop(datetime(2026, 9, 30, 1, 10), only)
-    assert ("snapshot_business_metrics", {"day": "2026-09-29"}) in calls, "a missed night is the day it belongs to"
+    assert ("business_metrics", "2026-09-29") in queued, "a missed night is the day it belongs to"
+    del queued[:]
     calls, asked = loop(datetime(2026, 9, 29, 12, 0), only)
-    assert "snapshot_business_metrics" not in _names(calls)
+    assert not queued and "snapshot_business_metrics" not in _names(calls)
     assert not any(job == "business_metrics" for job, _p in asked), "claimed outside its window"
 
 

@@ -72,9 +72,16 @@ queue         run as a job_queue row in the queue worker process (the
               ops.run_job under this name (scheduler.
               run_queued_scheduled_job), so job_runs, the SLA and Run now
               read it as before. The nightly backup and the restore drill
-              (scale re-audit 10/20/26 R8-03, R8-15): out of the web process
-              and off the loop. A failed retryable run is retried by the
-              queue's own backoff
+              (scale re-audit 10/20/26 R8-03, R8-15), and the nightly
+              business metrics' fleet build (admin audit 10/27/26 P-16): out
+              of the web process and off the loop. A failed retryable run is
+              retried by the queue's own backoff
+period_kwarg  for a `queue` job whose period is a date it works on: the
+              keyword its target takes that date as (business_metrics'
+              `day`). The worker passes the queued period there, so a night
+              the loop queued late is still that night's — never the day the
+              worker happened to run it. A console Run now (period
+              "manual-<id>") passes run_kwargs as before
 salary_view   "owner" for a job whose every output goes to the account holder
               alone (or is kept per salary view, keyed as the owner's): it
               runs in models.salary_view(True), all-in labor. Every other job
@@ -480,8 +487,12 @@ JOBS = {
         runnable=True, label="Business metrics",
         description="The day's MRR, accounts, signups, churn, active users and costs into business_metrics_daily "
                     "(never pruned), and each paying account's churn-risk state",
+        # On the queue worker (admin audit 10/27/26 P-16): a whole fleet
+        # build ran inline on the scheduler thread of the web process. The
+        # loop claims the night and queues it; the worker runs it for the
+        # period's day (period_kwarg), a missed night included.
         target=("admin_ops", "snapshot_business_metrics"), run_kwargs=lambda now: {"day": now.date().isoformat()},
-        max_minutes=15, retry=True),
+        max_minutes=15, retry=True, queue="maintenance", period_kwarg="day"),
     "ops_failure_digest": dict(
         cadence="8am CT daily", sla_minutes=_D, sends=True, runnable=True,
         label="Failure digest", description="Email Will what failed, what is stuck and what is overdue since the last digest",
