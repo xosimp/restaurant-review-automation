@@ -19317,7 +19317,7 @@ def unsuppress_email(email: str, actor=None, reason: str = None, db_path: str = 
             try:
                 restaurant_id = _suppression_restaurant(conn, email)
             except Exception as e:
-                print(f"[suppression] restaurant for {email} unreadable: {e}")
+                logging.getLogger(__name__).warning("suppression lift: the address's restaurant is unreadable: %s", e)
         lifted = 0
         if suppression_liftable(row["reason"]):
             # Re-checked in the write: a complaint that lands between the read

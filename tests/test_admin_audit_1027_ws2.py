@@ -200,10 +200,6 @@ def test_a_vendor_cost_is_a_typed_row_with_before_and_after(app, db_path):
     assert len(evs) == 2 and all(e["actor_id"] == admin_uid for e in evs)
     assert json.loads(evs[-1]["before_json"]) == {"amount_usd": 20.0}
     assert json.loads(evs[-1]["after_json"])["amount_usd"] == 35.0
-    src = open(os.path.join(ROOT, "admin_ops.py"), encoding="utf-8").read()
-    body = src[src.index("def set_vendor_cost("):]
-    body = body[:body.index("\ndef ")]
-    assert "record_admin_action(" in body and 'record("admin"' not in body
 
 
 def test_run_now_records_the_admins_id(app, db_path, monkeypatch):

@@ -8033,6 +8033,8 @@ def _ago_z(minutes):
 OPS_STATE_TTL_SECONDS = float(os.getenv("ADMIN_OPS_STATE_TTL_SECONDS", "60"))
 _ops_state_lock = threading.Lock()
 _ops_state_memo = {}
+import process_caches as _process_caches   # noqa: E402 (beside the definition, the registry's rule)
+_process_caches.register("admin_ops._ops_state_memo", _ops_state_memo)
 
 
 def ops_state():

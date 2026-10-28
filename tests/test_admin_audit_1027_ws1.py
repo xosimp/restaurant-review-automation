@@ -4,7 +4,9 @@ fixture's throwaway database (never a real one). Finding IDs are the audit
 reports' (03-kpi K-*, 04-workflows F*, 06-performance P-*, 07-ops-code O*/C*)."""
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
+
+from tests.clock import utc_now
 
 import pytest
 
@@ -43,7 +45,7 @@ def _sql(db_path, sql, args=()):
 
 
 def _ago_utc(**kw):
-    return (datetime.now(timezone.utc) - timedelta(**kw)).strftime("%Y-%m-%d %H:%M:%S")
+    return (utc_now() - timedelta(**kw)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ── F5: one malformed row no longer takes down the fleet build ──────────────
@@ -291,7 +293,7 @@ def test_k08_failed_ai_calls_mean_one_thing_on_every_screen(db_path):
 
 def test_k09_the_ai_page_carries_the_owner_day_beside_the_budget_day(db_path):
     rid = _rest(db_path, "Clock Cafe", billing_status="active")
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     utc_mid = now.replace(hour=0, minute=0, second=0, microsecond=0)
     ct_mid = admin_ops._today_start().astimezone(timezone.utc)
     lo, hi = sorted([utc_mid, ct_mid])
@@ -339,7 +341,7 @@ def test_k12_customer_cost_and_ever_paid_are_served(db_path):
 
 def test_k13_instagram_has_no_sync_so_it_is_never_never_synced(db_path):
     rid = _rest(db_path, "Insta Cafe", billing_status="active")
-    future = (datetime.now(timezone.utc) + timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
+    future = (utc_now() + timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
     _sql(db_path, "UPDATE restaurants SET ig_token='tok', ig_token_expires=? WHERE id=?", (future, rid))
     rows = [r for r in admin_ops.integrations()["rows"] if r["restaurant_id"] == rid and r["integration"] == "instagram"]
     assert rows and rows[0]["state"] == "connected" and rows[0]["freshness"] == "—"
@@ -524,7 +526,7 @@ def test_p01_derived_resend_events_are_read_on_a_window(db_path):
 # ── P-03: the Email chart's daily counts come from the database ────────────
 
 def test_p03_email_daily_counts_are_grouped_in_sql_on_chicago_days(db_path, monkeypatch):
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     for i, status in enumerate(("delivered", "bounced", "failed", "delivered")):
         _sql(db_path, "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at, status) "
                       "VALUES (NULL, 'digest', ?, 's', ?, ?)",

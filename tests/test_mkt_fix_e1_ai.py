@@ -355,8 +355,9 @@ def test_the_guest_text_tool_requires_a_known_segment(db):
 def test_a_guest_text_over_a_texts_budget_or_that_would_be_reworded_is_not_proposed(db):
     import ask_cavnar_tools as t
     rid = _restaurant(db)
-    long = {"message": "Come see us. " * 30, "segment": "all"}
-    assert "at most 300" in t.proposal_refusal("send_guest_campaign", long, restaurant_id=rid)
+    import guest_marketing as gm
+    long = {"message": "Come see us. " * 45, "segment": "all"}          # 585 characters, over the 500 limit
+    assert f"at most {gm.CAMPAIGN_MAX_CHARS}" in t.proposal_refusal("send_guest_campaign", long, restaurant_id=rid)
     award = {"message": "Our award-winning lasagna is on tonight!", "segment": "all"}
     assert "can't go out as written" in t.proposal_refusal("send_guest_campaign", award, restaurant_id=rid)
 

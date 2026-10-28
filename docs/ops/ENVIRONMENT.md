@@ -611,12 +611,15 @@ Changed by the blind re-audit fix round (10/20/26, R6-F4/F5/F10 — `home_snapsh
 | `ADMIN_BADGES_MAX_AGE_SECONDS` | `"300"` | admin_ops.py |
 | `ADMIN_BUSY_RETRY_AFTER` | `"5"` | admin_ops.py |
 | `ADMIN_CHURN_ISSUE_DAYS` | `"7"` | admin_ops.py |
+| `ADMIN_FLEET_CALIBRATION_MAX_DAYS` | `"90"` | admin_ops.py — the fleet-wide calibration window's cap; one restaurant's view keeps its full window (admin audit 10/27/26 P-04) |
 | `ADMIN_FLEET_MAX_WAITERS` | `"1"` | admin_ops.py |
 | `ADMIN_FLEET_TTL_SECONDS` | `"45"` | admin_ops.py |
 | `ADMIN_FLEET_WAIT_SECONDS` | `"30"` | admin_ops.py |
 | `ADMIN_HEAVY_CONCURRENCY` | `"1"` | admin_ops.py |
 | `ADMIN_HEAVY_WAIT_SECONDS` | `"2"` | admin_ops.py |
 | `ADMIN_JOB_WORKERS` | `"2"` | admin_routes.py |
+| `ADMIN_OPS_STATE_TTL_SECONDS` | `"60"` | admin_ops.py — how long a request thread shares one `/admin/api/ops/state` reading (0 reads fresh every time) |
+| `ADMIN_PLATFORM_ISSUES_TTL_SECONDS` | `"60"` | admin_ops.py — how long the platform issues are kept with the fleet memo on request threads (P-01) |
 | `ADMIN_RESOLUTION_MAX_DAYS` | `"30"` | admin_ops.py |
 | `ADMIN_SIGNED_UNPAID_CRIT_DAYS` | `"30"` | admin_ops.py |
 | `ADMIN_SIGNED_UNPAID_WARN_DAYS` | `"7"` | admin_ops.py |
