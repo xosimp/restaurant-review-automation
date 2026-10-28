@@ -212,3 +212,31 @@ def test_the_fleet_list_draws_a_labelled_data_column_and_never_says_never_for_a_
     assert "<span>Active</span><span title=" in _fn("clientsView") and ">Data</span>" in _fn("clientsView")
     assert _decl("CUST_COLS").count("px") == 3                   # the Data column has its own width
     assert "${ago(last)}</span><span></span>" in _fn("brandRow")  # a brand row keeps the grid
+
+
+# ── W15-h: the staff-note Undo puts every part back ─────────────────────────
+
+def test_the_staff_note_undo_posts_the_stored_parts_and_an_older_server_still_gets_the_text():
+    js = _js(("staffNoteAdd", "staffNoteDelete", "oneAtATime", "goBtn", "okRes", "errText", "say"), ("_inflight",)) + r"""
+    var sent = [];
+    function FormData(){ this.f = {}; } FormData.prototype.append = function(k, v){ this.f[k] = v; };
+    function post(path, body){ sent.push(['json', path, body]); return Promise.resolve(path.indexOf('/delete') > 0 ? answer : {ok: true, appended: false, _status: 200}); }
+    function api(path, o){ sent.push(['form', path, o.body.f]); return Promise.resolve({ok: true, _status: 200}); }
+    var parts = [{text: 'no Sundays', expires_on: null}, {text: 'off by 4pm', expires_on: '2026-12-01'}];
+    var answer;
+    (async function(){
+      answer = {ok: true, _status: 200, deleted: {employee_name: 'Ana', notes: 'no Sundays; off by 4pm', restaurant_id: 5, parts: parts}};
+      await staffNoteDelete(5, 77, 'Ana', 'EJ');
+      await new Promise(function(r){ setTimeout(r, 5); });
+      answer = {ok: true, _status: 200, deleted: {employee_name: 'Bo', notes: 'mornings', restaurant_id: 5, expires_on: '2026-11-30'}};
+      await staffNoteDelete(5, 78, 'Bo', 'EJ');
+      await new Promise(function(r){ setTimeout(r, 5); });
+      console.log(JSON.stringify(sent));
+    })();
+    """
+    sent = _node(js)
+    undo = [s for s in sent if s[1] == "/admin/staff-notes/5"]
+    assert undo[0] == ["json", "/admin/staff-notes/5", {"employee_name": "Ana", "notes": "no Sundays; off by 4pm",
+                                                        "parts": [{"text": "no Sundays", "expires_on": None},
+                                                                  {"text": "off by 4pm", "expires_on": "2026-12-01"}]}]
+    assert undo[1] == ["form", "/admin/staff-notes/5", {"employee_name": "Bo", "notes": "mornings", "expires_on": "2026-11-30"}]

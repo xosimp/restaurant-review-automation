@@ -2302,14 +2302,23 @@ function staffNotesHtml(c, notes){
     ${notes.map(x=>`<div style="display:flex;gap:10px;font-size:13px;align-items:flex-start"><span style="flex:1;min-width:0"><b>${esc(x.employee_name)}</b> <span class="ink2 pre">${esc(x.notes||'')}</span></span><button class="btn s g w" onclick="staffNoteDelete(${c.id},${x.id},'${jsq(x.employee_name)}','${jsq(c.name)}')">Remove</button></div>`).join('') || '<span class="muted" style="font-size:13px">No scheduling notes.</span>'}
     <div style="display:flex;gap:6px;flex-wrap:wrap"><input id="sn-name" placeholder="Employee name" style="flex:1;min-width:110px"><input id="sn-notes" placeholder="e.g. no Sundays; off by 4pm" style="flex:2;min-width:150px"><button class="btn s w" onclick="staffNoteAdd(${c.id},'${jsq(c.name)}')" title="A note for someone who already has one is added to theirs, never written over it.">Add</button></div>`;
 }
-async function staffNoteAdd(id, name, who, text, expires){
+async function staffNoteAdd(id, name, who, text, expires, parts){
   const nm = who || $('sn-name').value.trim(), nt = text || $('sn-notes').value.trim();
   if(!nm || !nt){ toast('Enter the employee and the note', 'bad'); return; }
-  const fd = new FormData(); fd.append('employee_name', nm); fd.append('notes', nt);
-  // Undo puts the note back with its end date when the delete returned one (W15-h).
-  if(expires) fd.append('expires_on', expires);
+  // Undo with the note's stored parts (admin audit 10/27/26, W15-h, contract
+  // 6): {employee_name, notes, parts} as JSON, and the server restores each
+  // part verbatim — its own end date with it — after the same checks a new
+  // note gets. A delete that returned no parts (an older server) puts the
+  // text back as before, with its one end date when it gave one.
+  var send;
+  if(Array.isArray(parts)) send = function(){ return post('/admin/staff-notes/' + id, {employee_name: nm, notes: nt, parts: parts}); };
+  else {
+    const fd = new FormData(); fd.append('employee_name', nm); fd.append('notes', nt);
+    if(expires) fd.append('expires_on', expires);
+    send = function(){ return api('/admin/staff-notes/' + id, {method:'POST', body: fd}); };
+  }
   // Sent once however often Add is clicked (C11/W15-f): it appends.
-  const d = await oneAtATime('staff-note:' + id, goBtn('cd-staff', 'staffNoteAdd'), function(){ return api('/admin/staff-notes/' + id, {method:'POST', body: fd}); });
+  const d = await oneAtATime('staff-note:' + id, goBtn('cd-staff', 'staffNoteAdd'), send);
   if(!d) return;
   if(say(d, d.appended ? ('Added to ' + nm + "'s notes") : ('Note saved for ' + nm))) route();
 }
@@ -2319,7 +2328,7 @@ async function staffNoteDelete(id, nid, who, name){
   if(!say(d, who + "'s notes removed")) return;
   const gone = d.deleted || {};
   route();
-  if(gone.notes && confirm('Removed ' + who + '’s notes. Undo — put them back?')) staffNoteAdd(id, name, gone.employee_name || who, gone.notes, gone.expires_on || null);
+  if(gone.notes && confirm('Removed ' + who + '’s notes. Undo — put them back?')) staffNoteAdd(id, name, gone.employee_name || who, gone.notes, gone.expires_on || null, Array.isArray(gone.parts) ? gone.parts : null);
 }
 // Menu (#73, #142, #153). The menu notes the AI writes from, edited here: read
 // from the client's settings (INT-2's GET …/settings) and saved under B1's
