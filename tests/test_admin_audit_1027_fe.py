@@ -166,3 +166,49 @@ def test_email_and_push_filters_call_the_contract_routes():
     assert "d.rows.filter(" not in ops_em and "d.pushes.filter(" not in ops_push
     assert "if(_ef !== 'all') emRowsLoad();" in ops_em and "if(_nf === 'failed') pushRowsLoad();" in ops_push
     assert "(d.by_type || []).map(x => x.email_type)" in ops_em   # every type sent in 7 days is offered
+
+
+# ── O9: stale data sources, and the fleet list's Data column ────────────────
+
+DS_FNS = ("dsQuery", "dsStaleKnown", "dsChip", "dsHtml", "errBanner", "table", "renderTable", "pager",
+          "parseTs", "durMin", "ago", "mdy", "fmtD", "fmtT", "fmtDT")
+
+
+def test_data_sources_say_stale_filter_on_it_and_never_call_an_unjudged_row_ok():
+    js = _js(DS_FNS, ("_dsf", "DS_CHIP", "clientLink")) + r"""
+    var _dsp = 1;
+    var rows = [{restaurant_id: 5, restaurant: 'EJ', label: 'POS', failures: 3, state: 'failing'},
+                {restaurant_id: 5, restaurant: 'EJ', label: 'Reviews', failures: 0, state: 'stale', last_ok_at: '2026-10-20T10:00:00Z'},
+                {restaurant_id: 6, restaurant: 'HR', label: 'POS', failures: 0, state: 'ok'}];
+    var newer = {ok: true, rows: rows, page: 1, pages: 1, total: 3, summary: [{source: 'pos', label: 'POS', restaurants: 2, failing: 1, stale: 0}, {source: 'reviews', label: 'Reviews', restaurants: 1, failing: 0, stale: 1}]};
+    var older = {ok: true, rows: rows, page: 1, pages: 1, total: 3, summary: [{source: 'pos', label: 'POS', restaurants: 2, failing: 1}, {source: 'reviews', label: 'Reviews', restaurants: 1, failing: 0}]};
+    var q = [dsQuery()]; _dsf = 'stale'; q.push(dsQuery()); _dsf = 'failing'; q.push(dsQuery());
+    _dsf = 'stale';
+    console.log(JSON.stringify({q: q, newer: dsHtml(newer), older: dsHtml(older)}));
+    """
+    out = _node(js)
+    assert out["q"] == ["/admin/api/data-sources?page=1", "/admin/api/data-sources?page=1&state=stale",
+                        "/admin/api/data-sources?page=1&state=failing&failing=1"]
+    n = out["newer"]
+    assert 'class="chip bad">failing' in n and 'class="chip warn">stale' in n and 'class="chip ok">ok' in n
+    assert "Stale <b>1</b>" in n and "isn't filtered" not in n
+    o = out["older"]                                       # a server that doesn't report staleness yet
+    assert 'class="chip ok">ok' not in o and "not failing" in o and "Stale <b>—</b>" in o
+    assert "doesn't report stale sources yet — the list below isn't filtered" in o
+
+
+def test_the_fleet_list_draws_a_labelled_data_column_and_never_says_never_for_a_missing_field():
+    m = re.search(r"\nconst FLEET_STATE_CHIP.*?\nfunction _fleetDataCell\(r\)\{.*?\n\}", PAGE, re.S)
+    js = STUBS + "function parseTs(t){ return t ? new Date(t) : null; } function ago(t){ return 'ago'; }\n" + m.group(0) + r"""
+    console.log(JSON.stringify([_fleetDataCell({}), _fleetDataCell({freshness: {pos_state: null, reviews: null, pos: null}}),
+      _fleetDataCell({freshness: {pos_state: {state: 'error', last_synced: '2026-10-27T10:00:00Z'}}})]));
+    """
+    missing, never, error = _node(js)
+    assert "—" in missing and "never" not in missing           # not sent is not "never"
+    assert "never" in never and "chip warn" in never
+    assert "chip bad" in error
+    row = _fn("custRow")
+    assert "${_fleetDataCell(r)}" in row
+    assert "<span>Active</span><span title=" in _fn("clientsView") and ">Data</span>" in _fn("clientsView")
+    assert _decl("CUST_COLS").count("px") == 3                   # the Data column has its own width
+    assert "${ago(last)}</span><span></span>" in _fn("brandRow")  # a brand row keeps the grid

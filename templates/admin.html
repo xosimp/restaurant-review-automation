@@ -565,13 +565,17 @@ function orDefault(v, d){ return v == null ? d : v; }
 // Setup completeness (G14): what is connected and configured - renamed from
 // "data completeness", which collided with the intelligence layer's feature
 // completeness. Either key, so this reads an older payload too.
-// The fleet table's Data cell. A connected POS is judged by the server's own
+// The fleet list's Data column (custRow, admin audit 10/27/26 O9), from the
+// slim row's freshness (admin_ops._slim: {pos_state, reviews, pos}). A
+// connected POS is judged by the server's own
 // state (pos_health.pos_sync_state - the rule the POS column, the status page
 // and the owner's freshness strip share), not a table-local "older than 3
 // days" rule that disagreed with them (B6 sub-audit). Only a restaurant with
-// no POS falls back to its review fetch's age.
+// no POS falls back to its review fetch's age. A row the server sent no
+// freshness for is "—", never "never".
 const FLEET_STATE_CHIP = {current:'ok', aging:'', stale:'warn', error:'bad', unknown:'warn'};
 function _fleetDataCell(r){
+  if(!r || r.freshness == null) return '<span class="dim" title="Not reported by the server">—</span>';
   const f = r.freshness || {}, ps = f.pos_state || null;
   if(ps && ps.state && ps.state !== 'not_connected'){
     const t = ps.last_synced || f.pos;
@@ -1499,7 +1503,7 @@ async function incidentOpen(){
 // (_clients stays the full-record cache loadClients() fills for the pages
 // that still read every record.)
 let _clients = null, _cq = '', _showDemo = false, _openBrands = {}, _ch = '', _cs = '', _csort = 'health', _cpage = 1;
-const CUST_COLS = 'grid-template-columns:minmax(0,2.6fr) minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,1fr) 72px 96px';
+const CUST_COLS = 'grid-template-columns:minmax(0,2.6fr) minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,1fr) 72px 84px 96px';
 const HEALTH_RANK = {inactive:-1, healthy:0, warning:1, critical:2};
 function monoTile(name, health){
   const t = {critical:['var(--red-bg)','var(--red-t)'], warning:['var(--amber-bg)','var(--amber-t)'], healthy:['var(--green-bg)','var(--green-t)']}[health] || ['var(--fill)','var(--ink3)'];
@@ -1544,6 +1548,7 @@ function custRow(r, indent){
     <span style="display:flex;align-items:center;gap:12px;min-width:0">${monoTile(r.name, r.health)}<span style="display:flex;flex-direction:column;min-width:0"><a href="#client/${r.id}" onclick="event.stopPropagation()" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(indent ? (r.location_name || r.name) : r.name)}</a><span class="muted" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sub)}${tag}</span></span></span>
     <span>${hb(r.health)}</span>${planCell(r)}${setupBar(r.setup)}<span style="display:flex;gap:4px;flex-wrap:wrap">${riskCell(r)}</span>
     <span class="n ink2" style="font-size:12.5px" title="The owner's own use — web or iOS">${ago(r.last_active)}${r.on_ios?' <span class="chip" title="Uses the iOS app">iOS</span>':''}</span>
+    <span>${_fleetDataCell(r)}</span>
     <span style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><a class="btn s g ic reveal w" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()" title="Settings" aria-label="Settings for ${esc(r.name)}">${ico('sliders','xs')}</a>${attnBadge(r)}<span class="chev">${ico('chev','s')}</span></span></div>${custDetail(r)}`;
 }
 function brandRow(b){
@@ -1556,7 +1561,7 @@ function brandRow(b){
     <span style="display:flex;align-items:center;gap:12px;min-width:0">${monoTile(b.brand, worst)}<span style="display:flex;flex-direction:column;min-width:0"><b style="font-size:14px">${esc(b.brand)}</b><span class="muted" style="font-size:12.5px"><span class="n">${b.locs.length}</span> locations on this page${owners?' · '+esc(owners):''}</span></span></span>
     <span>${hb(worst)}</span><span style="display:flex;flex-direction:column"><span style="font-size:13px;font-weight:700;color:var(--ink2)">${b.locs.filter(l=>l.status==='active').length} active</span><span class="n muted" style="font-size:12px">${mrr?fmtUSD(mrr)+'/mo':'—'}</span></span>
     <span class="n ink2" style="font-size:12.5px">${set.length?Math.round(set.reduce((a,x)=>a+x,0)/set.length)+'% avg':'—'}</span><span></span>
-    <span class="n ink2" style="font-size:12.5px">${ago(last)}</span>
+    <span class="n ink2" style="font-size:12.5px">${ago(last)}</span><span></span>
     <span style="display:flex;align-items:center;justify-content:flex-end;gap:10px">${issues?`<span class="cnt ${crit?'bad':'warn'}">${issues}</span>`:''}<span class="chev">${ico('chev','s')}</span></span></div>
     ${open ? b.locs.map(l=>custRow(l, true)).join('') : ''}`;
 }
@@ -1592,7 +1597,7 @@ async function clientsView(){
         <label class="switch" title="Demo, test and internal accounts — never counted in attention or MRR"><input type="checkbox" ${_showDemo?'checked':''} onchange="_showDemo=this.checked;_cpage=1;clientsView()"><i></i>Internal <span class="n">${segc.internal||0}</span></label>
       </div></div>
     <section class="card" style="overflow:hidden">
-      <div class="lbl" style="display:grid;${CUST_COLS};gap:14px;padding:12px 18px;border-bottom:1px solid var(--line)"><span>Restaurant</span><span>Health</span><span>Plan</span><span>Setup</span><span>Risk</span><span>Active</span><span></span></div>
+      <div class="lbl" style="display:grid;${CUST_COLS};gap:14px;padding:12px 18px;border-bottom:1px solid var(--line)"><span>Restaurant</span><span>Health</span><span>Plan</span><span>Setup</span><span>Risk</span><span>Active</span><span title="When its data last arrived: the POS sync by the server's own state, or the review fetch when there is no POS">Data</span><span></span></div>
       <div class="lst">${order.map(b=>groups[b].length>1?brandRow({brand:b, locs:groups[b]}):custRow(groups[b][0])).join('') || `<div class="empty">${_cq||_ch||_cs?'No restaurants match.':'No restaurants yet.'}</div>`}</div>
       ${pager(d.page, d.pages, d.total, 'clientsPage', 'locations')}
     </section>`;
@@ -3612,7 +3617,7 @@ function integrationAction(r){
     : `<a class="btn s g w" href="/admin/client-settings/${r.restaurant_id}" onclick="event.stopPropagation()">Settings</a>`;
 }
 function opsIntegrationsPage(p){ _ip = p; opsRender(); }
-function opsDataSourcesPage(p){ _dsp = p; opsRender(); }
+function opsDataSourcesPage(p){ _dsp = p; dsLoad(); }
 async function opsIntegrations(){
   const key = _if + '|' + _ip;
   if(!_ops.ig || _ops.igAt !== _opsAt || _ops.igKey !== key){
@@ -3639,13 +3644,56 @@ async function opsIntegrations(){
       <div class="tt"><b>${esc(r.label)} <span class="muted" style="font-weight:400">· ${clientLink(r.restaurant_id, r.restaurant)}${r.segment && r.segment !== 'customer' ? ' <span class="chip">' + esc(r.segment) + '</span>' : ''}</span></b>${r.error ? `<span style="color:var(--red-t);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(r.error)}">${esc(r.error)}</span>` : ''}${r.revoked_at || r.error_since ? `<span class="muted">${r.revoked_at ? 'access revoked ' + fmtD(r.revoked_at) : ''}${r.revoked_at && r.error_since ? ' · ' : ''}${r.error_since ? 'failing since ' + fmtD(r.error_since) : ''}</span>` : ''}</div>
       ${r.freshness && r.freshness !== '—' && r.freshness !== 'fresh' ? `<span class="chip warn">${esc(r.freshness)}</span>` : ''}${intb(r.state, r.state === 'connected' ? 'Connected' : r.state === 'error' ? (r.revoked_at ? 'Revoked' : 'Error') : 'Off')}<span class="n muted" style="width:40px;text-align:right;font-size:12.5px" title="last success">${r.last_success ? ago(r.last_success) : '—'}</span><span style="display:flex;gap:6px">${integrationAction(r)}</span></div>`).join('') || '<div class="empty">No integrations match.</div>'}</div>${pager(d.page, d.pages, d.total, 'opsIntegrationsPage', 'connections')}</section>
     <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px"><h2>RPOWER traffic</h2><span class="muted" style="font-size:12.5px">requests in the last 24 hours, from the request ledger</span></div></div><div id="ops-pt" style="border-top:1px solid var(--line)"></div></div>
-    <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px"><h2>Data sources</h2><span class="muted" style="font-size:12.5px">each client's syncs — failing first</span></div></div><div id="ops-ds" style="border-top:1px solid var(--line)"></div></div>`;
+    <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px"><h2>Data sources</h2><span class="muted" style="font-size:12.5px">each client's syncs — failing, then stale, first</span></div></div><div id="ops-ds" style="border-top:1px solid var(--line)"></div></div>`;
   lazyRead('ops-pt', '/admin/api/pos-traffic', x => { const t = x.total || {}, br = x.breaker || {}, ms = v => v == null ? '—' : (v >= 10000 ? '>10 s' : '≤' + (v >= 1000 ? (v / 1000) + ' s' : v + ' ms'));
     return `${errBanner(x)}<div style="display:flex;gap:18px;flex-wrap:wrap;padding:12px 18px;font-size:12.5px"><span>Breaker ${br.state === 'closed' ? pill('good', 'closed') : pill('bad', esc(br.state || 'unknown'))}${br.state !== 'closed' && br.reason ? ` <span class="dim">${esc(br.reason)}</span>` : ''}</span><span>Requests <span class="n">${fmtN(t.n || 0)}</span></span><span>Errors <span class="n" style="${t.errors ? 'color:var(--red-t)' : ''}">${fmtN(t.errors || 0)}</span></span><span>Paused <span class="n">${fmtN(t.skipped || 0)}</span></span><span>p50 <span class="n">${ms(t.p50_ms)}</span> · p95 <span class="n">${ms(t.p95_ms)}</span></span>${x.ledger_on === false ? '<span style="color:var(--amber-t)">ledger off (POS_REQUEST_LEDGER=0)</span>' : ''}</div>
     ${table([{h:'Endpoint', key:'endpoint', cell:r => esc(r.endpoint)}, {h:'Requests', key:'n', r:true, cell:r => `<span class="num">${fmtN(r.n)}</span>`}, {h:'Rows', key:'rows_out', r:true, cell:r => `<span class="num">${fmtN(r.rows_out)}</span>`}, {h:'Errors', key:'errors', r:true, cell:r => `<span class="num" style="${r.errors ? 'color:var(--red-t)' : ''}">${fmtN(r.errors)}</span>`}, {h:'p95', key:'p95_ms', r:true, cell:r => `<span class="num">${ms(r.p95_ms)}</span>`}], x.by_endpoint || [], {id:'pt-e', limit:12, empty:'No RPOWER request recorded in this window.'})}
     ${table([{h:'Store', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : esc(r.restaurant)}, {h:'Requests', key:'n', r:true, cell:r => `<span class="num">${fmtN(r.n)}</span>`}, {h:'Errors', key:'errors', r:true, cell:r => `<span class="num" style="${r.errors ? 'color:var(--red-t)' : ''}">${fmtN(r.errors)}</span>`}, {h:'Paused', key:'skipped', r:true, cell:r => `<span class="num">${fmtN(r.skipped)}</span>`}, {h:'p95', key:'p95_ms', r:true, cell:r => `<span class="num">${ms(r.p95_ms)}</span>`}], x.by_store || [], {id:'pt-s', limit:10, empty:'No store has made a request in this window.'})}`; });
-  lazyRead('ops-ds', '/admin/api/data-sources?page=' + _dsp, x => `${errBanner(x)}<div style="display:flex;gap:18px;flex-wrap:wrap;padding:12px 18px;font-size:12.5px"><span>Data Health median <span class="n">${x.data_health_median == null ? '—' : x.data_health_median}</span></span>${x.stale_snapshots ? `<span style="color:var(--amber-t)"><span class="n">${fmtN(x.stale_snapshots)}</span> clients' Data Health snapshot is over 2 days old</span>` : ''}${(x.summary || []).map(s => `<span>${esc(s.label)} <span class="n" style="${s.failing ? 'color:var(--red-t)' : ''}">${fmtN(s.failing)}/${fmtN(s.restaurants)}</span> failing</span>`).join('')}</div>
-    ${table([{h:'Client', key:'restaurant', cell:r => clientLink(r.restaurant_id, r.restaurant || '#' + r.restaurant_id)}, {h:'Source', key:'label', cell:r => `${esc(r.label)}${r.provider ? ' <span class="dim">' + esc(r.provider) + '</span>' : ''}`}, {h:'In a row', key:'failures', r:true, cell:r => `<span class="num" style="${r.failures >= (x.issue_threshold || 3) ? 'color:var(--red-t)' : ''}">${fmtN(r.failures)}</span>`}, {h:'Since', key:'since', cell:r => `<span class="num">${r.since ? fmtD(r.since) : '—'}</span>`}, {h:'Last error', key:'last_error', wrap:true, cell:r => r.last_error ? `<span style="color:var(--red-t)">${esc(r.last_error)}</span>` : ''}, {h:'Next retry', key:'next_retry_at', cell:r => `<span class="num">${r.next_retry_at ? fmtDT(r.next_retry_at) : '—'}</span>`}, {h:'Last good', key:'last_ok_at', cell:r => `<span class="num">${r.last_ok_at ? ago(r.last_ok_at) : 'never'}</span>`}], x.rows || [], {id:'ds-t', limit:50, empty:'No data source is recorded yet.'})}${pager(x.page, x.pages, x.total, 'opsDataSourcesPage', 'sources')}`);
+  dsLoad();
+}
+
+// Data sources (admin audit 10/27/26, O9): each row's state is the server's
+// — failing (failures in a row), stale (no failure, but its last good read is
+// older than that source's expected cadence, data_health) or ok — and the
+// list filters on it (`state=failing|stale`; `failing=1` still works). A
+// feed that quietly stopped is no longer listed with the healthy ones. A
+// server that doesn't report staleness yet (no `stale` in its summary) can't
+// say "ok": such a row reads "not failing", and the Stale filter says the
+// list isn't filtered rather than passing every row off as stale. ES5.
+var _dsf = '';
+var DS_CHIP = {failing: ['bad', 'failing'], stale: ['warn', 'stale'], ok: ['ok', 'ok']};
+function dsQuery(){ return '/admin/api/data-sources?page=' + _dsp + (_dsf === 'failing' ? '&state=failing&failing=1' : (_dsf === 'stale' ? '&state=stale' : '')); }
+function dsLoad(){ lazyRead('ops-ds', dsQuery(), dsHtml); }
+function dsFilter(f){ _dsf = f; _dsp = 1; dsLoad(); }
+function dsStaleKnown(x){ return (x.summary || []).some(function(s){ return s.stale != null; }); }
+function dsChip(r, known){
+  var st = r.state || (r.failures ? 'failing' : null), c;
+  if(st === 'ok' && !known) st = null;
+  c = DS_CHIP[st];
+  return c ? '<span class="chip ' + c[0] + '">' + c[1] + '</span>' : '<span class="dim" title="This server doesn\'t report whether a source is stale">not failing</span>';
+}
+function dsHtml(x){
+  var sum = x.summary || [], known = dsStaleKnown(x), all = 0, fail = 0, stale = 0;
+  sum.forEach(function(s){ all += +s.restaurants || 0; fail += +s.failing || 0; stale += +s.stale || 0; });
+  var seg = '<div class="seg">' + [['', 'All', fmtN(all)], ['failing', 'Failing', fmtN(fail)], ['stale', 'Stale', known ? fmtN(stale) : '—']].map(function(o){
+    return '<button class="' + (_dsf === o[0] ? 'on' : '') + '" onclick="dsFilter(\'' + o[0] + '\')">' + o[1] + ' <b>' + o[2] + '</b></button>'; }).join('') + '</div>';
+  var line = '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:12px 18px;font-size:12.5px">' + seg
+    + '<span>Data Health median <span class="n">' + (x.data_health_median == null ? '—' : x.data_health_median) + '</span></span>'
+    + (x.stale_snapshots ? '<span style="color:var(--amber-t)"><span class="n">' + fmtN(x.stale_snapshots) + '</span> clients\' Data Health snapshot is over 2 days old</span>' : '')
+    + sum.map(function(s){ return '<span>' + esc(s.label) + ' <span class="n" style="' + (s.failing ? 'color:var(--red-t)' : '') + '">' + fmtN(s.failing) + '/' + fmtN(s.restaurants) + '</span> failing'
+      + (s.stale ? ' · <span class="n" style="color:var(--amber-t)">' + fmtN(s.stale) + '</span> stale' : '') + '</span>'; }).join('') + '</div>';
+  var note = _dsf === 'stale' && !known && sum.length ? '<div class="warnline" role="status" style="margin:0 18px 12px">' + ico('alert', 'xs') + ' This server doesn\'t report stale sources yet — the list below isn\'t filtered.</div>' : '';
+  return errBanner(x) + line + note
+    + table([{h:'Client', key:'restaurant', cell:function(r){ return clientLink(r.restaurant_id, r.restaurant || '#' + r.restaurant_id); }},
+      {h:'Source', key:'label', cell:function(r){ return esc(r.label) + (r.provider ? ' <span class="dim">' + esc(r.provider) + '</span>' : ''); }},
+      {h:'State', key:'state', cell:function(r){ return dsChip(r, known); }},
+      {h:'In a row', key:'failures', r:true, cell:function(r){ return '<span class="num" style="' + (r.failures >= (x.issue_threshold || 3) ? 'color:var(--red-t)' : '') + '">' + fmtN(r.failures) + '</span>'; }},
+      {h:'Since', key:'since', cell:function(r){ return '<span class="num">' + (r.since ? fmtD(r.since) : '—') + '</span>'; }},
+      {h:'Last error', key:'last_error', wrap:true, cell:function(r){ return r.last_error ? '<span style="color:var(--red-t)">' + esc(r.last_error) + '</span>' : ''; }},
+      {h:'Next retry', key:'next_retry_at', cell:function(r){ return '<span class="num">' + (r.next_retry_at ? fmtDT(r.next_retry_at) : '—') + '</span>'; }},
+      {h:'Last good', key:'last_ok_at', cell:function(r){ return '<span class="num">' + (r.last_ok_at ? ago(r.last_ok_at) : 'never') + '</span>'; }}],
+      x.rows || [], {id:'ds-t', limit:50, empty: _dsf === 'stale' ? 'No source is stale.' : (_dsf === 'failing' ? 'No source is failing.' : 'No data source is recorded yet.')})
+    + pager(x.page, x.pages, x.total, 'opsDataSourcesPage', 'sources');
 }
 
 // Operations → RPOWER (Audit #23 A6-01, A6 section 3.3): every RPOWER store's
