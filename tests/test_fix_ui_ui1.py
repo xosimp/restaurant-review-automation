@@ -90,13 +90,15 @@ def test_overview_figures_built_on_a_failed_read_say_unknown(page):
 
 
 def test_a_system_whose_read_failed_is_grey_never_green(page):
+    # Since admin audit 10/27/26 (W2) the ring draws the server's verdict
+    # (/admin/api/ops/state): an unknown, unread or failed reading is grey.
     ps = _fn(page, "platformSystems")
-    assert "'unk'" in ps and "readFailed(d" in ps
+    assert "systemsOf(st)" in ps and "RING_TONE" in ps and "unknown: 'unk'" in page
     ring = _fn(page, "healthRing")
     assert "s[1]==='ok'" in ring            # only an ok reading counts as healthy
     assert "unk:'rgba(255,255,255,.2)'" in page.replace(" ", "")  or "unk: 'rgba(255,255,255,.2)'" in page
-    # SMS is the seventh system (#14), read from messaging health.
-    assert "['SMS'," in ps and "/admin/api/messaging/health" in _fn(page, "overview")
+    # SMS is one of the systems (#14), from the same server reading.
+    assert "['sms', 'SMS']" in page and "opsStateRead(" in _fn(page, "overview")
 
 
 def test_the_rail_polls_the_slim_badges_and_says_unknown_when_it_cannot(page):
@@ -107,9 +109,13 @@ def test_the_rail_polls_the_slim_badges_and_says_unknown_when_it_cannot(page):
     stale = _fn(page, "railStale")
     assert "classList.add('stale')" in stale and "unknown" in stale
     ab = _fn(page, "applyBadges")
-    # A heartbeat that couldn't be read is unknown; one that never beat is "never".
-    assert "unknown" in ab and "'never'" in ab and "heartbeat" in ab
     assert "d.counts || d.issue_counts" in ab       # the badges payload or an overview payload
+    # The scheduler pill is the server's verdict (admin audit 10/27/26, W2),
+    # never the beat's age against a rule of the page's own; unread is unknown.
+    assert "scheduler_heartbeat_minutes" not in ab and "> 15" not in ab
+    assert "opsStateRead(" in b
+    rh = _fn(page, "railHealth")
+    assert "sysOf(st, 'scheduler')" in rh and "'unknown'" in rh
     assert ".rail.stale" in page
 
 

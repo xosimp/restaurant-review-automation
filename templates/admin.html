@@ -76,6 +76,7 @@ svg.i.s{width:15px;height:15px}svg.i.xs{width:13px;height:13px}
 .heart{position:relative;width:8px;height:8px;border-radius:50%;background:var(--green-t);flex-shrink:0}
 .heart:after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--green-t);opacity:0;animation:beat 2.4s var(--ease) infinite}
 .heart.bad{background:var(--red-t)}.heart.bad:after{border-color:var(--red-t)}
+.heart.warn{background:var(--amber-t)}.heart.warn:after{border-color:var(--amber-t)}
 @keyframes beat{0%{transform:scale(.6);opacity:.55}70%{transform:scale(1.5);opacity:0}100%{opacity:0}}
 .me{display:flex;align-items:center;gap:10px;padding:4px 6px;font-size:12.5px;font-weight:700}
 .me .av{width:30px;height:30px;border-radius:50%;background:#2a2622;color:var(--ember2);display:flex;align-items:center;justify-content:center;font-family:var(--disp);font-weight:600;font-size:12px}
@@ -799,8 +800,11 @@ async function badges(){
   if (document.hidden) return;   // a background tab skips the poll; it refreshes when looked at again (CLIENT-37)
   // A method, so a poll that lands after the admin moved on is still drawn.
   let d = null; try{ d = await api('/admin/api/badges', {method:'GET'}); }catch(e){ d = {ok:false, error:String((e && e.message) || e)}; }
-  if(!d || d.ok === false || d._status >= 400){ railStale(d && d.error); return; }
-  applyBadges(d);
+  if(!d || d.ok === false || d._status >= 400) railStale(d && d.error);
+  else applyBadges(d);
+  // The scheduler pill is the server's one verdict (W2), read after the
+  // counts — one request at a time — and shared with the page.
+  return opsStateRead(false);
 }
 function railStale(why){
   const rail = document.querySelector('.rail'); if(rail) rail.classList.add('stale');
@@ -824,12 +828,75 @@ function applyBadges(d){
     set('n-ops', pl.total || 0, pl.critical ? 'bad' : 'warn', (pl.total || 0) + ' platform issue' + (pl.total === 1 ? '' : 's'));
     set('n-cust', cu.total || 0, cu.critical ? 'bad' : '', (cu.total || 0) + ' customer issue' + (cu.total === 1 ? '' : 's'));
   }
-  const m = k.scheduler_heartbeat_minutes;
-  // null is "never beat" only when the heartbeat was read; a failed read is unknown.
-  const unread = m == null && [].concat(d.errors || [], d.query_errors || []).some(e => e && /heartbeat/.test(e.query || ''));
-  const bad = !unread && (m == null || m > 15);
-  $('hb-pill').title = 'Scheduler heartbeat' + (d.generated_at ? ' · read ' + fmtDT(d.generated_at) + (d.cached ? ' (cached)' : '') : '');
-  $('hb-pill').innerHTML = `<span class="heart ${unread?'unk':(bad?'bad':'')}"></span>Scheduler<span class="t">${unread?'unknown':(m==null?'never':(m<1?'just now':Math.round(m)+'m ago'))}</span>`;
+  // The scheduler pill is not judged here from the beat's age (a 15-minute
+  // rule the server doesn't use): it is the server's verdict, railHealth().
+  if(_opsSt) railHealth(_opsSt);
+}
+
+// ── one platform verdict (admin audit 10/27/26, W2/O1/V04) ──────────────────
+// The Overview ring, the rail's scheduler pill, Operations' system cards and
+// its sentence all draw ONE server reading: GET /admin/api/ops/state
+// (admin_ops.ops_state — {systems: {name: {state: ok|warn|bad|unknown,
+// reason, since}}, worst, generated_at}). The page keeps no thresholds of its
+// own (DESIGN_SYSTEM 12c: "never a threshold the page makes up"). A system the
+// server adds is listed under its key; one it doesn't report is unknown; a
+// read that failed makes every system unknown, never green. The reading is
+// shared for 30 seconds and single-flight, so the rail and the page asking
+// at once make one request; it is read with a method, so it is never
+// dropped — whoever still shows a page draws it.
+var OPS_SYSTEMS = [['scheduler', 'Scheduler'], ['jobs', 'Jobs'], ['api', 'API'], ['ai', 'AI'], ['push', 'Push'],
+  ['email', 'Email'], ['sms', 'SMS'], ['integrations', 'Integrations']];
+var OPS_STATE_TTL = 30000, _opsSt = undefined, _opsStAt = 0, _opsStP = null;
+function opsStateRead(force){
+  if(!force && _opsSt && okRes(_opsSt) && Date.now() - _opsStAt < OPS_STATE_TTL) return Promise.resolve(_opsSt);
+  if(_opsStP) return _opsStP;
+  _opsStP = api('/admin/api/ops/state', {method: 'GET'})
+    .then(null, function(e){ return {ok: false, _status: 0, error: "Couldn't reach the server (" + ((e && e.message) || e) + ')'}; })
+    .then(function(d){ _opsStP = null; return opsStateKeep(d); });
+  return _opsStP;
+}
+// A reading in hand (the rail's poll, or Operations' own read): kept, and
+// the rail redrawn from it. Only a good reading is reused; a failed one is
+// drawn as unknown and read again next time.
+function opsStateKeep(d){
+  _opsSt = d || {ok: false, error: 'No answer from the server.'};
+  _opsStAt = okRes(_opsSt) ? Date.now() : 0;
+  railHealth(_opsSt);
+  return _opsSt;
+}
+// The reading when it is fresh enough to paint with, else undefined ("reading…").
+function opsStateCached(){ return _opsSt && okRes(_opsSt) && Date.now() - _opsStAt < OPS_STATE_TTL ? _opsSt : undefined; }
+function sysLabel(k){ var t = String(k).replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); }
+// [{key, label, state: ok|warn|bad|unknown, reason, since}] in the page's
+// order, then any system the server adds. undefined = not read yet.
+function systemsOf(st){
+  var out = [], seen = {}, sys = (st && st.systems) || {}, err = null, i, k;
+  if(st === undefined) err = 'reading…';
+  else if(!okRes(st) || !st.systems) err = 'unknown — ' + (st && st.busy ? 'the console is busy, refresh in a few seconds' : ((st && st.error) || "the platform state couldn't be read"));
+  function one(key, label){
+    var x = sys[key], state;
+    seen[key] = 1;
+    if(err) return {key: key, label: label, state: 'unknown', reason: err, since: null};
+    if(!x) return {key: key, label: label, state: 'unknown', reason: 'not reported by the server', since: null};
+    state = x.state === 'ok' || x.state === 'warn' || x.state === 'bad' ? x.state : 'unknown';
+    return {key: key, label: label, state: state, reason: x.reason || (state === 'unknown' ? 'unknown' : ''), since: x.since || null};
+  }
+  for(i = 0; i < OPS_SYSTEMS.length; i++) out.push(one(OPS_SYSTEMS[i][0], OPS_SYSTEMS[i][1]));
+  if(!err) for(k in sys){ if(Object.prototype.hasOwnProperty.call(sys, k) && !seen[k]) out.push(one(k, sysLabel(k))); }
+  return out;
+}
+function sysOf(st, key){ var all = systemsOf(st), i; for(i = 0; i < all.length; i++){ if(all[i].key === key) return all[i]; } return {key: key, label: sysLabel(key), state: 'unknown', reason: 'not reported by the server', since: null}; }
+// The rail's scheduler pill: the server's state as the heart's colour, how
+// long since the beat in words (durMin, through agoWord), the server's reason
+// on hover. Unread or failed, it says unknown — never a green heart.
+var HEART = {ok: '', warn: 'warn', bad: 'bad', unknown: 'unk'};
+function railHealth(st){
+  var p = $('hb-pill'), s, word;
+  if(!p || st === undefined) return;
+  s = sysOf(st, 'scheduler');
+  word = s.state === 'unknown' ? 'unknown' : (s.since ? agoWord(s.since) : ({ok: 'beating', warn: 'degraded', bad: 'failing'})[s.state]);
+  p.title = 'Scheduler: ' + (s.reason || s.state) + (st && st.generated_at ? ' · read ' + fmtDT(st.generated_at) : '');
+  p.innerHTML = '<span class="heart ' + HEART[s.state] + '"></span>Scheduler<span class="t">' + esc(word) + '</span>';
 }
 
 // ── ⌘K: jump anywhere, or search the fleet ─────────────────────────────────
@@ -914,48 +981,28 @@ function readFailed(d, tables){
   return hit ? (hit.query + ': ' + (hit.error || 'failed')) : null;
 }
 function figOr(d, tables, html){ const f = readFailed(d, tables); return f ? unknownV(f) : html; }
-// Seven named systems, so "5/7" is countable rather than a score. Each is ok,
-// warn or bad by its own threshold — a card can turn red (#158) — or unknown
-// (grey, never green) when its read failed (#128). SMS is the seventh (#14),
-// read from messaging health after the first paint.
+// Named systems, so "6/8" is countable rather than a score. Each is ok, warn
+// or bad by the SERVER's verdict (/admin/api/ops/state, W2/O1/V04 — the ring
+// used to judge them here with thresholds of its own and showed "All systems
+// healthy" through an AI outage), or unknown (grey, never green) when that
+// read failed or hasn't answered yet (#128).
 const SYS_COLOR = {ok:'var(--green)', warn:'var(--amber)', bad:'var(--red)', unk:'rgba(255,255,255,.2)', neu:'rgba(255,255,255,.2)'};
 const SYS_TEXT = {ok:'var(--green-t)', warn:'var(--amber-t)', bad:'var(--red-t)', unk:'var(--ink4)', neu:'var(--ink4)'};
-function platformSystems(d, mh){
-  const k = (d && d.kpis) || {}, hbm = k.scheduler_heartbeat_minutes, f = t => readFailed(d, t), sys = [];
-  const hbErr = f(['scheduler_heartbeat']);
-  sys.push(['Scheduler', hbErr ? 'unk' : (hbm == null ? 'bad' : hbm <= 15 ? 'ok' : hbm <= 60 ? 'warn' : 'bad'), hbErr ? "unknown — the heartbeat couldn't be read" : (hbm == null ? 'never beat' : 'beat ' + Math.round(hbm) + 'm ago')]);
-  const jErr = f(['job_failures', 'jobs_overdue']);
-  sys.push(['Jobs', jErr ? 'unk' : (k.jobs_overdue ? 'bad' : (k.job_failures_24h ? 'warn' : 'ok')), jErr ? 'unknown' : (k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.job_failures_24h ? (k.jobs_failing || 1) + ' failing · 24h' : 'on schedule'))]);
-  const er = k.server_error_rate, win = k.api_window_label || 'last 5 minutes';
-  sys.push(['API', er == null ? 'neu' : (er >= 5 ? 'bad' : er >= 1 ? 'warn' : 'ok'), er == null ? 'no traffic · ' + win : er + '% 5xx · ' + win]);
-  const aErr = f(['ai_usage']), af = k.ai_failures_24h || 0;
-  sys.push(['AI', aErr ? 'unk' : (af >= 10 ? 'bad' : af ? 'warn' : 'ok'), aErr ? 'unknown' : (af ? af + ' failed · 24h' : 'no failures · 24h')]);
-  const pErr = f(['push_deliveries']);
-  sys.push(['Push', pErr ? 'unk' : (k.push_failures_today ? 'warn' : 'ok'), pErr ? 'unknown' : (k.push_failures_today ? k.push_failures_today + ' failed today' : 'delivering')]);
-  const eErr = f(['email_log']), rates = k.email_rates || {}, r7 = rates['7d'] || {}, th = rates.thresholds || {};
-  let et = k.email_failures_today ? 'warn' : 'ok', es = k.email_failures_today ? k.email_failures_today + ' undeliverable today' : 'delivering';
-  if(r7.enough){
-    const b = r7.bounce_rate, c = r7.complaint_rate;
-    if((b != null && b >= (th.bounce_crit_pct || 8)) || (c != null && c >= (th.complaint_crit_pct || .3))){ et = 'bad'; es = 'bounce ' + b + '% · complaints ' + c + '% · 7d'; }
-    else if((b != null && b >= (th.bounce_warn_pct || 4)) || (c != null && c >= (th.complaint_warn_pct || .1))){ et = 'warn'; es = 'bounce ' + b + '% · complaints ' + c + '% · 7d'; }
-  }
-  sys.push(['Email', eErr ? 'unk' : et, eErr ? 'unknown' : es]);
-  if(mh === undefined) sys.push(['SMS', 'unk', 'reading…']);
-  else if(!mh || mh.ok === false || mh._status >= 400) sys.push(['SMS', 'unk', "unknown — messaging health couldn't be read"]);
-  else {
-    const s = mh.sms || {}, by = s.by_status || {}, failed = (by.failed || 0) + (by.undelivered || 0);
-    sys.push(['SMS', s.account_errors ? 'bad' : (failed ? 'warn' : 'ok'), s.account_errors ? s.account_errors + ' account-level error' + (s.account_errors === 1 ? '' : 's') + ' · 24h' : (failed ? failed + ' failed · 24h' : (s.attempted ? s.attempted + ' sent · 24h' : 'none sent · 24h'))]);
-  }
-  return sys;
+// [name, ok|warn|bad|unk, the server's reason] for healthRing/healthCard.
+var RING_TONE = {ok: 'ok', warn: 'warn', bad: 'bad', unknown: 'unk'};
+function platformSystems(st){
+  return systemsOf(st).map(function(s){ return [s.label, RING_TONE[s.state] || 'unk', s.reason]; });
 }
 function healthRing(sys){
   const n = sys.length, ok = sys.filter(s=>s[1]==='ok' || s[1]==='neu').length, r = 46, c = 2*Math.PI*r, seg = c/n;
   const arcs = sys.map((s,i)=>`<circle cx="59" cy="59" r="${r}" fill="none" stroke="${SYS_COLOR[s[1]]||SYS_COLOR.unk}" stroke-width="9" stroke-dasharray="${(seg-4).toFixed(2)} ${(c-seg+4).toFixed(2)}" stroke-dashoffset="${(-seg*i).toFixed(2)}"><title>${esc(s[0])}: ${esc(s[2])}</title></circle>`).join('');
   return `<svg width="118" height="118" viewBox="0 0 118 118" role="img" aria-label="${ok} of ${n} systems healthy" style="flex-shrink:0"><g transform="rotate(-90 59 59)"><circle cx="59" cy="59" r="${r}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="9"/>${arcs}</g><text x="59" y="58" text-anchor="middle" fill="var(--ink)" style="font-family:var(--num);font-size:26px;font-weight:600">${ok}/${n}</text><text x="59" y="77" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--sans);font-size:10.5px;font-weight:700;letter-spacing:.1em">HEALTHY</text></svg>`;
 }
-function healthCard(d, mh){
-  const sys = platformSystems(d, mh), down = sys.filter(s => s[1] === 'bad' || s[1] === 'warn'), unk = sys.filter(s => s[1] === 'unk' && s[2] !== 'reading…');
-  const said = down.length ? down.map(s=>s[0]).join(' and ') + (down.some(s=>s[1]==='bad') ? ' failing' : ' degraded') : (unk.length ? unk.map(s=>s[0]).join(' and ') + ' unknown' : 'All systems healthy');
+function healthCard(st){
+  const sys = platformSystems(st), down = sys.filter(s => s[1] === 'bad' || s[1] === 'warn'), unk = sys.filter(s => s[1] === 'unk' && s[2] !== 'reading…');
+  // Nothing is said healthy before the server has answered.
+  var pending = sys.filter(function(s){ return s[2] === 'reading…'; }).length;
+  const said = pending ? 'Reading the platform state…' : (down.length ? down.map(s=>s[0]).join(' and ') + (down.some(s=>s[1]==='bad') ? ' failing' : ' degraded') : (unk.length === sys.length ? 'Platform state unknown' : (unk.length ? unk.map(s=>s[0]).join(' and ') + ' unknown' : 'All systems healthy')));
   const show = (down.length ? down : (unk.length ? unk : sys.slice(0,2))).slice(0,3);
   return `${healthRing(sys)}
     <div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span class="lbl">Platform health</span>
@@ -1047,7 +1094,7 @@ function stripCell(href, icn, tone, label, value, sub){
 function watchKpi(href, v, l, cls, title){ return `<a class="kpi ${cls||''}" href="${href}"${title?` title="${esc(title)}"`:''}><div class="v">${v}</div><div class="l">${esc(l)}</div></a>`; }
 const MRR_SRC = {mirror:'billed', list:'list price', mixed:'billed + list price'};
 async function overview(){
-  const q = _fresh ? '?fresh=1' : ''; _fresh = false;
+  const ovFresh = _fresh, q = _fresh ? '?fresh=1' : ''; _fresh = false;
   const d = await api('/admin/api/overview' + q);
   if(!d || d.ok === false || d._status >= 400) throw new Error((d && d.error) || "The overview couldn't be read");
   _ov = d; _ovMsg = undefined; applyBadges(d);
@@ -1093,14 +1140,14 @@ async function overview(){
         <div style="margin-top:auto;padding-top:10px"><span style="display:flex;align-items:flex-end;gap:4px;height:34px">${sgv.map((v,i)=>`<i style="display:block;flex:1;max-width:9px;height:${v ? Math.max(4, Math.round(34*v/sgMax)) : 2}px;border-radius:2px;background:${v?'var(--ember2)':'rgba(255,255,255,.09)'}" title="Week of ${esc(mdy(dayOf((s.signups[i]||{}).week_start)))}: ${v}"></i>`).join('')}</span><span class="s" style="font-size:11.5px">last <span class="n">${sgv.length}</span> weeks</span>
         <span class="s" style="font-size:11.5px;display:block;margin-top:4px">${tc.available ? `Trial → paid: <span class="n">${tc.rate_pct==null?'—':tc.rate_pct+'%'}</span> of ${fmtN(tc.started)} in ${tc.window_days||90}d${tc.median_days_to_convert!=null?' · median '+tc.median_days_to_convert+'d':''}` : `<span title="${esc(tc.reason||'')}">Trial conversion: not measurable yet</span>`}</span></div>
       </a>
-      <a class="card kc" href="#operations" style="grid-column:span 4;flex-direction:row;align-items:center;gap:20px" id="ov-health">${healthCard(d, undefined)}</a>
+      <a class="card kc" href="#operations" style="grid-column:span 4;flex-direction:row;align-items:center;gap:20px" id="ov-health">${healthCard(opsStateCached())}</a>
     </section>
     <section class="card strip">
       ${stripCell('#overview', 'alert', fleetErr?'neu':(ic.critical?'bad':'good'), 'Critical', fleetErr?unknownV(fleetErr):fmtN(ic.critical||0), crit[0] ? esc(crit[0].restaurant||'Platform') : 'none open')}
       ${stripCell('#customers/support', 'inbox', fleetErr?'neu':(cu.total?'warn':'good'), 'Support queue', fleetErr?unknownV(fleetErr):fmtN(cu.total||0), older48 ? older48 + (d.issues_truncated?'+':'') + ' older than 48h' : 'nothing aging')}
       ${stripCell('#operations/jobs', 'clock', readFailed(d,['job_failures'])?'neu':(k.job_failures_24h||k.jobs_overdue?'warn':'good'), 'Failed jobs', figOr(d, ['job_failures'], fmtN(k.job_failures_24h||0)), k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.jobs_failing ? k.jobs_failing + ' job' + (k.jobs_failing===1?'':'s') + ' · 24h' : 'all on schedule · 24h'))}
       ${stripCell('#operations/ai', 'spark', readFailed(d,['ai_usage'])?'neu':(k.ai_failures_24h?'warn':'neu'), 'AI activity', figOr(d, ['ai_usage'], fmtN(k.ai_calls_today)), `<span class="n">${fmtUSD(k.ai_cost_today,2)}</span> today · ${fmtN(k.ai_failures_24h)} failed${k.ai_quality_24h?' · '+fmtN(k.ai_quality_24h)+' quality':''}`)}
-      ${stripCell('#engineering', 'gauge', k.server_error_rate==null?'neu':(k.server_error_rate>=5?'bad':'good'), 'API health', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.server_error_rate==null ? 'no traffic · ' + esc(k.api_window_label||'last 5 minutes') : `p95 · <span class="n">${k.server_error_rate}%</span> 5xx · ${esc(k.api_window_label||'last 5 minutes')}`)}
+      ${stripCell('#engineering', 'gauge', 'neu', 'API health', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.server_error_rate==null ? 'no traffic · ' + esc(k.api_window_label||'last 5 minutes') : `p95 · <span class="n">${k.server_error_rate}%</span> 5xx · ${esc(k.api_window_label||'last 5 minutes')}`)}
       ${stripCell('#operations/email', 'mail', readFailed(d,['email_log'])?'neu':(k.email_failures_today?'warn':'good'), 'Email delivery', figOr(d, ['email_log'], emPct==null?'—':`${emPct}<small>%</small>`), emTot ? `<span class="n">${fmtN(k.email_bounced_today||0)}</span> bounced · <span class="n">${fmtN(k.email_complained_today||0)}</span> complaints today` : 'none sent today')}
     </section>
     <section class="grid g8">
@@ -1120,9 +1167,11 @@ async function overview(){
         <div class="card" style="padding:4px 18px 14px"><div style="display:flex;align-items:center;justify-content:space-between;padding-top:14px"><h2>What changed</h2><span class="muted" style="font-size:12px">14 days</span></div><div id="ov-chg">${changesList((d.activity||[]).slice(0,8))}</div>${(d.activity||[]).length>8?`<button class="lnk" style="margin-top:8px" onclick="this.remove();$('ov-chg').innerHTML=changesList(_ov.activity)">Show all ${d.activity.length}</button>`:''}</div>
       </div>
     </section>`;
-  // SMS joins the ring once messaging health answers; its failure is its own.
-  api('/admin/api/messaging/health').then(mh => { _ovMsg = mh; if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(d, mh); })
-    .catch(e => { if(e && e.message === STALE) return; _ovMsg = null; if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(d, null); });
+  // The ring is the server's one verdict on every system (W2): drawn when
+  // /admin/api/ops/state answers (a Refresh reads it again), and only into
+  // this same Overview. The API figure in the strip carries no verdict of its
+  // own — a 5% rule with no request floor turned it red on one failed request.
+  opsStateRead(ovFresh).then(function(st){ if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(st); });
 }
 
 // ── shared pieces ───────────────────────────────────────────────────────────
@@ -2570,12 +2619,11 @@ async function auditLink(aid, rid, auditName, name, pageId){
 }
 
 // ── Operations ──────────────────────────────────────────────────────────────
-// One system state first: seven systems, each read from the server's own
-// verdict — job states and the heartbeat's stale / wedged / loop_stalled
-// (D), the platform issues and their severities (C), the messaging problems
-// (E), the AI health status (G). A read that failed is "unknown", never
-// green (#128, #158). Then six subsystems as cards (state, figure, trend);
-// each opens its tab. The reads are shared across the tabs for a minute.
+// One system state first: eight systems, each the server's own verdict from
+// GET /admin/api/ops/state (W2 — the same reading Overview's ring and the
+// rail draw). A read that failed is "unknown", never green (#128, #158).
+// Then six subsystems as cards (state, figure, trend); each opens its tab.
+// The reads are shared across the tabs for a minute.
 let _ops = null, _opsAt = 0, _opsFresh = false, _opsTab = 'jobs', _aid = 30, _ef = 'all', _nf = 'all', _if = 'all', _jobsAll = false;
 // The server pages the Integrations list and the data sources (Audit #23
 // A6-15): the page each is on; a filter change goes back to page 1.
@@ -2638,73 +2686,26 @@ async function opsWrite(path, body, question, done, okText){
 const ST_WORD = {good:'OK', warn:'Degraded', bad:'Failing', neu:'Unknown'};
 // The worst severity among the platform issues matching `pred`, as a tone.
 function issueTone(list, pred){ const hit = list.filter(pred); return hit.some(i => i.severity === 'critical') ? 'bad' : (hit.length ? 'warn' : null); }
+// Each system's tone and line are the server's verdict (o.st, from
+// /admin/api/ops/state — W2/O1/V04): this page used to judge them itself
+// from five payloads and disagreed with Overview and the server (a stalled
+// loop red here, amber there, green on the ring). The Jobs card's figure —
+// how many registry jobs are in good standing — is a count of the jobs
+// payload, not a verdict, and stays.
+var ST_OF = {ok: 'good', warn: 'warn', bad: 'bad', unknown: 'neu'};
 function opsState(o){
-  const ov = o.ov, jb = o.jb, mh = o.mh, ai = o.ai, k = (ov && ov.kpis) || {};
-  const ovE = readErr(ov), jbE = readErr(jb), mhE = readErr(mh), aiE = readErr(ai);
-  const plat = ovE ? [] : (ov.issues || []).filter(i => !i.restaurant_id);
-  const pk = (pre) => (i) => (i.key || '').indexOf(pre) === 0;
-  const words = (pred) => plat.filter(pred).map(i => i.title);
-  const probs = mhE ? [] : (mh.problems || []);
-  const out = [];
-  // Scheduler — D's liveness, never the beat's age alone (#121).
-  { const h = jbE ? null : (jb.heartbeat || {}); let tone = 'good', sub = '';
-    if(!h){ tone = 'neu'; sub = jbE; }
-    else if(h.wedged){ tone = 'bad'; sub = `${h.running_job} has run ${Math.round(h.running_minutes)}m, past its ${h.running_bound_minutes}m bound`; }
-    else if(h.loop_stalled){ tone = 'bad'; sub = `no tick has finished in ${Math.round(h.loop_completed_age_minutes)}m`; }
-    else if(h.beat_age_minutes == null){ tone = 'bad'; sub = 'it has never beaten'; }
-    else if(h.stale){ tone = 'bad'; sub = `last beat ${Math.round(h.beat_age_minutes)}m ago`; }
-    else sub = `beat ${h.beat_age_minutes < 1 ? 'just now' : Math.round(h.beat_age_minutes) + 'm ago'}`;
-    out.push({key:'scheduler', label:'Scheduler', tone, sub}); }
-  // Jobs — each registry job's own state (D, #40).
-  { let tone = 'neu', sub = jbE, value = '—', bad = 0;
-    if(!jbE){ const js = jb.jobs || [], n = s => js.filter(j => j.state === s).length;
-      bad = n('failed') + n('stuck') + n('overdue');
-      const part = n('partial'), missed = (jb.missed_windows || []).length + (jb.dsr_missing || []).length;
-      tone = bad ? 'bad' : (part || missed ? 'warn' : 'good');
-      value = `${n('ok') + n('running')}/${js.length}`;
-      sub = [n('failed') ? n('failed') + ' failed' : '', n('stuck') ? n('stuck') + ' stuck' : '', n('overdue') ? n('overdue') + ' overdue' : '', part ? part + ' partial' : '', missed ? missed + ' missed window' + (missed === 1 ? '' : 's') : ''].filter(Boolean).join(' · ') || 'every job on schedule'; }
-    out.push({key:'jobs', label:'Jobs', tone, sub, value, bad}); }
-  // API — the server's 5xx issue (5% of 20+ requests, #160: last 5 minutes).
-  { let tone = 'neu', sub = ovE;
-    if(!ovE){ const t = issueTone(plat, pk('platform:'));
-      tone = t || 'good';
-      sub = k.p95_ms == null ? 'no customer traffic · ' + (k.api_window_label || 'last 5 minutes') : `${k.server_error_rate}% 5xx · p95 ${fmtN(Math.round(k.p95_ms))}ms · ${k.api_window_label || 'last 5 minutes'}`; }
-    out.push({key:'api', label:'API', tone, sub}); }
-  // Email — bounce and complaint issues, the Resend webhook (C, E).
-  { let tone = 'neu', sub = ovE || mhE;
-    if(!ovE){ const r7 = (k.email_rates || {})['7d'] || {};
-      const resendBad = probs.some(p => /Resend/.test(p));
-      tone = issueTone(plat, i => pk('email:')(i) || /^webhook(_stale)?:resend/.test(i.key || '')) || (resendBad ? 'bad' : null) || (k.email_failures_today ? 'warn' : 'good');
-      if(mhE && tone === 'good') tone = 'neu';
-      sub = `${fmtN(k.email_failures_today)} undeliverable today` + (r7.bounce_rate != null ? ` · bounce ${r7.bounce_rate}%` : '') + (r7.complaint_rate ? ` · complaints ${r7.complaint_rate}%` : '') + (mhE ? ' · webhook health unknown' : ''); }
-    out.push({key:'email', label:'Email', tone, sub}); }
-  // SMS — Twilio account errors and webhook failures (E, #14).
-  { let tone = 'neu', sub = mhE;
-    if(!mhE){ const s = mh.sms || {}, by = s.by_status || {}, failed = (by.failed || 0) + (by.undelivered || 0);
-      const tw = probs.filter(p => /Twilio|text\(s\)/.test(p));
-      tone = tw.length || s.account_errors ? 'bad' : (failed ? 'warn' : 'good');
-      sub = tw.length ? tw[0] : `${fmtN(s.attempted || 0)} sent · ${fmtN(failed)} failed · 24 hours`; }
-    out.push({key:'sms', label:'SMS', tone, sub}); }
-  // Push — failures today, automatic storm caps, the outbox (C, E).
-  { let tone = 'neu', sub = ovE;
-    if(!ovE){ const caps = mhE ? 0 : (mh.storm_caps || []).length, pf = mhE ? 0 : ((mh.push_outbox || {}).failed_24h || 0);
-      tone = k.push_failures_today || caps || pf ? 'warn' : 'good';
-      sub = `${fmtN(k.push_failures_today)} failed today` + (caps ? ` · ${caps} storm cap${caps === 1 ? '' : 's'} on` : '') + (pf ? ` · ${pf} dropped from the outbox` : ''); }
-    out.push({key:'push', label:'Push', tone, sub}); }
-  // AI — G's health: breakers, the last hour's error rate, the budget (#104).
-  { let tone = 'neu', sub = aiE;
-    if(!aiE){ const h = ai.health || {};
-      tone = h.status === 'outage' ? 'bad' : h.status === 'degraded' ? 'warn' : (h.status === 'operational' ? 'good' : 'neu');
-      const tw = issueTone(plat, pk('stalled:'));
-      if(tw && tone === 'good') tone = 'warn';
-      sub = h.reason || (h.status ? `${fmtN(k.ai_failures_24h)} failed · ${fmtN(k.ai_quality_24h)} quality findings · 24h` : 'health unknown'); }
-    out.push({key:'ai', label:'AI', tone, sub}); }
-  // Integrations — each failing connection is a critical issue (C, #44, #74).
-  { let tone = 'neu', sub = ovE;
-    if(!ovE){ const hooks = issueTone(plat, i => /^webhook(_stale)?:(stripe|docusign|twilio)/.test(i.key || ''));
-      tone = k.integrations_failing ? 'bad' : (hooks || 'good');
-      sub = k.integrations_failing ? `${k.integrations_failing} failing` : (words(i => /^webhook(_stale)?:/.test(i.key || '') && !/resend/.test(i.key))[0] || 'none failing'); }
-    out.push({key:'integrations', label:'Integrations', tone, sub}); }
+  var out = systemsOf(o.st).map(function(s){ return {key: s.key, label: s.label, tone: ST_OF[s.state] || 'neu', sub: s.reason || ''}; });
+  var jobs = null, jb = o.jb, jbE = readErr(jb), js, n, i;
+  for(i = 0; i < out.length; i++){ if(out[i].key === 'jobs') jobs = out[i]; }
+  if(jobs){
+    jobs.value = '—'; jobs.bad = 0;
+    if(!jbE){
+      js = jb.jobs || [];
+      n = function(st){ return js.filter(function(j){ return j.state === st; }).length; };
+      jobs.value = (n('ok') + n('running')) + '/' + js.length;
+      jobs.bad = n('failed') + n('stuck') + n('overdue');
+    }
+  }
   return out;
 }
 // The area's one sentence, from the states above: every system that is
@@ -2735,8 +2736,8 @@ async function operations(tab){
   _opsTab = OPS_TABS[tab] || 'jobs';
   if(_opsFresh || !_ops || Date.now() - _opsAt > 60000){
     const fresh = _opsFresh, f = fresh ? '?fresh=1' : ''; _opsFresh = false;
-    const r = await apiAll(['/admin/api/overview' + f, '/admin/api/jobs', '/admin/api/messaging/health', '/admin/api/emails', '/admin/api/notifications', '/admin/api/ai?days=' + _aid], 3);
-    _ops = {ov: r[0], jb: r[1], mh: r[2], em: r[3], nt: r[4], ai: r[5], aiDays: _aid, fresh: fresh}; _opsAt = Date.now();
+    const r = await apiAll(['/admin/api/ops/state', '/admin/api/overview' + f, '/admin/api/jobs', '/admin/api/messaging/health', '/admin/api/emails', '/admin/api/notifications', '/admin/api/ai?days=' + _aid], 2);
+    _ops = {st: opsStateKeep(r[0]), ov: r[1], jb: r[2], mh: r[3], em: r[4], nt: r[5], ai: r[6], aiDays: _aid, fresh: fresh}; _opsAt = Date.now();
   } else if(_ops.aiDays !== _aid){ _ops.ai = await api('/admin/api/ai?days=' + _aid); _ops.aiDays = _aid; }
   const o = _ops, k = readErr(o.ov) ? {} : o.ov.kpis, sys = opsState(o), st = {}; sys.forEach(s => { st[s.key] = s; });
   const worse = (a, b) => ({bad:3, warn:2, neu:1, good:0}[a] >= {bad:3, warn:2, neu:1, good:0}[b] ? a : b);
@@ -2756,7 +2757,7 @@ async function operations(tab){
       ${subCard('push', 'bell', 'Push &amp; alerts', st.push.tone, ovE ? unknownV(ovE) : fmtN(k.push_today), 'delivered today', st.push.sub, pushTrend, 'var(--green-t)')}
       ${subCard('ai', 'spark', 'AI', st.ai.tone, ovE ? unknownV(ovE) : fmtN(k.ai_calls_today), 'calls today', st.ai.sub, aiTrend, 'var(--ember2)')}
       ${subCard('integrations', 'plug', 'Integrations', st.integrations.tone, ovE ? unknownV(ovE) : fmtN(k.integrations_active), 'live', st.integrations.sub, null)}
-      ${subCard('api', 'gauge', 'API', st.api.tone, ovE ? unknownV(ovE) : (k.p95_ms == null ? '—' : fmtN(Math.round(k.p95_ms))), k.p95_ms == null ? '' : 'ms p95', st.api.sub, null, null, '#engineering')}
+      ${subCard('api', 'gauge', 'API', st.api.tone, ovE ? unknownV(ovE) : (k.p95_ms == null ? '—' : fmtN(Math.round(k.p95_ms))), k.p95_ms == null ? '' : 'ms p95 · ' + esc(k.api_window_label || 'last 5 minutes'), st.api.sub, null, null, '#engineering')}
     </section>`
     + tabsNav('operations', [['jobs', 'Jobs', st.jobs.bad || '', 'bad'], ['email', 'Email &amp; SMS', k.email_failures_today || '', emT === 'bad' ? 'bad' : 'warn'], ['push', 'Push &amp; alerts', k.push_failures_today || '', 'warn'], ['ai', 'AI', k.ai_failures_24h || '', st.ai.tone === 'bad' ? 'bad' : 'warn'], ['integrations', 'Integrations', k.integrations_failing || '', 'bad'], ['rpower', 'RPOWER', '', 'bad'], ['events', 'Event calendar', '', 'warn']], _opsTab)
     + '<div class="area-body" id="area-body"></div>';
@@ -2935,7 +2936,7 @@ function opsJobs(d){
   const js = d.jobs || [], grp = s => js.filter(j => s.indexOf(j.state) >= 0);
   const bad = grp(['failed', 'stuck', 'overdue']), running = grp(['running']), partial = grp(['partial']), ok = grp(['ok']), never = grp(['never']);
   const h = d.heartbeat || {}, fk = failKinds(d);
-  const hbState = h.wedged ? ['bad', 'Wedged'] : h.loop_stalled ? ['bad', 'Loop stalled'] : (h.beat_age_minutes == null || h.stale) ? ['bad', 'Stale'] : ['good', 'Beating'];
+  const hbState = h.wedged ? ['bad', 'Wedged'] : h.loop_stalled ? ['warn', 'Loop stalled'] : (h.beat_age_minutes == null || h.stale) ? ['bad', 'Stale'] : ['good', 'Beating'];
   const section = (label, list, color, total) => list.length ? `<div class="lgroup lbl" style="${color ? 'color:' + color : ''}">${label} · <span class="n">${total == null ? list.length : total}</span></div>${list.map(j => jobRow(j, d)).join('')}` : '';
   const shown = _jobsAll ? ok : ok.slice(0, 6);
   const lease = d.lease || null, bk = d.backup || {}, oa = d.operator_alert;
@@ -3561,10 +3562,17 @@ function engApi(S, sE){
     ${sE ? unknownV(sE) : `<div class="kv" style="grid-template-columns:90px 1fr;font-size:12.5px">${row('web', 'Web')}${row('web_api', 'Web API')}${row('mobile', 'iOS app')}${row('admin', 'Console')}</div>`}
     <span class="muted" style="font-size:12px">${sE ? '' : `In flight <span class="n">${fmtN(inf.now)}</span> of <span class="n">${fmtN(inf.threads)}</span> threads · peak <span class="n">${fmtN(inf.peak_5m)}</span>${inf.oldest_ms ? ' · oldest ' + fmtN(inf.oldest_ms) + 'ms on ' + esc(inf.oldest_route || '') : ''}`}</span></div>`;
 }
+// The scheduler card's state is the server's (status_manager.scheduler_state,
+// in the system report as S.scheduler: ok | stalled | stale | wedged |
+// unknown), mapped as admin_ops.ops_state maps it — never a 15-minute rule
+// of the page's own (W2/O1). A dead scheduler thread in this process is bad.
+var SCHED_TONE = {ok: 'good', stalled: 'warn', stale: 'bad', wedged: 'bad', unknown: 'neu'};
+var SCHED_WORD = {ok: 'Beating', stalled: 'Loop stalled', stale: 'Stale', wedged: 'Wedged', unknown: 'Unknown'};
 function engSched(S, sE){
   const hb = S.heartbeat_minutes, sup = S.supervisor || null, lease = S.lease || null, sla = sup ? sup.last_sla : null;
-  const bad = !sE && (hb == null || hb > 15 || (sup && sup.scheduler_thread === 'dead'));
-  return `<div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico ${sE ? 'neu' : bad ? 'bad' : 'good'}">${ico('clock')}</span><span class="lbl">Scheduler</span><span style="margin-left:auto">${pill(sE ? 'neu' : bad ? 'bad' : 'good', sE ? 'Unknown' : bad ? 'Stale' : 'Beating')}</span></span>
+  var sst = sE ? 'unknown' : ((S.scheduler && S.scheduler.state) || 'unknown'), dead = !sE && !!(sup && sup.scheduler_thread === 'dead');
+  var tone = dead ? 'bad' : (SCHED_TONE[sst] || 'neu'), word = dead ? 'Thread dead' : (SCHED_WORD[sst] || 'Unknown');
+  return `<div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico ${tone}">${ico('clock')}</span><span class="lbl">Scheduler</span><span style="margin-left:auto">${pill(tone, word)}</span></span>
     <span class="n" style="font-size:26px;font-weight:600">${sE ? unknownV(sE) : (hb == null ? 'never' : durMin(hb))} <span style="font-size:14px;color:var(--ink4);font-weight:500">since the last beat</span></span>
     <div class="kv" style="grid-template-columns:110px 1fr;margin-top:auto;font-size:12.5px"><span class="k">Thread</span><span>${sup ? esc(sup.scheduler_thread) + (sup.scheduler_restarts ? ' · restarted ' + fmtN(sup.scheduler_restarts) + '×' : '') : '<span class="dim">no supervisor in this process</span>'}</span>
     <span class="k">Lease</span><span class="mono" style="white-space:normal;word-break:break-all">${lease && lease.owner ? esc(lease.owner) + (lease.age_seconds != null ? ' · ' + (lease.age_seconds < 60 ? fmtN(lease.age_seconds) + 's' : durMin(lease.age_seconds / 60)) + ' ago' : '') : (lease && lease.error ? unknownV(lease.error) : 'nobody')}</span>

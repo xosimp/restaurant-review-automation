@@ -170,9 +170,12 @@ def _node(js):
 
 
 def _state_js(page, payloads):
-    fns = "".join(_fn(page, n) for n in ("unknownV", "readErr", "issueTone", "opsState", "opsSentence", "failKinds",
-                                         "runBtn", "histSquares", "rasFig", "fillUtcDays"))
+    fns = "".join(_fn(page, n) for n in ("unknownV", "readErr", "okRes", "sysLabel", "systemsOf", "issueTone", "opsState",
+                                         "opsSentence", "failKinds", "runBtn", "histSquares", "rasFig", "fillUtcDays"))
     consts = "\n".join(_const(page, n) for n in ("ST_WORD", "JOB_WORD", "JOB_PILL", "RUN_SQ"))
+    # The one platform verdict (admin audit 10/27/26, W2): the systems the
+    # page names, and the card tone of each server state.
+    consts += "\n" + "\n".join(re.search(r"\n(var " + n + r" = [^;]*;)", page, re.S).group(1) for n in ("OPS_SYSTEMS", "ST_OF"))
     stubs = ("const esc = v => String(v == null ? '' : v); const jsq = esc; const fmtN = n => n == null ? '—' : String(n);"
              "const fmtUSD = n => '$' + n; const fmtDT = s => String(s); function pill(t, x){ return '<pill ' + t + '>' + x + '</pill>'; }")
     return stubs + "\n" + consts + "\n" + fns + "\nconst P = " + json.dumps(payloads) + ";\n"
@@ -181,40 +184,47 @@ def _state_js(page, payloads):
 FAILED = {"ok": False, "_status": 500, "error": "database is locked"}
 
 
+def _st(**states):
+    """An /admin/api/ops/state payload: every system ok unless named."""
+    names = ("scheduler", "jobs", "api", "email", "sms", "push", "ai", "integrations")
+    return {"ok": True, "worst": "ok", "generated_at": "2026-10-27T15:00:00Z",
+            "systems": {n: {"state": states.get(n, "ok"), "reason": f"{n} reason", "since": None} for n in names}}
+
+
+# Since admin audit 10/27/26 (W2/O1/V04) every system's tone is the server's
+# verdict (o.st, /admin/api/ops/state); the page's own rules are gone.
+
 def test_a_failed_read_is_unknown_and_the_area_never_says_all_clear(page):
-    js = _state_js(page, {"o": {"ov": FAILED, "jb": FAILED, "mh": FAILED, "ai": FAILED}})
+    js = _state_js(page, {"o": {"st": FAILED, "ov": FAILED, "jb": FAILED, "mh": FAILED, "ai": FAILED}})
     out = _node(js + "const s = opsState(P.o); console.log(JSON.stringify({tones: s.map(x => [x.key, x.tone]), said: opsSentence(s)}));")
     assert all(t == "neu" for _k, t in out["tones"]), out["tones"]
     assert "Everything ran" not in out["said"] and "couldn't be read" in out["said"]
 
 
-def test_a_healthy_platform_says_so_only_when_every_read_worked(page):
-    ov = {"ok": True, "kpis": {"email_failures_today": 0, "push_failures_today": 0, "integrations_failing": 0,
-                               "ai_failures_24h": 0, "ai_quality_24h": 0, "email_rates": {}}, "issues": []}
+def test_a_healthy_platform_says_so_only_when_the_server_says_every_system_is_ok(page):
     jb = {"ok": True, "jobs": [{"state": "ok"}, {"state": "running"}], "heartbeat": {"beat_age_minutes": 2, "stale": False},
           "missed_windows": [], "dsr_missing": []}
-    mh = {"ok": True, "problems": [], "sms": {"by_status": {"delivered": 3}, "account_errors": 0, "attempted": 3},
-          "storm_caps": [], "push_outbox": {"failed_24h": 0}}
-    ai = {"ok": True, "health": {"status": "operational"}}
-    js = _state_js(page, {"good": {"ov": ov, "jb": jb, "mh": mh, "ai": ai}, "noMh": {"ov": ov, "jb": jb, "mh": FAILED, "ai": ai}})
-    out = _node(js + "console.log(JSON.stringify([opsSentence(opsState(P.good)), opsSentence(opsState(P.noMh))]));")
+    js = _state_js(page, {"good": {"st": _st(), "jb": jb}, "noSt": {"st": FAILED, "jb": jb},
+                          "smsUnknown": {"st": _st(sms="unknown"), "jb": jb}})
+    out = _node(js + "console.log(JSON.stringify([opsSentence(opsState(P.good)), opsSentence(opsState(P.noSt)), opsSentence(opsState(P.smsUnknown)), opsState(P.good).find(x => x.key === 'jobs').value]));")
     assert "Everything ran" in out[0]
-    assert "Everything ran" not in out[1] and "SMS" in out[1]       # messaging health failed: SMS is unknown
+    assert "Everything ran" not in out[1]                            # the verdict couldn't be read
+    assert "Everything ran" not in out[2] and "SMS" in out[2]        # the server can't vouch for SMS
+    assert out[3] == "2/2"                                           # the Jobs figure is still the jobs payload's count
 
 
-def test_failing_jobs_a_wedged_scheduler_and_an_ai_outage_turn_red(page):
-    ov = {"ok": True, "kpis": {"integrations_failing": 2, "email_rates": {}}, "issues": [
-        {"key": "platform:error_rate", "severity": "critical", "title": "9% of requests are 5xx"},
-        {"key": "email:bounce_rate", "severity": "warning", "title": "Email bounce rate 4% this week"}]}
+def test_the_servers_verdict_is_drawn_whatever_the_other_payloads_say(page):
+    # The page used to call one failed request out of three "API failing" and
+    # a stalled loop "bad"; the server says ok / warn, and that is what shows.
+    ov = {"ok": True, "kpis": {"server_error_rate": 33.3, "integrations_failing": 2, "email_rates": {}},
+          "issues": [{"key": "email:bounce_rate", "severity": "warning", "title": "Email bounce rate 4% this week"}]}
     jb = {"ok": True, "jobs": [{"state": "failed"}, {"state": "partial"}, {"state": "ok"}],
-          "heartbeat": {"beat_age_minutes": 3, "wedged": True, "running_job": "review_fetch", "running_minutes": 250,
-                        "running_bound_minutes": 200}, "missed_windows": [], "dsr_missing": []}
-    ai = {"ok": True, "health": {"status": "outage", "reason": "AI drafting is paused"}}
-    mh = {"ok": True, "problems": ["3 text(s) failed in the last hour with a Twilio account-level error"],
-          "sms": {"by_status": {}, "account_errors": 3, "attempted": 3}, "storm_caps": [], "push_outbox": {}}
-    js = _state_js(page, {"o": {"ov": ov, "jb": jb, "mh": mh, "ai": ai}})
+          "heartbeat": {"beat_age_minutes": 3, "loop_stalled": True, "loop_completed_age_minutes": 40},
+          "missed_windows": [], "dsr_missing": []}
+    st = _st(scheduler="warn", jobs="bad", api="ok", email="warn", sms="bad", ai="bad", integrations="bad")
+    js = _state_js(page, {"o": {"st": st, "ov": ov, "jb": jb, "mh": FAILED, "ai": FAILED}})
     out = _node(js + "console.log(JSON.stringify(Object.fromEntries(opsState(P.o).map(x => [x.key, x.tone]))));")
-    assert out == {"scheduler": "bad", "jobs": "bad", "api": "bad", "email": "warn", "sms": "bad", "push": "good",
+    assert out == {"scheduler": "warn", "jobs": "bad", "api": "good", "email": "warn", "sms": "bad", "push": "good",
                    "ai": "bad", "integrations": "bad"}, out
 
 
@@ -333,7 +343,9 @@ def test_engineering_says_the_servers_warnings_never_every_key_is_configured(pag
 def test_windows_are_labelled_never_since_the_last_deploy(page):
     mine = _mine(page)
     assert "since the last deploy" not in mine and "since deploy" not in mine
-    assert "last 5 minutes" in _fn(page, "engApi") and "api_window_label" in _fn(page, "opsState")
+    # The API card's state is the server's verdict since admin audit 10/27/26
+    # (W2); its p95 figure still names the window it covers.
+    assert "last 5 minutes" in _fn(page, "engApi") and "api_window_label" in _fn(page, "operations")
 
 
 def test_the_status_page_lists_incidents_with_update_and_resolve(page):
