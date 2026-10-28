@@ -574,6 +574,19 @@ let _seq = 0;
 // refusal (409) from a send that failed (502). A response the server masked
 // for the support role (X-Redacted: support) turns the write controls off:
 // body.role-support hides every element marked .w.
+//
+// A write whose answer never came back (the connection dropped, a deploy
+// restarted the server) is said, never thrown away (admin audit 10/27/26,
+// W4/C2): api() answers it {ok:false, _status:0, network:true} with the
+// sentence below, so every write path — post(), opsWrite, formSubmit, the
+// uploads — shows it through say()/errText() and gives its button back. A
+// read still throws, and a page's own reads are aborted when the admin moves
+// to another page (P-05): the server's four request threads are not spent
+// on answers nobody will see. A read with a method (a poll, the rail) is
+// never aborted.
+var NO_ANSWER = 'No answer from the server — the outcome is unknown. Refresh before trying again.';
+var _readCtl = null;
+function isWrite(opts){ var m = opts && opts.method ? String(opts.method).toUpperCase() : 'GET'; return m !== 'GET' && m !== 'HEAD'; }
 let _reauthP = null, _reauthRes = null;
 async function api(path, opts, _retry, _s0){
   const s = _s0 == null ? _seq : _s0;
@@ -581,7 +594,14 @@ async function api(path, opts, _retry, _s0){
   // path (auth._admin_wants_json), not a 302 to a login page.
   const o = Object.assign({}, opts || {});
   o.headers = Object.assign({'Accept': 'application/json'}, (opts && opts.headers) || {});
-  const r = await fetch(path, o);
+  if(!(opts && (opts.method || opts.signal)) && _readCtl && s === _seq) o.signal = _readCtl.signal;
+  var r;
+  try{ r = await fetch(path, o); }
+  catch(e){
+    if(s !== _seq && !(opts && opts.method)) throw new Error(STALE);
+    if(isWrite(opts)) return {ok:false, _status:0, network:true, error:NO_ANSWER};
+    throw e;
+  }
   let j; try{ j = await r.json(); }catch(e){ j = {ok:false, error:'HTTP '+r.status}; }
   if(j && typeof j === 'object' && !Array.isArray(j)) j._status = r.status;
   if(r.headers.get('X-Redacted') === 'support') document.body.classList.add('role-support');
@@ -737,6 +757,9 @@ async function route(){
   const area = name === 'client' || name === 'locations' ? 'customers' : name;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === area));
   _tgt = null; menusClose();
+  // The page being left: its reads in flight are cancelled (P-05).
+  if(_readCtl) _readCtl.abort();
+  _readCtl = typeof AbortController === 'function' ? new AbortController() : null;
   const seq = ++_seq;
   const view = $('view'); view.classList.remove('enter');
   view.innerHTML = '<div class="sk" style="width:28%;height:26px"></div><div class="sk blk"></div><div class="sk blk"></div>';
@@ -1176,6 +1199,10 @@ function jobSaid(r, label){
     $('pw-title').textContent = label || 'Shown once'; $('pw-sub').textContent = 'The new password — copy it now, it is not shown again.';
     $('pw-out').textContent = r.password_once; $('pw-log').hidden = !r.output; $('pw-log').textContent = r.output || ''; openModal('m-password');
   }
+  // A pool task that failed keeps its reason inside its result
+  // (ops.run_admin_task: {ok:false, state, result:{error}}): that reason is
+  // what the admin reads, never "That didn't work (HTTP 200)" (W15-i).
+  if(r && !okRes(r) && !r.error && r.result && r.result.error) r = Object.assign({}, r, {error: String(r.result.error)});
   return say(r, (label || 'Done') + ' — finished');
 }
 // A panel that reads its own data after the page is drawn: the page never
@@ -2557,10 +2584,13 @@ function readErr(d, tables){
   for(let i = 0; i < all.length; i++){ const e = all[i], q = typeof e === 'string' ? e : (e.query || e.name || ''); if(tables.indexOf(q) >= 0) return q + ': ' + ((e && e.error) || 'unavailable'); }
   return null;
 }
-// At most `limit` console reads in flight (#32): four request threads serve
-// the whole platform. A read that throws (the network) becomes a failed
-// payload, so it draws as unknown; a read the admin has navigated away from
-// stops the rest.
+// At most `limit` console reads in flight (#32), and never more than two
+// (admin audit 10/27/26, P-05): four request threads serve the whole
+// platform, and a console page must leave two of them to owners, the iPhone
+// app, webhooks and /health. A read that throws (the network) becomes a
+// failed payload, so it draws as unknown; a read the admin has navigated
+// away from stops the rest.
+var API_ALL_MAX = 2;
 async function apiAll(paths, limit){
   const out = new Array(paths.length); let next = 0, stale = null;
   async function worker(){
@@ -2569,7 +2599,7 @@ async function apiAll(paths, limit){
       try{ out[k] = await api(paths[k]); }
       catch(e){ if(e && e.message === STALE){ stale = e; break; } out[k] = {ok:false, _status:0, error:"Couldn't reach the server (" + (e && e.message || e) + ')'}; } }
   }
-  await Promise.all(Array.from({length: Math.max(1, Math.min(limit || 3, paths.length))}, worker));
+  await Promise.all(Array.from({length: Math.max(1, Math.min(limit || API_ALL_MAX, API_ALL_MAX, paths.length))}, worker));
   if(stale) throw stale;
   return out;
 }
@@ -4046,11 +4076,12 @@ function recDays(n){ _recDays = n; route(); }
 async function recommendations(arg){
   const rid = arg ? parseInt(arg, 10) : null;
   const q = rid ? '&restaurant_id=' + rid : '';
-  const [d, cal, miss, conf] = await Promise.all([
-    api('/admin/api/recommendations?days=' + _recDays + q),
-    api('/admin/api/recommendations/calibration?days=365' + q).catch(() => ({ok:false})),
-    api('/admin/api/recommendations/missed?days=' + _recDays + q).catch(() => ({ok:false})),
-    api('/admin/api/calibration?days=365' + q).catch(() => null)]);
+  // Two at a time, like every page's reads (P-05); a failed one is a failed payload.
+  const [d, cal, miss, conf] = await apiAll([
+    '/admin/api/recommendations?days=' + _recDays + q,
+    '/admin/api/recommendations/calibration?days=365' + q,
+    '/admin/api/recommendations/missed?days=' + _recDays + q,
+    '/admin/api/calibration?days=365' + q], API_ALL_MAX);
   if(!d.ok) throw new Error('recommendations failed');
   const T = d.total, pct = v => v==null ? '—' : Math.round(v*100)+'%';
   const ci = T.accept_ci90 ? `90%: ${pct(T.accept_ci90[0])}–${pct(T.accept_ci90[1])}` : '';
