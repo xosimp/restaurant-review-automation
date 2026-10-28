@@ -5339,7 +5339,8 @@ async function rpowerStatus(){ let d; try{ d = await api('/admin/rpower/status/'
   if(cr) x.push(`<span>Partner credential #${cr.id} · v${cr.version} · ${cr.stores} live store${cr.stores===1?'':'s'}${cr.rotated_at?' · rotated '+fmtDT(cr.rotated_at):''} <button class="btn s w" onclick="rpowerRotate(${cr.id})">Rotate token…</button></span>`);
   if(d.is_demo) x.push(`<span>Demo: ${d.live_mirror?'may read this live store (override on)':'simulated stores only'} <button class="btn s w" onclick="rpowerLiveMirror(${d.live_mirror?'false':'true'})">${d.live_mirror?'Turn the override off':'Allow a live store…'}</button></span>`);
   if(d.owner_hold) x.push(`<span>Held for the owner's store check since ${fmtDT(d.owner_hold)} <button class="btn s w" onclick="rpowerReleaseHold()">Owner confirmed another way…</button></span>`);
-  $('rp-extra').innerHTML = x.join(''); }
+  $('rp-extra').innerHTML = x.join('');
+  if(!d.connected) rpowerPicker(d); }
 async function rpowerRotate(id){ const t = prompt('Paste the NEW RPOWER token for credential #'+id+'. Every store on it reads with the new token from its next request.'); if(!t) return;
   let d = await post('/admin/rpower/credentials/'+id+'/rotate', {token:t.trim()});
   if(d && d._status===409 && d.unseen && confirm(errText(d)+'\n\n'+d.unseen.map(u=>u.name).join(', ')+'\n\nRotate anyway?')) d = await post('/admin/rpower/credentials/'+id+'/rotate', {token:t.trim(), force:true});
@@ -5351,10 +5352,22 @@ async function rpowerReleaseHold(){ const how = prompt('How did you confirm the 
 async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ statusSay('m-rpower-status', false, 'Paste the token first'); return; }
   $('m-rpower-status').style.color=''; $('m-rpower-status').innerHTML=pulse('Verifying the token');
   const d = await post('/admin/rpower/save/'+_rpRid, {token:t});
-  if(!okRes(d)){ statusSay('m-rpower-status', false, errText(d)); return; }
-  if(d.needs_choice){ const sel=$('rp-store'); sel.innerHTML=''; (d.stores||[]).forEach(function(st){ const o=document.createElement('option'); o.value=st.store_mid; o.textContent=st.name+' (cg '+st.cg+')'; sel.appendChild(o); });
-    $('rp-stores').style.display='block'; statusSay('m-rpower-status', null, d.message); return; }
+  const picker = rpowerPicker(d);
+  if(!okRes(d)){ statusSay('m-rpower-status', false, errText(d) + (picker ? ' Pick the store below to bind it.' : '')); return; }
+  if(d.needs_choice){ statusSay('m-rpower-status', null, d.message); return; }
   statusSay('m-rpower-status', true, d.message||'Connected'); _clients=null; }
+// The store picker whenever the server hands back the stores a token can see
+// (admin audit 10/27/26, F12) — beside an error too: a single-store save
+// whose bootstrap failed answers 400 with its `stores`, and picking the store
+// is the way on; the picker used to stay hidden behind the error. ES5.
+function rpowerPicker(d){
+  var st = d && Array.isArray(d.stores) ? d.stores : [], sel = $('rp-store');
+  if(!st.length || !sel) return false;
+  sel.innerHTML = '';
+  st.forEach(function(x){ var o = document.createElement('option'); o.value = x.store_mid; o.textContent = (x.name || 'Store ' + x.store_mid) + ' (cg ' + x.cg + ')'; sel.appendChild(o); });
+  $('rp-stores').style.display = 'block';
+  return true;
+}
 async function rpowerBind(){ const d = await post('/admin/rpower/bootstrap/'+_rpRid, {store_mid:$('rp-store').value});
   statusSay('m-rpower-status', okRes(d), okRes(d) ? ('Bound to '+(d.store&&d.store.name||'store')) : errText(d));
   if(okRes(d)){ $('rp-stores').style.display='none'; _clients=null; } }

@@ -240,3 +240,31 @@ def test_the_staff_note_undo_posts_the_stored_parts_and_an_older_server_still_ge
                                                         "parts": [{"text": "no Sundays", "expires_on": None},
                                                                   {"text": "off by 4pm", "expires_on": "2026-12-01"}]}]
     assert undo[1] == ["form", "/admin/staff-notes/5", {"employee_name": "Bo", "notes": "mornings", "expires_on": "2026-11-30"}]
+
+
+# ── F12: the RPOWER store picker whenever stores come back ──────────────────
+
+def test_the_rpower_store_picker_shows_beside_a_failed_bootstrap():
+    js = _js(("rpowerSave", "rpowerPicker", "okRes", "errText", "statusSay", "pulse")) + r"""
+    var _rpRid = 5, _clients = 1, answer;
+    function post(){ return Promise.resolve(answer); }
+    mk('rp-token').value = 'tok'; mk('m-rpower-status'); mk('rp-store'); mk('rp-stores');
+    (async function(){
+      answer = {ok: false, _status: 400, error: 'RPOWER refused the store binding.', stores: [{store_mid: '12', cg: '3', name: "Simple EJ's"}]};
+      await rpowerSave();
+      var failed = {shown: _els['rp-stores'].style.display, opts: _els['rp-store'].children.map(function(o){ return [o.value, o.textContent]; }),
+                    said: _els['m-rpower-status'].textContent, color: _els['m-rpower-status'].style.color};
+      _els['rp-stores'].style.display = 'none'; _els['rp-store'].children = [];
+      answer = {ok: true, _status: 200, connected: true, message: 'Connected to EJ.'};
+      await rpowerSave();
+      console.log(JSON.stringify({failed: failed, okShown: _els['rp-stores'].style.display, okSaid: _els['m-rpower-status'].textContent}));
+    })();
+    """
+    out = _node(js)
+    f = out["failed"]
+    assert f["shown"] == "block" and f["opts"] == [["12", "Simple EJ's (cg 3)"]]
+    assert f["said"].startswith("RPOWER refused the store binding.") and "Pick the store below" in f["said"]
+    assert f["color"] == "var(--red-t)"
+    assert out["okShown"] == "none" and out["okSaid"] == "Connected to EJ."
+    assert "rpowerPicker(d)" in _fn("rpowerStatus")            # a status that names stores shows them too
+    assert "posSyncFollow(d.job_id, 'RPOWER'" in _fn("rpowerSync")   # Sync now is followed (round 1, W5)
