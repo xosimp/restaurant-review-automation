@@ -103,8 +103,12 @@ def _loop_job_names():
 
 def test_a_queued_job_is_queued_by_the_loop_and_only_a_queued_job_is():
     queued = set(re.findall(r'queue_scheduled_job\("([a-z_]+)"', _LOOP_SRC))
-    assert queued == {n for n, s in jobs_registry.JOBS.items() if s.get("queue")} == {"backup_db", "restore_drill"}
-    assert not re.search(r'run_job\("(backup_db|restore_drill)"', _LOOP_SRC), "the backup ran inline on the loop"
+    # business_metrics since admin audit 10/27/26 P-16: its fleet build ran
+    # inline on the scheduler thread of the web process.
+    assert queued == {n for n, s in jobs_registry.JOBS.items() if s.get("queue")} == {"backup_db", "restore_drill",
+                                                                                    "business_metrics"}
+    assert not re.search(r'run_job\("(backup_db|restore_drill|business_metrics)"', _LOOP_SRC), \
+        "a queued job ran inline on the loop"
 
 
 def test_every_job_the_loop_runs_is_registered_and_every_registered_job_runs():

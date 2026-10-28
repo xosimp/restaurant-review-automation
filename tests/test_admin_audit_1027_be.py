@@ -378,3 +378,81 @@ def test_f12_a_legacy_token_without_a_store_is_also_unchosen_and_no_token_is_not
     assert admin_ops.rpower_store_unchosen({"rpower_token": "abc", "rpower_store_mid": ""}) is True
     assert admin_ops.rpower_store_unchosen({"rpower_credential_id": None, "rpower_token": " "}) is False
     assert admin_ops.rpower_store_unchosen({"rpower_credential_id": 3, "rpower_store_mid": "S9"}) is False
+
+
+# ── P-16: the nightly metrics run on the queue worker; one build per digest ──
+
+def test_p16_the_queued_business_metrics_run_is_for_the_queued_day(db_path, monkeypatch):
+    import scheduler
+    import jobs_registry
+    spec = jobs_registry.JOBS["business_metrics"]
+    assert spec["queue"] == "maintenance" and spec["period_kwarg"] == "day"
+    seen = []
+
+    def snap(**kw):
+        seen.append(kw)
+        return {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False}
+    monkeypatch.setattr(admin_ops, "snapshot_business_metrics", snap)
+    out = scheduler.run_queued_scheduled_job({"payload": {"job": "business_metrics", "period": "2026-09-29"}})
+    assert out == {"job": "business_metrics", "ok": True}
+    assert seen == [{"day": "2026-09-29"}], "the night the loop queued, not the day the worker ran it"
+    runs = _rows(db_path, "SELECT job, ok FROM job_runs WHERE job='business_metrics'")
+    assert runs and runs[-1]["ok"] in (1, 2), "recorded under its own name, as on the loop"
+
+
+def test_p16_one_fleet_build_shares_the_first_build_inside_the_block_only(db_path, monkeypatch):
+    _rid(db_path, "Build Grill")
+    real, n = admin_ops._records, []
+
+    def counted():
+        n.append(1)
+        return real()
+    monkeypatch.setattr(admin_ops, "_records", counted)
+    with admin_ops.one_fleet_build():
+        admin_ops.overview()
+        admin_ops.clients()
+    assert len(n) == 1, "the Monday digest's two reads build the fleet once"
+    admin_ops.overview()
+    admin_ops.clients()
+    assert len(n) == 3, "outside the block every read is fresh (a long job sees rows change)"
+
+
+def test_p16_the_operator_digest_builds_the_fleet_once(db_path, monkeypatch):
+    import emails
+    import ops
+    _rid(db_path, "Digest Grill")
+    real, n = admin_ops._records, []
+    monkeypatch.setattr(admin_ops, "_records", lambda: (n.append(1), real())[1])
+    monkeypatch.setattr(emails, "deliver", lambda **k: emails.SendResult(ok=True) if hasattr(emails, "SendResult")
+                        else type("R", (), {"ok": True})())
+    assert ops.send_operator_weekly_digest()["ok"] == 1
+    assert len(n) == 1
+
+
+def test_p16_churn_risk_states_are_written_in_one_batch_each(db_path, monkeypatch):
+    a = _rid(db_path, "Risk Grill", billing_status="active")
+    b = _rid(db_path, "Calm Grill", billing_status="trial")
+    _x(db_path, "INSERT INTO account_risk_state (restaurant_id, level, since, updated_at) VALUES (?, 'high', ?, ?)",
+       (b, "2026-01-01 00:00:00", "2026-01-01 00:00:00"))
+    statements = []
+    real_get_conn = models.get_conn
+
+    class Spy:
+        def __init__(self, conn):
+            self._c = conn
+
+        def __getattr__(self, k):
+            return getattr(self._c, k)
+
+        def execute(self, sql, *a, **k):
+            if "account_risk_state" in sql and not sql.lstrip().upper().startswith("SELECT"):
+                statements.append(("execute", sql))
+            return self._c.execute(sql, *a, **k)
+
+        def executemany(self, sql, rows):
+            statements.append(("executemany", sql))
+            return self._c.executemany(sql, rows)
+    monkeypatch.setattr(admin_ops, "get_conn", lambda *x, **k: Spy(real_get_conn(db_path)))
+    assert admin_ops.snapshot_business_metrics()["ok"] == 1
+    assert statements and all(kind == "executemany" for kind, _sql in statements), statements
+    assert [r["restaurant_id"] for r in _rows(db_path, "SELECT restaurant_id FROM account_risk_state")] == [a]

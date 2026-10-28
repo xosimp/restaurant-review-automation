@@ -701,13 +701,37 @@ def _served(m):
     return m["recs"], m["d"], dict(m["meta"], cached=True, age_seconds=round(time.monotonic() - m["at"], 1))
 
 
+_one_build = threading.local()
+
+
+@contextmanager
+def one_fleet_build():
+    """Off a request thread every payload builds the fleet fresh — a job
+    that read overview() and clients() built it twice (admin audit 10/27/26
+    P-16: the Monday operator digest). Inside this block the first build is
+    shared by every payload this thread reads, then dropped at the end, so a
+    long-running job still sees rows change between its runs."""
+    prev = getattr(_one_build, "held", None)
+    _one_build.held = {} if prev is None else prev
+    try:
+        yield
+    finally:
+        _one_build.held = prev
+
+
 def _records_cached():
     """(recs, d, meta) for a payload. meta = {generated_at, errors,
     unavailable, cached, age_seconds}."""
     if not _in_request() or FLEET_TTL_SECONDS <= 0:
+        held = getattr(_one_build, "held", None)
+        if held is not None and held.get("key") == _memo_key():
+            return held["recs"], held["d"], dict(held["meta"], cached=True)
         with _collecting() as bucket:
             recs, d = _records()
-        return recs, d, _build_meta(bucket)
+        meta = _build_meta(bucket)
+        if held is not None and not meta["errors"]:
+            held.update(key=_memo_key(), recs=recs, d=d, meta=meta)
+        return recs, d, meta
     deadline = time.monotonic() + FLEET_WAIT_SECONDS
     # ?fresh=1 (the console's Refresh) accepts a memo only seconds old —
     # still single-flight, so a burst of refreshes shares one build.
@@ -7522,18 +7546,23 @@ def snapshot_business_metrics(db_path=None, day=None):
                           json.dumps({k: round(v, 4) for k, v in costs.items()}), json.dumps(fixed["by_vendor"]),
                           json.dumps(state)))
             # Churn risk level and since when (#83): unchanged level keeps its
-            # 'since'; a new level starts now.
+            # 'since'; a new level starts now. One batched statement each
+            # (admin audit 10/27/26 P-16), not a round trip per restaurant.
             stamp = _utc_stamp(now)
+            unscored, scored = [], []
             for r in real:
                 c = r["churn_risk"]
                 if not c.get("scored"):
-                    conn.execute("DELETE FROM account_risk_state WHERE restaurant_id=?", (r["id"],))
+                    unscored.append((r["id"],))
                     continue
                 prior = (d.get("risk_state") or {}).get(r["id"]) or {}
                 since = prior.get("since") if prior.get("level") == c["level"] else stamp
-                conn.execute("INSERT OR REPLACE INTO account_risk_state (restaurant_id, level, since, points, "
-                             "reasons_json, updated_at) VALUES (?,?,?,?,?,?)",
-                             (r["id"], c["level"], since, c.get("points"), json.dumps(c.get("reasons") or []), stamp))
+                scored.append((r["id"], c["level"], since, c.get("points"), json.dumps(c.get("reasons") or []), stamp))
+            if unscored:
+                conn.executemany("DELETE FROM account_risk_state WHERE restaurant_id=?", unscored)
+            if scored:
+                conn.executemany("INSERT OR REPLACE INTO account_risk_state (restaurant_id, level, since, points, "
+                                 "reasons_json, updated_at) VALUES (?,?,?,?,?,?)", scored)
             conn.commit()
         finally:
             conn.close()
