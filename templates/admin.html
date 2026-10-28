@@ -1402,8 +1402,8 @@ async function clientsView(){
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div class="seg">${HS.map(x=>`<button class="${_ch===x[0]?'on':''}" onclick="_ch='${x[0]}';_cpage=1;clientsView()">${x[1]} <b>${x[2]}</b></button>`).join('')}</div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <select aria-label="Billing status" onchange="_cs=this.value;_cpage=1;clientsView()" style="height:32px;padding:0 10px"><option value="">Every status</option>${ST.map(x=>`<option value="${esc(x)}" ${_cs===x?'selected':''}>${esc(x.replace('_',' '))} · ${sc[x]}</option>`).join('')}</select>
-        <select aria-label="Sort" onchange="_csort=this.value;_cpage=1;clientsView()" style="height:32px;padding:0 10px">${[['health','Needs attention first'],['name','Name'],['mrr','MRR'],['last_active','Last active'],['created','Newest']].map(x=>`<option value="${x[0]}" ${_csort===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
+        <select aria-label="Billing status" onchange="_cs=this.value;_cpage=1;clientsView()"><option value="">Every status</option>${ST.map(x=>`<option value="${esc(x)}" ${_cs===x?'selected':''}>${esc(x.replace('_',' '))} · ${sc[x]}</option>`).join('')}</select>
+        <select aria-label="Sort" onchange="_csort=this.value;_cpage=1;clientsView()">${[['health','Needs attention first'],['name','Name'],['mrr','MRR'],['last_active','Last active'],['created','Newest']].map(x=>`<option value="${x[0]}" ${_csort===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
         <label class="search-in">${ico('search','s')}<input placeholder="Name, city, email, phone, Stripe ID, #id" value="${esc(_cq)}" oninput="_cq=this.value;_cpage=1;clearTimeout(window._cqt);window._cqt=setTimeout(()=>{clientsView().then(()=>{const i=V().querySelector('.search-in input');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}});},250)"></label>
         <label class="switch" title="Demo, test and internal accounts — never counted in attention or MRR"><input type="checkbox" ${_showDemo?'checked':''} onchange="_showDemo=this.checked;_cpage=1;clientsView()"><i></i>Internal <span class="n">${segc.internal||0}</span></label>
       </div></div>
@@ -2210,7 +2210,7 @@ function cMessages(c, d){
         <div class="lbl">Devices</div>${table([{h:'User',key:'user_id',cell:r=>esc(loginName(c, r.user_id))},{h:'Env',key:'environment'},{h:'Registered',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last success',key:'last_success_at',cell:r=>`<span class="num">${ago(r.last_success_at)}</span>`},{h:'State',cell:r=>r.disabled_reason?`<span class="b bad nodot">${esc(r.disabled_reason)}</span>`:'<span class="b ok nodot">live</span>'}], d.devices, {id:'cdev-t', empty:'No devices — notifications not allowed on the app yet.'})}
         <div class="lbl">Scheduled posts</div>${table([{h:'Platform',key:'platform'},{h:'Topic',key:'topic',wrap:true,cell:r=>esc(r.topic||r.content_type)},{h:'Scheduled',key:'scheduled_for',cell:r=>`<span class="num">${fmtDT(r.scheduled_for)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='posted'?'ok':r.status==='failed'?'bad':'info'} nodot" title="${esc(r.error||'')}">${esc(r.status)}</span>`}], d.scheduled_posts, {id:'cpost-t', limit:10, empty:'Nothing scheduled.'})}</div></section>`,
     after: () => lazy('cm-storm', () => stormHtml(c))};
-  if(_cmsg === 'brief') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Morning brief deliveries</h2><select id="cm-bday" onchange="const v=this.value;lazy('cm-brief', () => briefHtml(${c.id}, v))" style="height:30px;padding:0 10px"><option value="">Every day on record</option>${dayKeysBack(7).map(x=>`<option value="${x[0]}">${esc(x[1])}</option>`).join('')}</select></div><div id="cm-brief">${skel(3)}</div></div>`,
+  if(_cmsg === 'brief') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Morning brief deliveries</h2><select id="cm-bday" onchange="const v=this.value;lazy('cm-brief', () => briefHtml(${c.id}, v))"><option value="">Every day on record</option>${dayKeysBack(7).map(x=>`<option value="${x[0]}">${esc(x[1])}</option>`).join('')}</select></div><div id="cm-brief">${skel(3)}</div></div>`,
     after: () => lazy('cm-brief', () => briefHtml(c.id, ''))};
   // AI
   return {html: seg + `<section class="card strip">${stripDiv('Calls · 30 days', fmtN(c.ai.calls_30d), fmtN(c.ai.tokens_30d)+' tokens')}${stripDiv('Cost · 30 days', fmtUSD(c.ai.cost_30d,2), 'at metered rates', 'color:var(--ember2)')}${stripDiv('This week', fmtN(c.ai.calls_7d), c.ai.calls_prev_7d+' the week before'+(c.ai.owner_calls_7d!=null?' · '+c.ai.owner_calls_7d+' by the owner':''))}${stripDiv('Failed · 7 days', fmtN(c.ai.failed_7d), c.ai.failed_30d+' in 30 days', c.ai.failed_7d?'color:var(--red-t)':'')}</section>
@@ -2723,7 +2723,7 @@ function subCard(tab, icn, label, tone, value, unit, sub, trend, color, href){
   const on = !href && _opsTab === tab, word = ST_WORD[tone] || '—';
   return `<a class="card" href="${href || '#operations/' + tab}" aria-label="${esc(label.replace(/&amp;/g, '&'))}: ${esc(word)} — ${esc(sub)}" style="padding:16px 16px 14px;display:flex;flex-direction:column;gap:9px;min-width:0;${on ? 'box-shadow:var(--glow);' : ''}${tone === 'bad' ? 'border-color:var(--red);' : ''}">
     <span style="display:flex;align-items:center;gap:9px;min-width:0"><span class="ico ${tone}" title="${esc(word)}">${ico(icn)}</span><span class="lbl" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span></span>
-    <span style="display:flex;align-items:baseline;gap:6px;min-width:0"><span class="n" style="font-size:28px;font-weight:600;line-height:1">${value}</span><span class="n muted" style="font-size:12.5px;white-space:nowrap">${unit}</span></span>
+    <span style="display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 6px;min-width:0"><span class="n" style="font-size:var(--fig-l);font-weight:600;line-height:1">${value}</span><span class="n muted" style="font-size:12.5px">${unit}</span></span>
     ${trend ? spark(trend, 200, 32, color, 'sp-' + tab) : '<span style="height:32px"></span>'}
     <span class="muted" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(word)} — ${esc(sub)}"><b style="color:${ST_COLOR[tone] || 'var(--ink4)'}">${esc(word)}</b> · ${esc(sub)}</span></a>`;
 }
@@ -2783,23 +2783,26 @@ async function opsEvents(){
     const undated = s.events.filter(e => !e.event_date).length;
     return `<section class="card" style="overflow:hidden">
       <div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>${esc(s.name)}</h2>
-        <span class="muted" style="font-size:12.5px">${esc(s.league || s.category)} · ${fmtN(s.events.length)} games · ${fmtN(s.followers)} following${undated ? ` · <span style="color:var(--amber)">${fmtN(undated)} without a date</span>` : ''}${s.needs_result ? ` · <span style="color:var(--amber)">${fmtN(s.needs_result)} if-necessary ${s.needs_result === 1 ? 'game needs' : 'games need'} a result or a cancellation</span>` : ''}</span></div></div>
-      <div class="tw" style="border:0;border-radius:0;box-shadow:none"><table style="width:100%"><thead><tr><th>Week</th><th>Game</th><th>Date</th><th>Kickoff</th><th>TV</th><th>Status</th><th>Result</th><th></th></tr></thead><tbody>
+        <span class="muted" style="font-size:12.5px">${esc(s.league || s.category)} · ${fmtN(s.events.length)} games · ${fmtN(s.followers)} following${undated ? ` · <span style="color:var(--amber-t)">${fmtN(undated)} without a date</span>` : ''}${s.needs_result ? ` · <span style="color:var(--amber-t)">${fmtN(s.needs_result)} if-necessary ${s.needs_result === 1 ? 'game needs' : 'games need'} a result or a cancellation</span>` : ''}</span></div></div>
+      <div class="tw"><table style="width:100%"><thead><tr><th>Week</th><th>Game</th><th>Date</th><th>Kickoff</th><th>TV</th><th>Status</th><th>Result</th><th></th></tr></thead><tbody>
       ${s.events.map(e => {
         const over = Object.keys(e.overrides || {});
         const st = (d.statuses || []).map(x => `<option value="${esc(x)}"${x === e.status ? ' selected' : ''}>${esc(x)}</option>`).join('');
-        return `<tr data-ev="${e.id}" data-over="${esc(JSON.stringify(e.overrides || {}))}">
+        return `<tr data-ev="${e.id}" data-over="${esc(JSON.stringify(e.overrides || {}))}" oninput="evDirty(this)" onchange="evDirty(this)">
           <td class="muted">${esc(e.week || '')}</td>
           <td><b>${e.home_away === 'home' ? 'vs' : 'at'} ${esc(e.opponent || '')}</b>${e.is_primetime ? ' <span class="chip">prime time</span>' : ''}${over.length ? ` <span class="chip warn" title="Corrected here: ${esc(over.join(', '))}">corrected</span>` : ''}${e.needs_result ? ` <span class="chip warn" title="An if-necessary game whose date has passed: enter its result, or set it cancelled if it was not played. Until then its night stays out of every baseline and is not measured.">needs a result</span>` : ''}</td>
-          <td><input type="date" data-f="event_date" data-o="${esc(e.event_date || '')}" value="${esc(e.event_date || '')}" aria-label="Date"><span class="muted" style="font-size:11px;display:block">${esc(isoMdy(e.event_date))}</span></td>
+          <td><input type="date" data-f="event_date" data-o="${esc(e.event_date || '')}" value="${esc(e.event_date || '')}" aria-label="Date"><span class="muted" style="font-size:12px;display:block">${esc(isoMdy(e.event_date))}</span></td>
           <td><input data-f="kickoff_local" data-o="${esc(e.kickoff_local || '')}" value="${esc(e.kickoff_local || '')}" placeholder="19:15" size="5" aria-label="Kickoff, 24-hour local"></td>
           <td><input data-f="broadcast" data-o="${esc(e.broadcast || '')}" value="${esc(e.broadcast || '')}" size="7" aria-label="Broadcast"></td>
           <td><select data-f="status" data-o="${esc(e.status || '')}" aria-label="Status">${st}</select></td>
           <td><input data-f="result" data-o="${esc(e.result || '')}" value="${esc(e.result || '')}" size="8" placeholder="W 24-20" aria-label="Result"></td>
-          <td style="white-space:nowrap"><button class="btn p s" onclick="evSave(${e.id},this)">Save</button>${over.length ? ` <button class="btn g s" title="Hand ${esc(over.join(', '))} back to the season file" onclick="evRevert(${e.id},this)">Revert</button>` : ''}</td>
+          <td style="white-space:nowrap"><button class="btn s ev-save" onclick="evSave(${e.id},this)">Save</button>${over.length ? ` <button class="btn g s" title="Hand ${esc(over.join(', '))} back to the season file" onclick="evRevert(${e.id},this)">Revert</button>` : ''}</td>
         </tr>`; }).join('')}
       </tbody></table></div></section>`; }).join('');
 }
+// A game's Save is secondary until its row is edited, then the row's one
+// ember action (V10) — never seventeen primaries down a season.
+function evDirty(tr){ var b = tr.querySelector('.ev-save'); if(b) b.classList.add('p'); }
 async function evSave(id, btn){
   const tr = btn.closest('tr'), changes = {};
   // Only what was changed: an untouched field keeps following the season file.
@@ -2835,8 +2838,9 @@ function lazyRead(id, path, draw){ const el = $(id); if(el) el.innerHTML = skel(
 // Jobs: one row per registry job (D's `jobs`, #40) with its own state —
 // ok | partial | failed | running | stuck | overdue | never — and its last
 // 14 runs, each drawn in its own state: partial is amber, running is ember,
-// neither is ever green.
-const JOB_TONE = {ok:'var(--green)', partial:'var(--amber)', failed:'var(--red)', stuck:'var(--red)', overdue:'var(--red)', running:'var(--ember2)', never:'var(--ink5)'};
+// neither is ever green. A row is one line — its key and cadence; what the
+// job does is in the open row (admin audit 10/27/26 L5).
+const JOB_TONE = {ok:'var(--green)', partial:'var(--amber)', failed:'var(--red)', stuck:'var(--red)', overdue:'var(--red)', running:'var(--ember2)', never:'var(--ink4)'};
 const JOB_WORD = {ok:'OK', partial:'Partial', failed:'Failed', stuck:'Stuck', overdue:'Overdue', running:'Running', never:'Never ran'};
 const JOB_PILL = {ok:'good', partial:'warn', failed:'bad', stuck:'bad', overdue:'bad', running:'emb', never:'neu'};
 const RUN_SQ = {ok:'', partial:'p', failed:'x', running:'r'};
@@ -2846,10 +2850,12 @@ function histSquares(hist){
   return `<span class="sq" aria-label="last 14 runs">${cells.join('')}</span>`;
 }
 function onJobsPage(){ const h = location.hash.replace('#', '').split('?')[0]; return h === 'operations' || h === 'operations/jobs'; }
-function runBtn(j, d, primary){
+// Run now: shown on hover, or always on a failing row (`always`) — never
+// ember, because the row's own state already carries the alarm (V10).
+function runBtn(j, d, always){
   if(!j.runnable) return '';
   if(j.sends && d.local_sends_refused) return `<button class="btn s w" disabled title="${esc(d.local_sends_refused_reason || 'Refused on this server')}">Run now</button>`;
-  return `<button class="btn s w${primary ? ' p' : ' reveal'}" onclick="event.stopPropagation();runJob('${jsq(j.job)}',${j.sends ? 'true' : 'false'},'${jsq(j.label || j.job)}')">Run now</button>`;
+  return `<button class="btn s w${always ? '' : ' reveal'}" onclick="event.stopPropagation();runJob('${jsq(j.job)}',${j.sends ? 'true' : 'false'},'${jsq(j.label || j.job)}')">Run now</button>`;
 }
 // What a job's newest finished run held back (memory audit 9/29/26), from
 // its stored counts: prune_ledgers' `refused` (a window under its floor —
@@ -2890,12 +2896,12 @@ function jobRow(j, d){
   const facts = [j.sla_minutes ? `SLA ${fmtN(Math.round(j.sla_minutes / 60 * 10) / 10)}h between successes` : 'no SLA', `stuck after ${fmtN(j.stuck_after_minutes)}m`, j.lane ? esc(j.lane) + ' lane' : '', j.retry ? 'retried after a failure' : '', `7 days: ${fmtN(j.runs_7d)} runs · ${fmtN(j.failed_7d)} failed · ${fmtN(j.partial_7d)} partial`].filter(Boolean).join(' · ');
   const od = j.overdue ? `<span style="color:var(--red-t);font-size:13px">Overdue: <span class="n">${fmtN(j.overdue.hours_since)}h</span> since its last success (SLA <span class="n">${fmtN(j.overdue.max_hours)}h</span>) · last success ${j.overdue.last_ok_at ? fmtDT(j.overdue.last_ok_at) : 'never'}</span>` : '';
   return `<div class="li click" onclick="toggleRow(this)"><i style="display:block;width:9px;height:9px;border-radius:50%;background:${JOB_TONE[j.state] || 'var(--ink5)'};box-shadow:0 0 0 4px var(--hover);flex-shrink:0"></i>
-    <div class="tt"><b>${esc(j.label || j.job)}${j.sends ? ' <span class="pill emb nd" style="height:18px;font-size:10.5px;margin-left:6px"><i></i>sends</span>' : ''}${held && held.refused_n ? ` <span class="chip bad" title="The newest run refused a window under its floor">${fmtN(held.refused_n)} refused</span>` : ''}${held && held.capped_n ? ` <span class="chip warn" title="The newest run hit the per-pass cap">${fmtN(held.capped_n)} capped</span>` : ''}</b><span><span class="mono">${esc(j.job)}</span> · ${esc(j.cadence || '')}${j.what ? ' · ' + esc(j.what) : ''}</span></div>
+    <div class="tt"><b>${esc(j.label || j.job)}${j.sends ? ' <span class="pill emb nd" style="height:18px;font-size:10.5px;margin-left:6px"><i></i>sends</span>' : ''}${held && held.refused_n ? ` <span class="chip bad" title="The newest run refused a window under its floor">${fmtN(held.refused_n)} refused</span>` : ''}${held && held.capped_n ? ` <span class="chip warn" title="The newest run hit the per-pass cap">${fmtN(held.capped_n)} capped</span>` : ''}</b><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(j.job)} · ${esc(j.cadence || '')}"><span class="mono">${esc(j.job)}</span> · ${esc(j.cadence || '')}</span></div>
     ${pill(JOB_PILL[j.state] || 'neu', JOB_WORD[j.state] || esc(j.state), j.state !== 'never')}
     ${histSquares(j.history)}
-    <span style="width:118px;text-align:right;display:flex;flex-direction:column"><span class="n" style="font-size:12.5px;color:${bad ? 'var(--red-t)' : 'var(--ink2)'}">${last}</span><span class="n muted" style="font-size:11.5px">${j.avg_ms != null ? 'avg ' + fmtN(j.avg_ms) + 'ms' : ''}</span></span>
+    <span style="width:118px;text-align:right;display:flex;flex-direction:column"><span class="n" style="font-size:12.5px;color:${bad ? 'var(--red-t)' : 'var(--ink2)'}">${last}</span><span class="n muted" style="font-size:12px">${j.avg_ms != null ? 'avg ' + fmtN(j.avg_ms) + 'ms' : ''}</span></span>
     ${runBtn(j, d, bad)}<span class="chev">${ico('chev','s')}</span></div>
-    <div class="lx"><div class="box">${od}${heldLines(held)}<span class="muted" style="font-size:12.5px">${facts}</span>
+    <div class="lx"><div class="box">${j.what ? `<span class="ink2" style="font-size:13px">${esc(j.what)}</span>` : ''}${od}${heldLines(held)}<span class="muted" style="font-size:12.5px">${facts}</span>
       ${j.sends && d.local_sends_refused ? `<span class="warn" style="font-size:12.5px;padding:8px 10px;border-radius:9px">Run now is off here: ${esc(d.local_sends_refused_reason || '')}</span>` : ''}
       ${(j.history || []).length ? `<div class="list">${j.history.slice(0, 5).map(r => `<div class="it"><span class="when">${fmtDT(r.started_at)}</span><span>${pill(JOB_PILL[r.state] || 'bad', JOB_WORD[r.state] || esc(r.state))} <span class="n muted">${r.duration_ms != null ? fmtN(r.duration_ms) + 'ms' : ''}</span>${r.error ? ' <span style="color:var(--red-t)">' + esc(String(r.error).slice(0, 160)) + '</span>' : ''}${/manual by /.test(r.context || '') ? ' <span class="chip">' + esc(r.context) + '</span>' : ''}</span><span></span></div>`).join('')}</div>` : '<span class="muted">No run recorded in 45 days.</span>'}
       <div id="${sid}"></div>
@@ -2960,7 +2966,7 @@ function opsJobs(d){
         ${card('Last operator alert', oa ? `<span style="font-size:13px"><b>${esc(oa.subject || oa.key || '')}</b></span><span class="muted" style="font-size:12px">${fmtDT(oa.created_at)}${oa.channels ? ' · ' + esc(oa.channels) : ''}${oa.error ? ' · <span style="color:var(--red-t)">' + esc(oa.error) + '</span>' : ''}</span>` : '<span class="muted" style="font-size:13px">No operator page on record.</span>', oa ? pill(oa.sent ? 'good' : 'bad', oa.sent ? 'Sent' : 'Failed') : '')}
         ${reqs.length ? card('Run now', `<div class="list">${reqs.map(r => { const w = REQ_WORD[r.status] || ['neu', r.status]; return `<div class="it" style="grid-template-columns:96px minmax(0,1fr) auto"><span class="when">${esc(ago(r.requested_at))} ago</span><span><span class="mono">${esc(r.job)}</span> <span class="dim">by ${esc(r.requested_by || '—')}</span>${r.error ? ' <span style="color:var(--red-t)">' + esc(String(r.error).slice(0, 120)) + '</span>' : ''}</span><span>${pill(w[0], esc(w[1]))}</span></div>`; }).join('')}</div>`) : ''}
         ${card('Failure groups · 7 days', fk.groups.length ? fk.groups.map(g => `<div style="display:flex;flex-direction:column;gap:4px"><span style="display:flex;justify-content:space-between;gap:8px"><b class="mono" style="font-weight:600">${esc(g.job)}</b><span class="n" style="color:var(--red-t)">×${fmtN(g.n)}</span></span><span class="muted" style="font-size:12px">${esc(String(g.sample || '').slice(0, 120))} · ${agoWord(g.last_at)}</span><button class="lnk w" style="align-self:flex-start" onclick="resolveOpen('job:${jsq(g.job)}','Job ${jsq(g.job)} failures','${jsq(g.last_at || '')}')">Resolve</button></div>`).join('') : '<span class="muted" style="font-size:13px">No failed job in 7 days.</span>')}
-        ${tasks.length ? card('Admin tasks', `<div style="display:flex;flex-wrap:wrap;gap:6px">${tasks.map(t => { const w = TASK_WORD[t.status] || ['neu', t.status]; return pill(w[0], esc(t.kind) + ' · ' + esc(w[1])); }).join('')}</div><span class="muted" style="font-size:12px">Fetches, POS syncs and admin jobs started from the console, newest first.</span>`) : ''}
+        ${tasks.length ? card('<span title="Fetches, POS syncs and admin jobs started from the console, newest first.">Admin tasks</span>', `<div style="display:flex;flex-wrap:wrap;gap:6px">${tasks.map(t => { const w = TASK_WORD[t.status] || ['neu', t.status]; return pill(w[0], esc(t.kind) + ' · ' + esc(w[1])); }).join('')}</div>`) : ''}
       </div>
     </section>
     <details class="card"><summary>Failure log · <span class="n">${fk.jobs.length}</span> job failures${fk.other.length ? ` · <span class="n">${fk.other.length}</span> other errors` : ''}</summary><div class="cb stack">
@@ -3024,12 +3030,12 @@ function opsEmail(d, mh){
     <section class="grid g3">
       <div class="card" style="padding:16px 18px"><div class="lbl" style="margin-bottom:12px">Sent a day · 30 days · undeliverable in red</div>${bars(d.daily, 'n', 'failed')}<div class="dim" style="margin-top:6px">${d.daily.length ? mdy(dayOf(d.daily[0].day)) + ' – ' + mdy(dayOf(d.daily[d.daily.length - 1].day)) : ''}</div></div>
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl">By type · 7 days</div>${d.by_type.slice(0, 6).map(x => `<div style="display:grid;grid-template-columns:minmax(0,1fr) 90px 64px;gap:10px;align-items:center;font-size:12.5px"><span class="ink2" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.email_type)}</span><span class="bar"><i style="width:${Math.round(x.n / mx * 100)}%;background:${x.failed || x.bounced || x.complained ? 'var(--amber)' : 'var(--ember2)'}"></i></span><span class="n" style="text-align:right" title="${fmtN(x.failed)} failed · ${fmtN(x.bounced)} bounced · ${fmtN(x.complained)} complained">${fmtN(x.n)}</span></div>`).join('') || '<span class="muted">No email in 7 days.</span>'}</div>
-      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl" title="A floor, not a rate — Apple Mail pre-fetches images, and a reader with images off never registers. Bounced and complained sends are left out.">Opened · 30 days · a floor</div>${(d.engagement || []).slice(0, 6).map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.email_type)}</span><span class="n">${fmtN(x.opened)}/${fmtN(x.sent)}${x.open_rate !== null ? ' · ' + x.open_rate + '%' : ''}</span></div>`).join('') || '<span class="muted">—</span>'}</div>
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl" title="A floor, not a rate — Apple Mail pre-fetches images, and a reader with images off never registers. Bounced and complained sends are left out.">Opened · 30 days · a floor</div>${(d.engagement || []).slice(0, 6).map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.email_type)}</span><span class="n">${fmtN(x.opened)}/${fmtN(x.sent)}${x.open_rate !== null ? ' · ' + x.open_rate + '%' : ''}</span></div>`).join('') || '<span class="muted" style="font-size:13px">No email opened in 30 days.</span>'}</div>
     </section>
     <section class="grid g2">
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Delivery · 7 and 30 days</h2><span class="muted" style="font-size:12px">a rate needs ${fmtN(th.min_sends)} accepted sends</span></div>
         ${deliveryRow('7 days', r7, rE)}${deliveryRow('30 days', r30, rE)}
-        <span class="muted" style="font-size:12px">Accepted = delivered + in flight + bounced + complaints, and the rates divide by it. In flight: Resend has it but hasn't reported delivery, a bounce or a complaint yet${r7 && r7.in_flight ? ` — <span class="n">${fmtN(r7.in_flight)}</span> in 7 days, so the 7-day rates may still rise` : ''}. Failed never reached Resend.</span></div>
+        <details class="more-d" style="margin:0 -18px -16px"><summary>How this is counted</summary><div style="padding:0 18px 16px" class="muted">Accepted = delivered + in flight + bounced + complaints, and the rates divide by it. In flight: Resend has it but hasn't reported delivery, a bounce or a complaint yet${r7 && r7.in_flight ? ` — <span class="n">${fmtN(r7.in_flight)}</span> in 7 days, so the 7-day rates may still rise` : ''}. Failed never reached Resend.</div></details></div>
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Inbound webhooks</h2>
         ${hooks ? (Object.keys(hooks).length ? Object.keys(hooks).map(p => { const hk = hooks[p]; return `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span class="ink2">${esc(HOOK[p] || p)}</span><span>${hk.failing ? pill('bad', fmtN(hk.failed_since_verified) + ' refused since the last good one') : hk.stale ? pill('warn', 'nothing verified in 24h') : pill('good', 'verified ' + agoWord(hk.last_verified_at))}</span></div>${hk.failing && hk.last_failure_reason ? `<span class="dim" style="font-size:12px">${esc(hk.last_failure_reason)}</span>` : ''}`; }).join('') : '<span class="muted" style="font-size:13px">No webhook has called in yet.</span>') : unknownV(mhE)}</div>
     </section>
@@ -3087,7 +3093,7 @@ function chanCell(ch){
 // Push & alerts (notifications.issue_texts) and the client page's Texts
 // (client_detail.issue_texts).
 function issueTextsHtml(it, err, fleet){
-  const hd = right => `<div class="ch" style="padding-bottom:12px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;min-width:0"><h2>Issue texts</h2><span class="muted" style="font-size:12.5px">to an issue's assignee · tried up to 4 times, then the owner is told by push and email</span></div><span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${right}</span></div>`;
+  const hd = right => `<div class="ch" style="padding-bottom:12px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;min-width:0"><h2 title="The text to an issue's assignee: tried up to 4 times, then the owner is told by push and email.">Issue texts</h2></div><span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${right}</span></div>`;
   if(err) return hd(unknownV(err)) + `<div class="cb"><span class="muted" style="font-size:13px">Couldn't read what happened to the issue texts — unknown, not none.</span></div>`;
   if(!it) return hd('') + `<div class="cb"><span class="muted" style="font-size:13px">Not recorded on this database yet.</span></div>`;
   const rows = it.recent || [];
@@ -3134,9 +3140,9 @@ function opsPush(d, mh){
         ${auto == null ? unknownV(mhE) : (auto.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px"><span>${clientLink(c.restaurant_id, c.restaurant || '#' + c.restaurant_id)} <span class="dim">${c.alerts_in_window != null ? fmtN(c.alerts_in_window) + ' alerts in an hour' : ''}${c.until_at || c.until ? ' · until ' + fmtDT(c.until_at || c.until) : ''}</span></span><button class="btn s w" onclick="_opsFresh=true;stormLift(${c.restaurant_id},'${jsq(c.restaurant || '#' + c.restaurant_id)}')">Lift</button></div>`).join('') || '<span class="muted" style="font-size:13px">None on.</span>')}
         <span class="muted" style="font-size:12px;margin-top:4px">Manual · alerts a day</span>
         ${d.caps.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px"><span>${clientLink(c.restaurant_id, c.restaurant)}</span><span><span class="n">${c.cap}</span><span class="dim">/day</span> <button class="lnk w" onclick="capOpen(${c.restaurant_id},'${jsq(c.restaurant || '')}',${c.cap})">Change</button></span></div>`).join('') || '<span class="muted" style="font-size:13px">No manual caps — every alert sends. Cap one from its client page.</span>'}</div>
-      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl">Alerts by type · 7 days</div>${d.by_type.slice(0, 7).map(x => `<div style="display:grid;grid-template-columns:minmax(0,1fr) 90px 40px;gap:10px;align-items:center;font-size:12.5px"><span class="ink2" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.alert_type)}</span><span class="bar"><i style="width:${Math.round(x.n / mx * 100)}%;background:var(--ember2)"></i></span><span class="n" style="text-align:right">${fmtN(x.n)}</span></div>`).join('') || '<span class="muted">—</span>'}
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl">Alerts by type · 7 days</div>${d.by_type.slice(0, 7).map(x => `<div style="display:grid;grid-template-columns:minmax(0,1fr) 90px 40px;gap:10px;align-items:center;font-size:12.5px"><span class="ink2" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.alert_type)}</span><span class="bar"><i style="width:${Math.round(x.n / mx * 100)}%;background:var(--ember2)"></i></span><span class="n" style="text-align:right">${fmtN(x.n)}</span></div>`).join('') || '<span class="muted" style="font-size:13px">No alert fired in 7 days.</span>'}
         ${ob ? `<div class="lbl" style="margin-top:6px">Push outbox</div><span class="n" style="font-size:12.5px">${Object.keys(ob.by_state || {}).map(s => esc(s) + ' ' + fmtN(ob.by_state[s])).join(' · ') || 'empty'}${ob.failed_24h ? ' · <span style="color:var(--red-t)">' + fmtN(ob.failed_24h) + ' failed · 24h</span>' : ''}${ob.oldest_pending_at ? ' · oldest waiting ' + ago(ob.oldest_pending_at) : ''}</span>` : ''}</div>
-      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl" title="${esc(d.engagement_basis || 'opens ÷ pushes delivered, per device, last 30 days')}">Opened · 30 days · of delivered pushes</div>${(d.engagement || []).slice(0, 6).map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.alert_type)}</span><span class="n">${fmtN(x.opened)}/${fmtN(x.delivered)}${x.open_rate !== null ? ' · ' + x.open_rate + '%' : ' · none delivered'}</span></div>`).join('') || '<span class="muted">—</span>'}
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl" title="${esc(d.engagement_basis || 'opens ÷ pushes delivered, per device, last 30 days')}">Opened · 30 days · of delivered pushes</div>${(d.engagement || []).slice(0, 6).map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.alert_type)}</span><span class="n">${fmtN(x.opened)}/${fmtN(x.delivered)}${x.open_rate !== null ? ' · ' + x.open_rate + '%' : ' · none delivered'}</span></div>`).join('') || '<span class="muted" style="font-size:13px">No push delivered in 30 days.</span>'}
         ${(d.ignored || []).length ? `<div class="lbl" style="margin-top:6px;color:var(--amber-t)" title="20+ delivered in 30 days, none opened — a candidate for the morning brief instead of a push">Nobody opens these</div>${d.ignored.map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.alert_type)}</span><span class="n">${fmtN(x.delivered)} delivered</span></div>`).join('')}` : ''}</div>
     </section>
     <section class="card" style="overflow:hidden">${issueTextsHtml(d.issue_texts, itE, true)}</section>
@@ -3176,7 +3182,7 @@ function opsAI(d){
   V().innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">Windows are UTC days, like the ceilings.</span><div class="seg">${[1, 7, 30, 90].map(n => `<button class="${_aid === n ? 'on' : ''}" onclick="_aid=${n};route()">${n === 1 ? 'Today' : n + ' days'}</button>`).join('')}</div></div>
     <div class="card" style="padding:4px 18px 8px"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:14px"><div style="display:flex;align-items:center;gap:10px"><h2>AI health</h2>${pill(hTone, esc({operational:'Operational', degraded:'Degraded', outage:'Outage'}[h.status] || 'Unknown'))}</div>
-      <span style="display:flex;gap:8px;align-items:center">${h.reason ? `<span class="muted" style="font-size:12.5px">${esc(h.reason)}</span>` : ''}${Object.keys(hv).some(v => hv[v].breaker !== 'closed') ? `<button class="btn s w" onclick="aiResetBreaker('','every provider')">Reset all</button>` : ''}${h.emergency_stop ? `${pill('bad', 'Emergency stop on')}<button class="btn s w" onclick="aiEmergencyStop(false)">Clear stop</button>` : `<button class="btn s g w" onclick="aiEmergencyStop(true)">Stop all AI</button>`}</span></div>
+      <span style="display:flex;gap:8px;align-items:center">${h.reason ? `<span class="muted" style="font-size:12.5px">${esc(h.reason)}</span>` : ''}${Object.keys(hv).some(v => hv[v].breaker !== 'closed') ? `<button class="btn s w" onclick="aiResetBreaker('','every provider')">Reset all</button>` : ''}${h.emergency_stop ? `${pill('bad', 'Emergency stop on')}<button class="btn s w" onclick="aiEmergencyStop(false)">Clear stop</button>` : `<button class="btn s d w" onclick="aiEmergencyStop(true)">Stop all AI</button>`}</span></div>
       ${h.fleet_brake ? `<div class="warnline" style="margin:8px 0;display:flex;justify-content:space-between;gap:10px;align-items:center"><span>${ico('alert','xs')} Fleet brake on — background AI paused (${esc(h.fleet_brake.all ? 'every unattended call' : [(h.fleet_brake.actions || []).join(', '), (h.fleet_brake.restaurants || []).length ? (h.fleet_brake.restaurants.length + ' restaurant(s)') : ''].filter(Boolean).join(' · '))})${h.fleet_brake.detail ? ' · ' + esc(h.fleet_brake.detail) : ''}</span><button class="btn s w" onclick="aiReleaseBrake()">Release</button></div>` : ''}
       <div class="lst">${vendors || `<div class="empty">${h.status ? 'No provider recorded.' : 'AI health could not be read.'}</div>`}</div>
       ${h.last_auth_error ? `<div class="warnline" style="margin:8px 0">${ico('alert','xs')} Last credential failure: ${esc(h.last_auth_error.vendor || '')} — ${esc(h.last_auth_error.event || '')}${h.last_auth_error.detail ? ' · ' + esc(String(h.last_auth_error.detail).slice(0, 140)) : ''} · ${fmtDT(h.last_auth_error.created_at || h.last_auth_error.at)}</div>` : ''}</div>
@@ -3191,7 +3197,8 @@ function opsAI(d){
     <section class="split">
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Ceilings</h2><span class="muted" style="font-size:12px">warn at ${fmtN(lim.warn_pct)}%</span></div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">${meter('Paying clients · AI this month', b.global_month) || unknownV('No ceiling read')}${meter('All trials · AI today', b.trial_pool_day)}${meter('All trials · AI this month', b.trial_pool_month)}</div>
-        <span class="muted" style="font-size:12px">Google Places this month, fleet-wide: <span class="n">${fmtUSD((b.places_month || {}).spend, 2)}</span> — each client has its own Places ceiling. Paying and past-due clients share the paying pool. Trial and unpaid accounts spend against their own AI ceilings, never the paying pool — and trials also share one ceiling between them.</span>
+        <span class="muted" style="font-size:12.5px">Google Places this month, fleet-wide: <span class="n">${fmtUSD((b.places_month || {}).spend, 2)}</span></span>
+        <details class="more-d" style="margin:0 -18px"><summary>How the ceilings work</summary><div style="padding:0 18px 12px" class="muted">Each client has its own Places ceiling. Paying and past-due clients share the paying pool. Trial and unpaid accounts spend against their own AI ceilings, never the paying pool — and trials also share one ceiling between them.</div></details>
         ${lim.paid ? `<div class="kv" style="grid-template-columns:120px 1fr;font-size:12.5px"><span class="k">Paid · past due</span><span class="n">${fmtUSD(lim.paid.day, 2)}/day · ${fmtUSD(lim.paid.month, 2)}/month</span><span class="k">Trial</span><span class="n">${fmtUSD(lim.trial.day, 2)}/day · ${fmtUSD(lim.trial.month, 2)}/month</span>${lim.trial_pool ? `<span class="k">All trials</span><span class="n">${lim.trial_pool.day ? fmtUSD(lim.trial_pool.day, 2) + '/day' : 'no daily ceiling'} · ${lim.trial_pool.month ? fmtUSD(lim.trial_pool.month, 2) + '/month' : 'no monthly ceiling'} together</span>` : ''}<span class="k">Unpaid</span><span class="n">${fmtUSD(lim.unpaid.day, 2)}/day · ${fmtUSD(lim.unpaid.month, 2)}/month</span><span class="k">Places</span><span class="n">${fmtUSD(lim.places.day, 2)}/day · ${fmtUSD(lim.places.month, 2)}/month per client</span></div>` : ''}</div>
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Clients near a ceiling</h2>
         ${watch.map(w => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span>${clientLink(w.restaurant_id, w.name || '#' + w.restaurant_id)} <span class="dim">${esc(SCOPE[w.scope] || w.scope)} · ${esc(w.tier)}</span></span><span class="n" style="color:${w.over ? 'var(--red-t)' : 'var(--amber-t)'}">${fmtUSD(w.spend, 2)} of ${fmtUSD(w.budget, 2)} · ${w.pct}%${w.over ? ' · stopped' : ''}</span></div>`).join('') || '<span class="muted" style="font-size:13px">Every client is under 80% of each ceiling.</span>'}</div>
@@ -3372,24 +3379,27 @@ function rpFilter(k, v){ _rp[k] = v; _rp.after = []; _rp.open = null; opsRender(
 function rpNext(c){ _rp.after.push(c); opsRender(); }
 function rpPrev(){ _rp.after.pop(); opsRender(); }
 function rpSearch(ev){ if(ev && ev.key !== 'Enter') return; var el = $('rp-q'); rpFilter('q', el ? el.value : ''); }
+// The fleet strip (admin audit 10/27/26 V01): the six figures the fleet rules
+// page on, in one strip that wraps by width; the other eight under More. No
+// cell links — they would only reopen this page.
 function rpStrip(f){
   var b = f.breaker || {}, used = f.backfill_cap ? fmtN(f.backfill_used) + ' / ' + fmtN(f.backfill_cap) : fmtN(f.backfill_used || 0);
-  return '<section class="card strip">'
-    + stripCell('#operations/rpower', 'plug', 'neu', 'Connected', fmtN(f.connected || 0), 'live stores')
-    + stripCell('#operations/rpower', 'alert', f.failing ? 'bad' : 'good', 'Failing', rpPct(f.failing_share), fmtN(f.failing || 0) + ' stores')
-    + stripCell('#operations/rpower', 'key',f.auth_failed ? 'bad' : 'good', 'Token refused', fmtN(f.auth_failed || 0), fmtN(f.auth_buckets || 0) + ' tokens')
-    + stripCell('#operations/rpower', 'clock', f.stale_48h ? 'warn' : 'good', 'Stale 48h+', fmtN(f.stale_48h || 0), 'archive or labor')
-    + stripCell('#operations/rpower', 'gauge', 'neu', 'Coverage p50', rpPct(f.coverage_p50), '90 days, p10 ' + rpPct(f.coverage_p10))
-    + stripCell('#operations/rpower', 'alert', f.stores_with_gaps ? 'warn' : 'good', 'Archive gaps', fmtN(f.stores_with_gaps || 0), 'stores, 14 days')
-    + stripCell('#operations/rpower', 'alert', (f.recon_nights_7d || f.pay_gap_nights_7d) ? 'warn' : 'good', 'Recon / pay gaps', fmtN(f.recon_nights_7d || 0) + ' / ' + fmtN(f.pay_gap_nights_7d || 0), 'nights, 7 days')
-    + stripCell('#operations/rpower', 'gauge', (f.s429_share > 0.01 || f.skipped_share > 0.05) ? 'warn' : 'good', 'Requests 24h', fmtN(f.requests_24h || 0), '429 ' + rpPct(f.s429_share) + ' · paused ' + rpPct(f.skipped_share))
-    + stripCell('#operations/rpower', 'refresh', b.state === 'closed' ? 'good' : 'bad', 'Breaker', esc(b.state || 'unknown'), b.state === 'closed' ? 'requests flowing' : esc(b.reason || ''))
-    + stripCell('#operations/rpower', 'clock', (f.queue_failed_24h || f.queue_expired_24h) ? 'warn' : 'good', 'Queue failed / expired', fmtN(f.queue_failed_24h || 0) + ' / ' + fmtN(f.queue_expired_24h || 0), 'RPOWER rows, 24h')
-    + stripCell('#operations/rpower', 'plug', 'neu', 'Backfill slots', used, 'in use')
+  var top = stripCell('', 'alert', f.failing ? 'bad' : 'good', 'Failing', rpPct(f.failing_share), fmtN(f.failing || 0) + ' stores')
+    + stripCell('', 'key', f.auth_failed ? 'bad' : 'good', 'Token refused', fmtN(f.auth_failed || 0), fmtN(f.auth_buckets || 0) + ' tokens')
+    + stripCell('', 'clock', f.stale_48h ? 'warn' : 'good', 'Stale 48h+', fmtN(f.stale_48h || 0), 'archive or labor')
+    + stripCell('', 'alert', f.stores_with_gaps ? 'warn' : 'good', 'Archive gaps', fmtN(f.stores_with_gaps || 0), 'stores, 14 days')
+    + stripCell('', 'clock', (f.queue_failed_24h || f.queue_expired_24h) ? 'warn' : 'good', 'Queue failed / expired', fmtN(f.queue_failed_24h || 0) + ' / ' + fmtN(f.queue_expired_24h || 0), 'RPOWER rows, 24h')
+    + stripCell('', 'refresh', b.state === 'closed' ? 'good' : 'bad', 'Breaker', esc(b.state || 'unknown'), b.state === 'closed' ? 'requests flowing' : esc(b.reason || ''));
+  var more = stripCell('', 'plug', 'neu', 'Connected', fmtN(f.connected || 0), 'live stores')
+    + stripCell('', 'gauge', 'neu', 'Coverage p50', rpPct(f.coverage_p50), '90 days, p10 ' + rpPct(f.coverage_p10))
+    + stripCell('', 'alert', (f.recon_nights_7d || f.pay_gap_nights_7d) ? 'warn' : 'good', 'Recon / pay gaps', fmtN(f.recon_nights_7d || 0) + ' / ' + fmtN(f.pay_gap_nights_7d || 0), 'nights, 7 days')
+    + stripCell('', 'gauge', (f.s429_share > 0.01 || f.skipped_share > 0.05) ? 'warn' : 'good', 'Requests 24h', fmtN(f.requests_24h || 0), '429 ' + rpPct(f.s429_share) + ' · paused ' + rpPct(f.skipped_share))
+    + stripCell('', 'plug', 'neu', 'Backfill slots', used, 'in use')
     + rpBudgetCell(f.capacity || {})
-    + stripCell('#operations/rpower', 'card', 'neu', 'Unnamed sales types', rpPct(f.unknown_sales_share_7d), '$' + fmtN(Math.round(f.unknown_sales_7d || 0)) + ', 7 days')
-    + stripCell('#operations/rpower', 'check', 'neu', 'Recipe coverage p50', f.recipe_coverage_p50 == null ? '—' : (Math.round(f.recipe_coverage_p50 * 10) / 10) + '%', fmtN(f.recipe_coverage_stores || 0) + ' stores measured')
-    + '</section>';
+    + stripCell('', 'card', 'neu', 'Unnamed sales types', rpPct(f.unknown_sales_share_7d), '$' + fmtN(Math.round(f.unknown_sales_7d || 0)) + ', 7 days')
+    + stripCell('', 'check', 'neu', 'Recipe coverage p50', f.recipe_coverage_p50 == null ? '—' : (Math.round(f.recipe_coverage_p50 * 10) / 10) + '%', fmtN(f.recipe_coverage_stores || 0) + ' stores measured');
+  return '<section class="card strip">' + top + '</section>'
+    + '<details class="card"><summary>More fleet figures · <span class="n">8</span></summary><div class="strip" style="border-top:1px solid var(--line)">' + more + '</div></details>';
 }
 // The request budget by lane (pos_capacity): the nightly lane's use of its
 // share over 24 hours and whether bulk work is held; "—" where not deployed.
@@ -3397,7 +3407,7 @@ function rpBudgetCell(c){
   var u = (c.utilisation || {}).lanes || {}, n = u.nightly || {}, st = c.state || {};
   var tone = st.shed_bulk ? 'bad' : (n.pct != null && n.pct > 85 ? 'warn' : (n.pct == null ? 'neu' : 'good'));
   var sub = st.shed_bulk ? 'bulk held tonight' : (n.peak_hour_pct ? 'peak hour ' + n.peak_hour_pct + '%' : 'of the nightly share, 24h');
-  return stripCell('#operations/rpower', 'gauge', tone, 'Nightly budget', n.pct == null ? '—' : n.pct + '%', sub);
+  return stripCell('', 'gauge', tone, 'Nightly budget', n.pct == null ? '—' : n.pct + '%', sub);
 }
 function rpRow(r){
   var t = r.type_states || {}, open = _rp.open === r.restaurant_id;
@@ -3406,13 +3416,17 @@ function rpRow(r){
     + '<span style="width:120px;flex-shrink:0">' + pill(RP_TONE[r.health] || 'neu', RP_WORD[r.health] || esc(r.health), false) + '</span>'
     + '<div class="tt"><b>' + clientLink(r.restaurant_id, r.name || ('#' + r.restaurant_id)) + (r.is_demo ? ' <span class="chip">demo</span>' : '') + '</b>'
     + '<span>' + (bad.length ? 'Behind: ' + esc(bad.join(', ')) + ' · ' : '') + esc((r.reasons || [])[0] || 'Every data type current') + '</span></div>'
-    + '<span class="n muted" style="width:90px;text-align:right;font-size:12.5px" title="last labor pull · last archived night">' + (r.last_labor_ok ? ago(r.last_labor_ok) : '—') + ' · ' + (r.last_archive_night ? esc(mdy(new Date(r.last_archive_night + 'T12:00:00'))) : '—') + '</span>'
-    + '<span class="n" style="width:64px;text-align:right" title="settled coverage, 90 days">' + rpPct(r.coverage_90d) + '</span>'
-    + '<span class="n" style="width:44px;text-align:right;' + (r.gaps_14d ? 'color:var(--red-t)' : '') + '" title="nights missing, 14 days">' + fmtN(r.gaps_14d || 0) + '</span>'
-    + '<span class="n muted" style="width:80px;text-align:right;font-size:12.5px" title="requests · errors, 24h">' + fmtN(r.req_24h || 0) + ' · ' + fmtN(r.err_24h || 0) + '</span>'
-    + '<span style="display:flex;gap:6px"><button class="cbtn btn s w" onclick="event.stopPropagation();rpowerOpen(' + r.restaurant_id + ',\'' + jsq(r.name || '') + '\')">Token &amp; sync</button></span>'
+    + '<span class="n muted" style="width:90px;flex-shrink:0;text-align:right;font-size:12.5px" title="last labor pull · last archived night">' + (r.last_labor_ok ? ago(r.last_labor_ok) : '—') + ' · ' + (r.last_archive_night ? esc(mdy(new Date(r.last_archive_night + 'T12:00:00'))) : '—') + '</span>'
+    + '<span class="n" style="width:64px;flex-shrink:0;text-align:right" title="settled coverage, 90 days">' + rpPct(r.coverage_90d) + '</span>'
+    + '<span class="n" style="width:44px;flex-shrink:0;text-align:right;' + (r.gaps_14d ? 'color:var(--red-t)' : '') + '" title="nights missing, 14 days">' + fmtN(r.gaps_14d || 0) + '</span>'
+    + '<span class="n muted" style="width:80px;flex-shrink:0;text-align:right;font-size:12.5px" title="requests · errors, 24h">' + fmtN(r.req_24h || 0) + ' · ' + fmtN(r.err_24h || 0) + '</span>'
+    + '<span style="display:flex;gap:6px;width:110px;flex-shrink:0;justify-content:flex-end"><button class="cbtn btn s w" onclick="event.stopPropagation();rpowerOpen(' + r.restaurant_id + ',\'' + jsq(r.name || '') + '\')">Token &amp; sync</button></span>'
     + '</div>' + (open ? '<div id="rp-drawer" style="padding:0 18px 16px;border-bottom:1px solid var(--line)">' + skel(3) + '</div>' : '');
 }
+// The store list's column labels (admin audit 10/27/26 V30), the widths rpRow uses.
+var RP_HEAD = '<div class="lbl" style="display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line)"><span style="width:120px;flex-shrink:0">Health</span><span style="flex:1;min-width:0">Store</span>'
+  + '<span style="width:90px;flex-shrink:0;text-align:right" title="last labor pull · last archived night">Pull · night</span><span style="width:64px;flex-shrink:0;text-align:right" title="settled coverage, 90 days">Coverage</span>'
+  + '<span style="width:44px;flex-shrink:0;text-align:right" title="nights missing, 14 days">Gaps</span><span style="width:80px;flex-shrink:0;text-align:right" title="requests · errors, 24h">Req · err</span><span style="width:110px;flex-shrink:0"></span></div>';
 function rpOpen(rid){
   _rp.open = _rp.open === rid ? null : rid; opsRender();
 }
@@ -3457,7 +3471,7 @@ function opsRpower(){
       + '<div class="filters" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select onchange="rpFilter(\'type\',this.value)">' + types.map(function(t){ return '<option value="' + esc(t[0]) + '"' + (_rp.type === t[0] ? ' selected' : '') + '>' + esc(t[1]) + '</option>'; }).join('') + '</select>'
       + '<label style="font-size:12.5px;display:flex;gap:6px;align-items:center"><input type="checkbox"' + (_rp.anomaly ? ' checked' : '') + ' onchange="rpFilter(\'anomaly\',this.checked)"> Has an anomaly</label>'
       + '<input id="rp-q" placeholder="Store, id or RPOWER store number" value="' + esc(_rp.q) + '" onkeydown="rpSearch(event)" style="min-width:220px"><button class="cbtn btn s" onclick="rpSearch()">Search</button></div>'
-      + '<section class="card" style="overflow:hidden"><div class="lst">' + ((d.rows || []).map(rpRow).join('') || '<div class="empty">No RPOWER store matches.</div>') + '</div>'
+      + '<section class="card" style="overflow:hidden">' + ((d.rows || []).length ? RP_HEAD : '') + '<div class="lst">' + ((d.rows || []).map(rpRow).join('') || '<div class="empty">No RPOWER store matches.</div>') + '</div>'
       + '<div class="pager"><span><span class="n">' + fmtN(d.total || 0) + '</span> stores' + (_rp.after.length ? ' · page ' + (_rp.after.length + 1) : '') + '</span><span>' + (_rp.after.length ? '<button class="cbtn btn s" onclick="rpPrev()">Previous</button>' : '') + (d.next ? '<button class="cbtn btn s" onclick="rpNext(\'' + jsq(d.next) + '\')">Next</button>' : '') + '</span></div></section>'
       + '<div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px"><h2>Queue by kind</h2><span class="muted" style="font-size:12.5px">every kind, 24 hours — failed and expired rows alert past 2%</span></div></div><div style="border-top:1px solid var(--line)">' + rpQueueKinds(f) + '</div></div>';
     V().innerHTML = html;
@@ -3798,7 +3812,7 @@ async function incidentResolve(id, title){
 let _aud = {q: '', rows: [], next: null}, _ref = {rows: [], next: null};
 async function engAudit(){
   V().innerHTML = `
-    <div class="filters" style="flex-wrap:wrap"><input id="au-rid" placeholder="Client ID" style="min-width:90px;width:90px"><input id="au-actor" placeholder="Who" style="min-width:110px;width:110px"><input id="au-action" placeholder="Action starts with" style="min-width:150px;width:150px"><select id="au-result" style="height:28px;padding:0 8px"><option value="">any result</option><option>ok</option><option>refused</option><option>error</option><option>failed</option></select><label class="switch"><input type="checkbox" id="au-all"><i></i>request rows</label><button class="btn s" onclick="audLoad(true)">Show</button></div>
+    <div class="filters" style="flex-wrap:wrap"><input id="au-rid" placeholder="Client ID" style="min-width:90px;width:90px"><input id="au-actor" placeholder="Who" style="min-width:110px;width:110px"><input id="au-action" placeholder="Action starts with" style="min-width:150px;width:150px"><select id="au-result"><option value="">any result</option><option>ok</option><option>refused</option><option>error</option><option>failed</option></select><label class="switch"><input type="checkbox" id="au-all"><i></i>request rows</label><button class="btn s" onclick="audLoad(true)">Show</button></div>
     <div class="card" style="overflow:hidden"><div class="lst" id="aud-list"><div class="sk"></div></div><div id="aud-more"></div></div>
     <details class="card"><summary>Refused and anonymous attempts · 30 days</summary><div class="cb"><div id="ref-list"></div><div id="ref-more"></div></div></details>`;
   await audLoad(true); refLoad(true);
