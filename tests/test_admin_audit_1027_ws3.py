@@ -220,7 +220,7 @@ VERDICT_FNS = ("okRes", "errText", "parseTs", "mdy", "fmtT", "fmtDT", "durMin", 
 def _verdict_js(page):
     fns = tuple(n for n in VERDICT_FNS if n != "esc_")
     return _page_js(page, fns, ("esc", "fmtN", "SYS_COLOR", "SYS_TEXT", "OPS_SYSTEMS", "OPS_STATE_TTL", "HEART",
-                                "RING_TONE"))
+                                "RING_TONE", "RING_DOT"))   # RING_DOT: the ring legend's .dot (round 2, V23)
 
 
 def test_the_systems_are_the_servers_and_a_failed_or_missing_reading_is_unknown(page):

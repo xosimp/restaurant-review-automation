@@ -395,3 +395,26 @@ def test_a_padded_card_is_one_class():
     assert ".pad{padding:16px 18px;display:flex;flex-direction:column;gap:12px}" in CSS
     assert "padding:16px 18px;display:flex;flex-direction:column;gap:1" not in PAGE[PAGE.index("</style>"):]
     assert PAGE.count('class="card pad"') >= 45
+
+
+def test_one_dot_one_pill_and_the_house_check_disc():
+    body = re.sub(r"//[^\n]*", "", PAGE[PAGE.index("</style>"):])     # code, not comments
+    assert 'class="b ' not in body                                     # .b folded into .pill
+    assert "●" not in body                                             # no glyph dots
+    assert not re.search(r'<i style="[^"]*border-radius:50%', body)    # no inline dots
+    assert "✓" not in body                                             # checks are the disc
+    for rule in (".dot.info{", ".dot.run{", ".dot.ring{", ".pill.ok", ".pill.off", ".pill.info", ".pill.ember",
+                 ".cv-ok{background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%)",
+                 ".cv-warn::before{content:'!'}", ".cv-bad{"):
+        assert rule in CSS, rule
+    root = CSS[CSS.index(":root{"):CSS.index("}", CSS.index(":root{"))]
+    for tok in ("--hb-pop:#3a9f68", "--hb-wpop:#d29a2c", "--hb-bpop:#c9443f"):   # the dark values (dark only)
+        assert tok in root, tok
+    assert '<span class="cv-ok"' in _fn("billingHealth") and '<span class="cv-ok"' in _fn("cOverview")
+    js = STUBS + _decl("HEALTH") + _decl("hb") + _decl("INT") + _decl("intb") + _decl("RING_DOT") + r"""
+    console.log(JSON.stringify([hb('critical'), intb('error', 'Error'), RING_DOT.unk]));
+    """
+    h, i, unk = _node(js)
+    assert h == '<span class="pill bad"><i></i>Critical</span>' and i == '<span class="pill bad"><i></i>Error</span>'
+    assert unk == "off"
+    assert 'class="dot ring ${JOB_DOT[j.state]' in _fn("jobRow") and 'class="dot ring ${c}"' in _fn("changesList")

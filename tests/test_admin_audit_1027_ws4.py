@@ -329,7 +329,7 @@ def test_times_read_the_house_way():
 def test_billing_health_is_one_checked_line_when_clean():
     bh = _fn("billingHealth")
     assert "clean.push('Stripe reconciled')" in bh and "clean.push('nobody signed and unpaid')" in bh
-    assert '<span class="ok">✓</span>' in bh
+    assert '<span class="cv-ok"' in bh                     # the house check disc (round 2, V23)
 
 
 def test_a_job_row_is_one_line_and_says_what_it_does_when_opened():
