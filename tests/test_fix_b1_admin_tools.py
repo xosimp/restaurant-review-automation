@@ -339,7 +339,10 @@ def test_staff_note_routes_add_and_say_what_they_removed(admin, db_path):
     assert first.get_json()["appended"] is False and second.get_json()["appended"] is True
     assert second.get_json()["notes"] == "mornings only; no Sundays"
     gone = _post(admin, f"/admin/staff-notes/{second.get_json()['id']}/delete").get_json()
+    parts = gone["deleted"].pop("parts")
     assert gone["deleted"] == {"employee_name": "Maria", "notes": "mornings only; no Sundays", "restaurant_id": rid}
+    # Each constraint as stored, for an Undo that keeps its end dates (admin audit 10/27/26 W15-h).
+    assert [p["text"] for p in parts] == ["mornings only", "no Sundays"]
     assert _post(admin, f"/admin/staff-notes/{second.get_json()['id']}/delete").status_code == 404
     conn = models.get_conn(db_path)
     rows = conn.execute("SELECT event_type, restaurant_id, actor, before_json, after_json FROM admin_events "

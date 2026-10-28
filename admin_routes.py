@@ -592,39 +592,88 @@ def client_data_page(restaurant_id, current_user):
 def save_staff_note_route(restaurant_id, current_user):
     """Add a scheduling constraint. A second one for the same person is
     added to the first, never written over it (models.save_staff_note,
-    fix round #142). {ok, id, notes (the person's full text), appended}."""
+    fix round #142). {ok, id, notes (the person's full text), appended}.
+
+    A form post, or JSON. The Undo of a removal posts JSON {employee_name,
+    notes, parts}: `parts` is the removed note's constraints exactly as the
+    delete returned them, put back verbatim — each keeps its own end date
+    (admin audit 10/27/26 W15-h) — after the same checks as a new note
+    (name and notes, the restaurant, each part's text and dates)."""
     from models import save_staff_note, _iso_or_none
-    name  = " ".join((request.form.get("employee_name") or "").split())[:80]
-    notes = (request.form.get("notes") or "").strip()[:500]
+    src = (request.get_json(silent=True) if request.is_json else None) or request.form
+    name  = " ".join(str(src.get("employee_name") or "").split())[:80]
+    notes = str(src.get("notes") or "").strip()[:500]
     if not name or not notes:
         return jsonify(ok=False, error="Name and notes required"), 400
     if not get_restaurant(restaurant_id):
         return jsonify(ok=False, error="Restaurant not found"), 404
     # An optional end date (memory audit 9/29/26): a constraint that says
     # "until 6/1" in its own words ends then without one.
-    ends = (request.form.get("expires_on") or "").strip()
+    ends = str(src.get("expires_on") or "").strip()
     if ends and not _iso_or_none(ends):
         return jsonify(ok=False, error="That end date isn't a date — use M/D/YY."), 400
+    parts, err = _staff_note_parts_in(src.get("parts") if request.is_json else None)
+    if err:
+        return jsonify(ok=False, error=err), 400
     result = save_staff_note(restaurant_id, name, notes, expires_on=ends or None,
-                             updated_by=(current_user.get("username") or current_user.get("email") or "admin"))
-    _record_staff_note(restaurant_id, current_user, "staff_note.saved", name,
-                       {"added": notes, "now": result["notes"], "appended": result["appended"]})
-    return jsonify(ok=True, **result)
+                             updated_by=(current_user.get("username") or current_user.get("email") or "admin"),
+                             restore_parts=parts)
+    detail = {"added": notes, "now": result["notes"], "appended": result["appended"]}
+    if parts:
+        detail["restored_parts"] = len(parts)
+    _record_staff_note(restaurant_id, current_user, "staff_note.saved", name, detail)
+    return jsonify(ok=True, restored=bool(parts), **result)
+
+
+STAFF_NOTE_MAX_PARTS = 50
+
+
+def _staff_note_parts_in(raw):
+    """(parts, error) for an Undo's `parts`: None (absent or empty) or a
+    list of {text, noted, expires, confirmed, by} — each text 1-500
+    characters, each date ISO or M/D/YY (the same rule as a new note's end
+    date), at most STAFF_NOTE_MAX_PARTS. Anything else is refused whole."""
+    from models import _iso_or_none
+    if raw in (None, "", []):
+        return None, None
+    if not isinstance(raw, list) or len(raw) > STAFF_NOTE_MAX_PARTS:
+        return None, "parts must be a list of the note's constraints."
+    out = []
+    for p in raw:
+        if not isinstance(p, dict):
+            return None, "parts must be a list of the note's constraints."
+        text = str(p.get("text") or "").strip()
+        if not text or len(text) > 500:
+            return None, "Every constraint needs its text (500 characters at most)."
+        part = {"text": text}
+        for k in ("noted", "expires", "confirmed"):
+            v = str(p.get(k) or "").strip()
+            if v and not _iso_or_none(v):
+                return None, "That end date isn't a date — use M/D/YY." if k == "expires" else \
+                    f"That {k} date isn't a date — use M/D/YY."
+            part[k] = _iso_or_none(v) if v else None
+        part["by"] = str(p.get("by") or "").strip()[:120] or None
+        out.append(part)
+    return out, None
 
 @admin_bp.route("/admin/staff-notes/<int:note_id>/delete", methods=["POST"])
 @admin_required
 def delete_staff_note_route(note_id, current_user):
     """Remove one person's constraints. Returns what was removed, so the
     page can offer an undo, and records it with its restaurant and text —
-    the audit row said neither (fix round #142)."""
+    the audit row said neither (fix round #142). `deleted.parts` is each
+    constraint as stored, with its own noted / end date (or null), which the
+    Undo posts back (admin audit 10/27/26 W15-h)."""
     from models import delete_staff_note
     deleted = delete_staff_note(note_id)
     if not deleted:
         return jsonify(ok=False, error="That constraint was already removed."), 404
     _record_staff_note(deleted["restaurant_id"], current_user, "staff_note.removed", deleted["employee_name"],
-                       {"removed": deleted["notes"]}, before={"notes": deleted["notes"]}, after={"notes": None})
+                       {"removed": deleted["notes"]}, before={"notes": deleted["notes"],
+                                                               "parts": deleted.get("parts")},
+                       after={"notes": None})
     return jsonify(ok=True, deleted={"employee_name": deleted["employee_name"], "notes": deleted["notes"],
-                                     "restaurant_id": deleted["restaurant_id"]})
+                                     "restaurant_id": deleted["restaurant_id"], "parts": deleted.get("parts")})
 
 
 def _record_staff_note(restaurant_id, current_user, event, employee_name, detail, before=None, after=None):

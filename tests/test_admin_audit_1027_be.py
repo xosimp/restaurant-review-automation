@@ -249,3 +249,59 @@ def test_o9_slim_fleet_rows_carry_freshness_for_the_data_cell(db_path):
     assert set(f) == {"pos_state", "reviews", "pos"}
     assert f["reviews"] and f["reviews"].endswith("Z"), "the review fetch, as the console's Z stamp"
     assert isinstance(f["pos_state"], dict) and f["pos_state"]["state"] == "not_connected" and f["pos"] is None
+
+
+# ── W15-h contract 6: a staff-note Undo puts back every end date ─────────────
+
+def test_w15h_the_delete_returns_parts_and_the_undo_restores_them_verbatim(app, db_path):
+    rid = _rid(db_path, "Note Grill")
+    c, _uid = _admin(app, db_path)
+    a = c.post(f"/admin/staff-notes/{rid}", data={"employee_name": "Maria G", "notes": "mornings only",
+                                                  "expires_on": "12/1/26"}, headers={"X-CSRF": CSRF}).get_json()
+    c.post(f"/admin/staff-notes/{rid}", data={"employee_name": "Maria G", "notes": "no Sundays",
+                                              "expires_on": "1/15/27"}, headers={"X-CSRF": CSRF})
+    d = _post(c, f"/admin/staff-notes/{a['id']}/delete").get_json()
+    gone = d["deleted"]
+    assert gone["restaurant_id"] == rid and gone["employee_name"] == "Maria G"
+    assert [(p["text"], p["expires"]) for p in gone["parts"]] == [("mornings only", "2026-12-01"),
+                                                                  ("no Sundays", "2027-01-15")]
+    assert models.get_staff_notes(rid, db_path=db_path) == []
+    # The Undo: {employee_name, notes, parts} as JSON.
+    r = _post(c, f"/admin/staff-notes/{rid}", {"employee_name": gone["employee_name"], "notes": gone["notes"],
+                                               "parts": gone["parts"]})
+    out = r.get_json()
+    assert r.status_code == 200 and out["ok"] and out["restored"] is True
+    back = models.get_staff_notes(rid, db_path=db_path, include_expired=True)[0]
+    assert [(p["text"], p["expires"], p["noted"]) for p in back["parts"]] == \
+        [(p["text"], p["expires"], p["noted"]) for p in gone["parts"]], "each part keeps its own end date"
+    assert back["notes"] == "mornings only; no Sundays"
+    audit = _rows(db_path, "SELECT before_json FROM admin_events WHERE event_type='staff_note.removed'")
+    assert audit and "2027-01-15" in (audit[0]["before_json"] or ""), "the removal's audit row keeps the parts"
+
+
+def test_w15h_an_undo_never_doubles_a_constraint_the_person_has_again(app, db_path):
+    rid = _rid(db_path, "Note Grill")
+    c, _uid = _admin(app, db_path)
+    a = c.post(f"/admin/staff-notes/{rid}", data={"employee_name": "Sam", "notes": "off by 4pm"},
+               headers={"X-CSRF": CSRF}).get_json()
+    gone = _post(c, f"/admin/staff-notes/{a['id']}/delete").get_json()["deleted"]
+    c.post(f"/admin/staff-notes/{rid}", data={"employee_name": "Sam", "notes": "off by 4pm"},
+           headers={"X-CSRF": CSRF})
+    _post(c, f"/admin/staff-notes/{rid}", {"employee_name": "Sam", "notes": gone["notes"], "parts": gone["parts"]})
+    assert models.get_staff_notes(rid, db_path=db_path)[0]["notes"] == "off by 4pm"
+
+
+@pytest.mark.parametrize("parts, word", [
+    ([{"text": "x", "expires": "not a date"}], "end date"),
+    ([{"text": ""}], "text"),
+    ("mornings", "list"),
+    ([{"text": "ok"}] * 51, "list"),
+])
+def test_w15h_parts_get_the_same_checks_as_a_new_note(app, db_path, parts, word):
+    rid = _rid(db_path, "Note Grill")
+    c, _uid = _admin(app, db_path)
+    r = _post(c, f"/admin/staff-notes/{rid}", {"employee_name": "Sam", "notes": "x", "parts": parts})
+    assert r.status_code == 400 and word in r.get_json()["error"]
+    assert models.get_staff_notes(rid, db_path=db_path) == [], "refused whole, nothing written"
+    assert _post(c, f"/admin/staff-notes/{rid}", {"employee_name": "", "notes": "x",
+                                                   "parts": [{"text": "x"}]}).status_code == 400
