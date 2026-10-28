@@ -3739,7 +3739,9 @@ var DS_CHIP = {failing: ['bad', 'failing'], stale: ['warn', 'stale'], ok: ['ok',
 function dsQuery(){ return '/admin/api/data-sources?page=' + _dsp + (_dsf === 'failing' ? '&state=failing&failing=1' : (_dsf === 'stale' ? '&state=stale' : '')); }
 function dsLoad(){ lazyRead('ops-ds', dsQuery(), dsHtml); }
 function dsFilter(f){ _dsf = f; _dsp = 1; dsLoad(); }
-function dsStaleKnown(x){ return (x.summary || []).some(function(s){ return s.stale != null; }); }
+// The server says it judges staleness by sending state_counts (or a summary
+// row's stale count): an empty fleet still reads "Stale 0", not "—".
+function dsStaleKnown(x){ return !!(x.state_counts && x.state_counts.stale != null) || (x.summary || []).some(function(s){ return s.stale != null; }); }
 function dsChip(r, known){
   var st = r.state || (r.failures ? 'failing' : null), c;
   if(st === 'ok' && !known) st = null;
@@ -3749,6 +3751,7 @@ function dsChip(r, known){
 function dsHtml(x){
   var sum = x.summary || [], known = dsStaleKnown(x), all = 0, fail = 0, stale = 0;
   sum.forEach(function(s){ all += +s.restaurants || 0; fail += +s.failing || 0; stale += +s.stale || 0; });
+  if(x.state_counts && x.state_counts.stale != null) stale = +x.state_counts.stale || 0;
   var seg = '<div class="seg">' + [['', 'All', fmtN(all)], ['failing', 'Failing', fmtN(fail)], ['stale', 'Stale', known ? fmtN(stale) : '—']].map(function(o){
     return '<button class="' + (_dsf === o[0] ? 'on' : '') + '" onclick="dsFilter(\'' + o[0] + '\')">' + o[1] + ' <b>' + o[2] + '</b></button>'; }).join('') + '</div>';
   var line = '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:12px 18px;font-size:12.5px">' + seg

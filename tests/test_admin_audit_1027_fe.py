@@ -197,6 +197,15 @@ def test_data_sources_say_stale_filter_on_it_and_never_call_an_unjudged_row_ok()
     assert "doesn't report stale sources yet — the list below isn't filtered" in o
 
 
+def test_an_empty_fleet_still_reads_stale_zero_from_state_counts():
+    js = _js(DS_FNS, ("_dsf", "DS_CHIP", "clientLink")) + r"""
+    var _dsp = 1;
+    var empty = {ok: true, rows: [], page: 1, pages: 1, total: 0, summary: [], state_counts: {failing: 0, stale: 0, ok: 0}};
+    console.log(JSON.stringify(dsHtml(empty)));
+    """
+    assert "Stale <b>0</b>" in _node(js)
+
+
 def test_the_fleet_list_draws_a_labelled_data_column_and_never_says_never_for_a_missing_field():
     m = re.search(r"\nconst FLEET_STATE_CHIP.*?\nfunction _fleetDataCell\(r\)\{.*?\n\}", PAGE, re.S)
     js = STUBS + "function parseTs(t){ return t ? new Date(t) : null; } function ago(t){ return 'ago'; }\n" + m.group(0) + r"""
