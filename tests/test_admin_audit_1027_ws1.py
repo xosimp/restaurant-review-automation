@@ -728,3 +728,20 @@ def test_o1_badges_and_overview_carry_the_loops_own_state(db_path, monkeypatch, 
     scheduler_heartbeat(1, loop_minutes_ago=90)
     assert admin_ops.badges()["kpis"]["scheduler_state"] == "stalled"
     assert admin_ops.overview()["kpis"]["scheduler_state"] == "stalled"
+
+
+def test_ops_state_is_shared_for_a_minute_on_request_threads(db_path, monkeypatch):
+    from flask import Flask
+    import status_manager
+    monkeypatch.setattr(status_manager, "DB_PATH", db_path)
+    admin_ops._ops_state_memo.clear()
+    calls = []
+    real = admin_ops._ops_state_build
+    monkeypatch.setattr(admin_ops, "_ops_state_build", lambda: (calls.append(1), real())[1])
+    with Flask(__name__).test_request_context("/admin/api/ops/state"):
+        a = admin_ops.ops_state()
+        b = admin_ops.ops_state()
+    assert len(calls) == 1 and a["cached"] is False and b["cached"] is True and a["systems"] == b["systems"]
+    admin_ops.ops_state()                      # off a request: fresh
+    assert len(calls) == 2
+    admin_ops._ops_state_memo.clear()

@@ -8023,8 +8023,33 @@ def _ago_z(minutes):
     return (_utcnow() - timedelta(minutes=float(minutes))).strftime(_ZFMT) if minutes is not None else None
 
 
-@_reports_failures
+# The rail polls /admin/api/ops/state every two minutes per open tab (WS-3):
+# on a request thread one reading is kept this long and shared, single-
+# flight, so a poll is not the email-rate, webhook and job-SLA reads again
+# (the P-01 cost, moved). A reading with a failed read is not kept.
+OPS_STATE_TTL_SECONDS = float(os.getenv("ADMIN_OPS_STATE_TTL_SECONDS", "60"))
+_ops_state_lock = threading.Lock()
+_ops_state_memo = {}
+
+
 def ops_state():
+    """The system verdicts (_ops_state_build), shared for OPS_STATE_TTL_SECONDS
+    on request threads; off one, read fresh."""
+    if not _in_request() or OPS_STATE_TTL_SECONDS <= 0:
+        return _ops_state_build()
+    key = _memo_key()
+    with _ops_state_lock:
+        hit = _ops_state_memo.get("v")
+        if hit and hit[1] == key and time.monotonic() - hit[0] <= OPS_STATE_TTL_SECONDS:
+            return dict(hit[2], cached=True, age_seconds=round(time.monotonic() - hit[0], 1))
+        out = _ops_state_build()
+        if not out.get("read_failed"):
+            _ops_state_memo["v"] = (time.monotonic(), key, out)
+        return dict(out, cached=False, age_seconds=0.0)
+
+
+@_reports_failures
+def _ops_state_build():
     """{systems: {scheduler, jobs, api, email, sms, push, ai, integrations:
     {state: ok | warn | bad | unknown, reason, since, ...facts}}, worst,
     generated_at} — ONE server verdict per system, by the server's own
