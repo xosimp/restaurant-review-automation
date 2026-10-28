@@ -594,7 +594,9 @@ function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round
 // Dates read M/D/YY everywhere (CLAUDE.md), the console included.
 function mdy(d){ return d ? (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2) : '—'; }
 function fmtD(s){ return mdy(parseTs(s)); }
-function fmtT(d){ return d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
+// The house clock (DESIGN_SYSTEM 2, the web's cavClock): "6:45pm", "6pm" on
+// the hour — never the locale's "6:45 PM" (admin audit 10/27/26 V28). ES5.
+function fmtT(d){ var h = d.getHours(), m = d.getMinutes(), ap = h < 12 ? 'am' : 'pm'; h = h % 12 || 12; return h + (m ? ':' + (m < 10 ? '0' : '') + m : '') + ap; }
 function fmtDT(s){ const d = parseTs(s); return d ? mdy(d) + ' · ' + fmtT(d) : '—'; }
 let _tt; function toast(msg, tone){ const t=$('toast'); t.textContent=msg; t.className='toast on'+(tone?' '+tone:''); clearTimeout(_tt); _tt=setTimeout(()=>t.className='toast',3200); }
 // A page's reads are tagged with the visit that asked for them: a read that
@@ -988,9 +990,9 @@ function growthChart(s, w0){
   const peak = Math.max.apply(null, [0].concat(paying.filter(v => v != null), signups));
   const ymax = Math.max(4, Math.ceil(peak * 1.15)), y = v => top + (1 - v/ymax) * (h-pb-top);
   const ticks = [0, Math.round(ymax/2), ymax];
-  const grid = ticks.map(v=>`<line x1="${pl}" x2="${w-4}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="rgba(255,255,255,.05)"/><text x="${pl-8}" y="${(y(v)+4).toFixed(1)}" text-anchor="end" fill="var(--ink4)" style="font-family:var(--num);font-size:11px">${v}</text>`).join('');
+  const grid = ticks.map(v=>`<line x1="${pl}" x2="${w-4}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)"/><text x="${pl-8}" y="${(y(v)+4).toFixed(1)}" text-anchor="end" fill="var(--ink4)" style="font-family:var(--num);font-size:11px">${v}</text>`).join('');
   const wk = i => { const x = sg[i] || acc[i] || {}; return dayOf(x.week_start); };
-  const bars = signups.map((v,i)=>{ const x = pl + i*cw + cw*.28, bh = v ? Math.max(4, (h-pb-top) * v / ymax) : 2; return `<rect x="${x.toFixed(1)}" y="${(h-pb-bh).toFixed(1)}" width="${(cw*.44).toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${v?'var(--ember2)':'rgba(255,255,255,.1)'}" fill-opacity="${v?'.85':'1'}"><title>Week of ${mdy(wk(i))}: ${v} new</title></rect>`; }).join('');
+  const bars = signups.map((v,i)=>{ const x = pl + i*cw + cw*.28, bh = v ? Math.max(4, (h-pb-top) * v / ymax) : 2; return `<rect x="${x.toFixed(1)}" y="${(h-pb-bh).toFixed(1)}" width="${(cw*.44).toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${v?'var(--ember2)':'var(--fill-2)'}" fill-opacity="${v?'.85':'1'}"><title>Week of ${mdy(wk(i))}: ${v} new</title></rect>`; }).join('');
   const pts = paying.map((v,i) => v == null ? null : [pl + i*cw + cw/2, y(v)]).filter(Boolean);
   let line = '', area = '', dot = '';
   if(pts.length){
@@ -1054,7 +1056,7 @@ function changesList(events){
   events.forEach(e => { const d = parseTs(e.at), day = d ? mdy(d) : '—', lbl = day===today?'Today':day===yest?'Yesterday':day;
     if(lbl !== last){ out += `<div class="lbl" style="padding:14px 0 6px">${esc(lbl)}</div>`; last = lbl; }
     const c = tone[e.tone] || tone.neutral;
-    out += `<div style="display:flex;align-items:center;gap:12px;padding:7px 0"><i style="display:block;width:8px;height:8px;border-radius:50%;background:${c};box-shadow:0 0 0 4px rgba(255,255,255,.04);flex-shrink:0"></i><span class="ink2" style="flex:1;min-width:0;font-size:13px">${esc(e.label)}${e.restaurant_id?' · '+clientLink(e.restaurant_id, e.restaurant):(e.restaurant?' · '+esc(e.restaurant):'')}</span><span class="n muted" style="font-size:12px;white-space:nowrap">${d?fmtT(d):''}</span></div>`; });
+    out += `<div style="display:flex;align-items:center;gap:12px;padding:7px 0"><i style="display:block;width:8px;height:8px;border-radius:50%;background:${c};box-shadow:0 0 0 4px var(--fill-1);flex-shrink:0"></i><span class="ink2" style="flex:1;min-width:0;font-size:13px">${esc(e.label)}${e.restaurant_id?' · '+clientLink(e.restaurant_id, e.restaurant):(e.restaurant?' · '+esc(e.restaurant):'')}</span><span class="n muted" style="font-size:12px;white-space:nowrap">${d?fmtT(d):''}</span></div>`; });
   return out || '<div class="empty">Quiet.</div>';
 }
 // A strip cell links where its figure is acted on; with no href (the page
@@ -1103,13 +1105,13 @@ async function overview(){
       </a>
       <a class="card kc" href="#customers/restaurants">
         <span class="lbl">Paying restaurants</span><span class="big">${money(fmtN(k.active))}</span><span class="s">of <span class="n">${fmtN(k.clients)}</span> accounts</span>
-        <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:10px"><div style="display:flex;gap:3px;height:8px">${paid.filter(x=>x[0]).map(x=>`<i style="flex:${x[0]};background:${x[1]};border-radius:4px" title="${x[0]} ${x[2]}"></i>`).join('')||'<i style="flex:1;background:rgba(255,255,255,.07);border-radius:4px"></i>'}</div>
+        <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:10px"><div style="display:flex;gap:3px;height:8px">${paid.filter(x=>x[0]).map(x=>`<i style="flex:${x[0]};background:${x[1]};border-radius:4px" title="${x[0]} ${x[2]}"></i>`).join('')||'<i style="flex:1;background:var(--fill-2);border-radius:4px"></i>'}</div>
         <span class="s" style="font-size:12px;display:flex;gap:4px 10px;flex-wrap:wrap">${paid.filter(x=>x[0]).map(x=>`<span style="color:${x[1]}">● <span class="n">${x[0]}</span> ${x[2]}</span>`).join('')}</span>
         <span class="s" style="font-size:12px" title="Covered: a location a group's subscription pays for. Internal: demo, test and Cavnar AI's own accounts, never counted.">${k.covered_locations?`<span class="n">${k.covered_locations}</span> covered · `:''}<span class="n">${fmtN(k.internal_accounts||0)}</span> internal</span></div>
       </a>
       <a class="card kc" href="#customers/onboarding">
         <span class="lbl">New signups</span><span class="big">${money(fmtN(k.new_this_month))}</span><span class="s">this month</span>
-        <div style="margin-top:auto;padding-top:10px"><span style="display:flex;align-items:flex-end;gap:4px;height:34px">${sgv.map((v,i)=>`<i style="display:block;flex:1;max-width:9px;height:${v ? Math.max(4, Math.round(34*v/sgMax)) : 2}px;border-radius:2px;background:${v?'var(--ember2)':'rgba(255,255,255,.09)'}" title="Week of ${esc(mdy(dayOf((s.signups[i]||{}).week_start)))}: ${v}"></i>`).join('')}</span><span class="s" style="font-size:12px">last <span class="n">${sgv.length}</span> weeks</span>
+        <div style="margin-top:auto;padding-top:10px"><span style="display:flex;align-items:flex-end;gap:4px;height:34px">${sgv.map((v,i)=>`<i style="display:block;flex:1;max-width:9px;height:${v ? Math.max(4, Math.round(34*v/sgMax)) : 2}px;border-radius:2px;background:${v?'var(--ember2)':'var(--fill-2)'}" title="Week of ${esc(mdy(dayOf((s.signups[i]||{}).week_start)))}: ${v}"></i>`).join('')}</span><span class="s" style="font-size:12px">last <span class="n">${sgv.length}</span> weeks</span>
         <span class="s" style="font-size:12px;display:block;margin-top:4px">${tc.available ? `Trial → paid: <span class="n">${tc.rate_pct==null?'—':tc.rate_pct+'%'}</span> of ${fmtN(tc.started)} in ${tc.window_days||90}d${tc.median_days_to_convert!=null?' · median '+tc.median_days_to_convert+'d':''}` : `<span title="${esc(tc.reason||'')}">Trial conversion: not measurable yet</span>`}</span></div>
       </a>
       <a class="card kc" href="#operations" style="flex-direction:row;align-items:center;gap:20px" id="ov-health">${healthCard(d, undefined)}</a>
@@ -1340,7 +1342,7 @@ let _clients = null, _cq = '', _showDemo = false, _openBrands = {}, _ch = '', _c
 const CUST_COLS = 'grid-template-columns:minmax(0,2.6fr) minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,1fr) 72px 96px';
 const HEALTH_RANK = {inactive:-1, healthy:0, warning:1, critical:2};
 function monoTile(name, health){
-  const t = {critical:['var(--red-bg)','var(--red-t)'], warning:['var(--amber-bg)','var(--amber-t)'], healthy:['var(--green-bg)','var(--green-t)']}[health] || ['rgba(255,255,255,.06)','var(--ink3)'];
+  const t = {critical:['var(--red-bg)','var(--red-t)'], warning:['var(--amber-bg)','var(--amber-t)'], healthy:['var(--green-bg)','var(--green-t)']}[health] || ['var(--fill)','var(--ink3)'];
   const words = String(name||'?').replace(/[^A-Za-z0-9 &]/g,'').split(/\s+/).filter(w=>w && w!=='&');
   const ini = ((words[0]||'?')[0] + (words[1] ? words[1][0] : (words[0]||'')[1]||'')).toUpperCase();
   return `<span class="mono-tile" style="background:${t[0]};color:${t[1]}">${esc(ini)}</span>`;
@@ -1769,7 +1771,7 @@ const CLIENT_TAB = {overview:'overview', subscription:'billing', billing:'billin
   support:'support', notes:'support', timeline:'support', audit:'support'};
 const CMSG_OF = {ai:'ai', emails:'email', notifications:'push', sms:'sms', brief:'brief'};
 let _cmsg = 'ai', _cd = null;
-const HEALTH_TILE = {critical:'background:var(--red-bg);color:var(--red-t)', warning:'background:var(--amber-bg);color:var(--amber-t)', healthy:'background:var(--green-bg);color:var(--green-t)', inactive:'background:rgba(255,255,255,.06);color:var(--ink3)'};
+const HEALTH_TILE = {critical:'background:var(--red-bg);color:var(--red-t)', warning:'background:var(--amber-bg);color:var(--amber-t)', healthy:'background:var(--green-bg);color:var(--green-t)', inactive:'background:var(--fill);color:var(--ink3)'};
 function actionsMenu(c, d){
   const b = (label, js, cls) => `<button data-a class="w ${cls||''}" onclick="menusClose();${js}">${label}</button>`;
   const a = (label, href) => `<a data-a href="${href}">${label}</a>`;
@@ -1797,7 +1799,7 @@ function stripDiv(label, value, sub, tone){ return `<div><span class="lbl">${lab
 function setupRing(sc){
   if(sc == null) return '';
   const c = 2*Math.PI*38, tone = sc>=75?'var(--green)':sc>=50?'var(--amber)':'var(--ember2)';
-  return `<svg width="92" height="92" viewBox="0 0 92 92" aria-label="Setup ${sc}%" style="flex-shrink:0"><g transform="rotate(-90 46 46)"><circle cx="46" cy="46" r="38" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="8"/><circle cx="46" cy="46" r="38" fill="none" stroke="${tone}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${(c*sc/100).toFixed(1)} ${c.toFixed(1)}"/></g><text x="46" y="52" text-anchor="middle" fill="var(--ink)" style="font-family:var(--num);font-size:19px;font-weight:600">${sc}%</text></svg>`;
+  return `<svg width="92" height="92" viewBox="0 0 92 92" aria-label="Setup ${sc}%" style="flex-shrink:0"><g transform="rotate(-90 46 46)"><circle cx="46" cy="46" r="38" fill="none" stroke="var(--fill-2)" stroke-width="8"/><circle cx="46" cy="46" r="38" fill="none" stroke="${tone}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${(c*sc/100).toFixed(1)} ${c.toFixed(1)}"/></g><text x="46" y="52" text-anchor="middle" fill="var(--ink)" style="font-family:var(--num);font-size:19px;font-weight:600">${sc}%</text></svg>`;
 }
 function locName(d, rid){ if(_cd && _cd.client && _cd.client.id === rid) return _cd.client.name; const s = ((d || _cd || {}).siblings || []).find(x=>x.id === rid); return s ? (s.location_name || s.name) : '#' + rid; }
 async function clientView(id, qs){
@@ -1829,7 +1831,7 @@ async function clientView(id, qs){
       </div>
       <div style="display:flex;gap:8px;position:relative">
         <a class="btn" href="/admin/view-as/${c.id}">${ico('eye','s')}View as client</a><a class="btn g w" href="/admin/client-settings/${c.id}">Settings</a>
-        <button class="btn" data-menu style="background:rgba(255,255,255,.075);border-color:rgba(240,235,224,.22)" onclick="menuToggle('cl-actions')">Actions ${ico('down','xs')}</button>
+        <button class="btn" data-menu style="background:var(--fill-2);border-color:var(--line2)" onclick="menuToggle('cl-actions')">Actions ${ico('down','xs')}</button>
         ${actionsMenu(c, d)}
       </div>
     </section>
@@ -1854,7 +1856,7 @@ function cOverview(c, d){
       <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Needs attention</h2>${c.issues.length?`<span class="cnt ${c.issues.some(i=>i.severity==='critical')?'bad':'warn'}">${c.issues.length}</span>`:''}</div><div class="lst" style="border-top:1px solid var(--line)">${c.issues.map(i=>needRow(Object.assign({}, i, {restaurant: c.name, restaurant_id: c.id}), {here: true})).join('') || '<div class="empty">Nothing needs attention on this account.</div>'}</div>
         ${(d.issues_resolved||[]).length ? `<details class="more-d"><summary>Resolved · <span class="n">${d.issues_resolved.length}</span></summary><div class="lst">${d.issues_resolved.map(i=>`<div class="li"><div class="tt"><b>${esc(i.title)}</b><span>resolved by ${esc((i.resolution||{}).resolved_by||'')} ${fmtD((i.resolution||{}).resolved_at)}${(i.resolution||{}).note?' — '+esc(i.resolution.note):''}</span></div><button class="btn s g w" onclick="unresolve('${jsq(i.key)}')">Reopen</button></div>`).join('')}</div></details>` : ''}</div>
       <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px"><div title="What is connected and configured"><h2>Setup completeness</h2></div>
-        <div style="display:flex;gap:22px;align-items:center">${setupRing(setupDone(c).score)}<div style="flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px">${(setupDone(c).checks||[]).filter(k=>!k.ok).map(k=>`<span style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink)" title="${esc(k.detail||'')}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1.5px solid rgba(240,235,224,.25)"></span>${esc(k.label)}</span>`).join('')}${(setupDone(c).checks||[]).some(k=>k.ok)?`<span class="muted" style="font-size:12.5px;display:flex;align-items:center;gap:9px" title="${esc((setupDone(c).checks||[]).filter(k=>k.ok).map(k=>k.label).join(' · '))}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--green-bg);color:var(--green-t)">${ico('check','xs')}</span>${(setupDone(c).checks||[]).filter(k=>k.ok).length} done</span>`:''}</div></div></div>
+        <div style="display:flex;gap:22px;align-items:center">${setupRing(setupDone(c).score)}<div style="flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px">${(setupDone(c).checks||[]).filter(k=>!k.ok).map(k=>`<span style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink)" title="${esc(k.detail||'')}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1.5px solid var(--line2)"></span>${esc(k.label)}</span>`).join('')}${(setupDone(c).checks||[]).some(k=>k.ok)?`<span class="muted" style="font-size:12.5px;display:flex;align-items:center;gap:9px" title="${esc((setupDone(c).checks||[]).filter(k=>k.ok).map(k=>k.label).join(' · '))}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--green-bg);color:var(--green-t)">${ico('check','xs')}</span>${(setupDone(c).checks||[]).filter(k=>k.ok).length} done</span>`:''}</div></div></div>
       ${!c.onboarding.complete ? `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Onboarding</h2><span class="n">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="steps">${c.onboarding.steps.filter(s=>!s.done).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px"><span class="ok">✓</span> ${c.onboarding.done} done${c.onboarding.dismissed?' · the owner hid their setup card':''}</div></div></div>` : ''}
       <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Churn risk</h2>${churn.scored===false?pill('neu','not scored',false):pill(churn.level==='high'?'bad':churn.level==='medium'?'warn':'neu', esc(churn.level||'—'), false)}</div>
         ${churn.scored===false ? `<span class="muted" style="font-size:13px">${esc(churn.why_not || 'Only paying accounts are scored — a trial or internal account has nothing to churn from yet.')}</span>` : `<div class="steps">${(churn.reasons||[]).map(x=>`<div><span class="no">•</span><span>${esc(x)}</span></div>`).join('') || '<div class="muted">No risk signals.</div>'}</div>${churn.since?`<span class="muted" style="font-size:12.5px">At this level since ${fmtD(churn.since)}${churn.days_at_level?' ('+churn.days_at_level+' days)':''}.</span>`:''}`}
