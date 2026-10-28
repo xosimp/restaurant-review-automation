@@ -590,3 +590,21 @@ def test_p07_the_fleet_read_is_an_explicit_column_list(db_path):
         admin_ops.clients()
         assert "rests" not in admin_ops._fleet_state["memo"]["d"]
     admin_ops.invalidate_fleet_cache()
+
+
+# ── P-08: the client page's siblings carry only what the page draws ────────
+
+def test_p08_siblings_are_slim_in_the_record_shape(db_path):
+    a = _rest(db_path, "Corner Bar", billing_status="active", owner_email="o@ex.com", location_group="Corner",
+              location_name="Downtown")
+    b = _rest(db_path, "Corner Bar", billing_status="active", owner_email="o@ex.com", location_group="Corner",
+              location_name="Uptown")
+    sib = admin_ops.client_detail(a)["siblings"]
+    assert [s["id"] for s in sib] == [b]
+    s = sib[0]
+    assert "modules" not in s and "integrations" not in s and "logins" not in s
+    # Everything the page's slimOf() and locName() read.
+    assert s["location_name"] == "Uptown" and s["billing"]["status"] == "active"
+    assert isinstance(s["issues"], list) and set(s["onboarding"]) == {"done", "total"}
+    assert "score" in s["setup_completeness"] and "level" in s["churn_risk"]
+    assert len(json.dumps(s)) < len(json.dumps(next(r for r in admin_ops.clients()["clients"] if r["id"] == b))) / 3

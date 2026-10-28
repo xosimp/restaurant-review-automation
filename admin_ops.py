@@ -3555,7 +3555,7 @@ def client_detail(rid):
         rec = by_id.get(rid)
         if not rec:
             return {"ok": False, "error": "Not found"}
-        siblings = [r for r in recs if r["brand"] == rec["brand"] and r["id"] != rid]
+        siblings = [_sibling_view(r) for r in recs if r["brand"] == rec["brand"] and r["id"] != rid]
         conn = get_conn()
         try:
             month = _utc_stamp(_utcnow() - timedelta(days=30))
@@ -3642,6 +3642,26 @@ def client_detail(rid):
             "storm_cap": rec.get("storm_cap"),
             **messaging,
             "timeline_url": f"/admin/api/client/{rid}/timeline"}
+
+
+def _sibling_view(r):
+    """A sibling location as the client page draws it (admin audit 10/27/26
+    P-08): the page reads only what slimOf() and locName() take, and a full
+    record is ~12 KB — a 200-location brand made each client page 2.4 MB.
+    Kept in the record's own shape, so slimOf() reads it unchanged."""
+    b = r.get("billing") or {}
+    return {"id": r["id"], "name": r.get("name"), "brand": r.get("brand"), "location_name": r.get("location_name"),
+            "city": r.get("city"), "segment": r.get("segment"), "is_demo": r.get("is_demo"),
+            "health": r.get("health"), "owner_email": r.get("owner_email"), "last_active": r.get("last_active"),
+            "on_ios": r.get("on_ios"), "created_at": r.get("created_at"),
+            "billing": {k: b.get(k) for k in ("status", "monthly", "mrr_source", "billed_by")},
+            "owner": {"username": (r.get("owner") or {}).get("username")} if r.get("owner") else None,
+            "issues": [{"key": i.get("key"), "severity": i.get("severity"), "title": i.get("title")}
+                       for i in r.get("issues") or []],
+            "churn_risk": {"level": (r.get("churn_risk") or {}).get("level")},
+            "setup_completeness": {"score": (r.get("setup_completeness") or {}).get("score")},
+            "onboarding": {k: (r.get("onboarding") or {}).get(k) for k in ("done", "total")},
+            "deletion": {"due_at": (r.get("deletion") or {}).get("due_at")} if r.get("deletion") else None}
 
 
 def _client_messaging(rid):
