@@ -387,3 +387,11 @@ def test_the_page_keeps_no_heartbeat_tiers_of_its_own():
     assert "durMin(h.stale_after_minutes)" in jobs and "h.stale" in jobs
     for literal in ("> 15", ">= 15", "> 60", ">= 60"):
         assert literal not in jobs and literal not in _fn("railHealth") and literal not in _fn("engSched"), literal
+
+
+# ── V19, V23, V30: one class for a padded card, one dot, one pill, checks ───
+
+def test_a_padded_card_is_one_class():
+    assert ".pad{padding:16px 18px;display:flex;flex-direction:column;gap:12px}" in CSS
+    assert "padding:16px 18px;display:flex;flex-direction:column;gap:1" not in PAGE[PAGE.index("</style>"):]
+    assert PAGE.count('class="card pad"') >= 45
