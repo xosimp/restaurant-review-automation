@@ -4426,7 +4426,19 @@ def admin_api_billing(current_user):
 @admin_required
 def admin_api_jobs(current_user):
     import admin_ops
-    return jsonify(**admin_ops.jobs())
+    out = admin_ops.jobs()
+    if not current_user.get("is_admin"):
+        # A job whose result carries a read-once value (the review account's
+        # new password) is not listed to a support login at all: its id was
+        # the key to the result (admin audit 10/27/26 S1).
+        out["inflight"] = [j for j in (out.get("inflight") or [])
+                           if (j or {}).get("kind") not in _ONCE_ONLY_JOB_KINDS]
+    return jsonify(**out)
+
+
+# Admin job kinds whose result holds a value handed over once
+# (admin_api_admin_job): never listed to support.
+_ONCE_ONLY_JOB_KINDS = ("admin_review_account",)
 
 
 @admin_bp.route("/admin/api/jobs/<job>/run", methods=["POST"])
@@ -6084,7 +6096,7 @@ def admin_api_pos_export(restaurant_id, current_user):
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/pos-export/<job_id>")
 @admin_required
 def admin_api_pos_export_status(restaurant_id, job_id, current_user):
-    return _admin_job_status(job_id)
+    return _admin_job_status(job_id, ("pos_export",), restaurant_id=restaurant_id)
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/pos-export/<job_id>/download", methods=["POST"])
@@ -6094,7 +6106,7 @@ def admin_api_pos_export_download(restaurant_id, job_id, current_user):
     """The finished zip, once: it is deleted from the server as it is sent
     (and any left behind after a day). Typed audit."""
     import offboarding
-    job = _ops.read_async_job(job_id)
+    job = _ops.read_async_job(job_id, restaurant_id=restaurant_id, kinds=("pos_export",))
     res = dict((job or {}).get("result") or {})
     name = res.get("file")
     path = offboarding.export_path(name) if name and str(name).startswith(f"pos-export-{int(restaurant_id)}-") else None
@@ -6424,13 +6436,23 @@ def _start_menu_extraction(restaurant_id, source, fn, *args):
     return jsonify(ok=True, job_id=job_id, status="pending")
 
 
-def _admin_job_status(job_id):
-    job = _ops.read_async_job(job_id)
+def _admin_job_status(job_id, kinds, restaurant_id=None):
+    """One console job's state through the route that started it: only that
+    kind of job (and, for a client's job, only that client's), and never a
+    value the job marked read-once. These three polls served ANY stored
+    async job, unscrubbed, to support logins too — the review account's
+    once-only password among them (admin audit 10/27/26 S1), the hole
+    /admin/api/tasks/<id> had closed. /admin/api/admin-jobs/<id> stays the
+    one place a once-only value is handed over."""
+    job = _ops.read_async_job(job_id, restaurant_id=restaurant_id, kinds=kinds)
     if not job:
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
         return jsonify(ok=True, status="pending")
     result = dict(job["result"] or {})
+    for k in (result.pop("_scrub", None) or []):
+        if isinstance(k, str):
+            result.pop(k, None)
     result["status"] = job["status"]
     return jsonify(result)
 
@@ -6441,7 +6463,7 @@ def admin_menu_extract_status(job_id, current_user):
     """{status: pending} until done; then {ok, menu_notes, source, ...} or
     {ok: false, error}. The text is for the admin to review; nothing is
     saved (fix round #142)."""
-    return _admin_job_status(job_id)
+    return _admin_job_status(job_id, ("menu_extract",))
 
 
 @admin_bp.route("/admin/api/create-client/<job_id>")
@@ -6450,7 +6472,7 @@ def admin_client_setup_status(job_id, current_user):
     """A new client's provider calls: {status: pending}, then
     {ok, restaurant_id, envelope_id, docusign_skipped, docusign_error,
     menu_notes_fetched} (fix round #153)."""
-    return _admin_job_status(job_id)
+    return _admin_job_status(job_id, ("client_setup",))
 
 
 # Response templates for THE client named in the URL. The settings page
