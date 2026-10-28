@@ -4457,7 +4457,10 @@ def ai_ops(days=30):
         since = _utc_since(days)
         today = _utc_today()
         month = _utc_month()
-        calls_sql = f"SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END)"
+        # COALESCE: a window with no rows is zero calls, never None — "today
+        # (Central)" read None before the first call of the Central day while
+        # Overview's count read 0 (round 2: test_k09 failed every afternoon).
+        calls_sql = f"COALESCE(SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END), 0)"
         totals = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost, COALESCE(SUM(input_tokens),0) AS tin, COALESCE(SUM(output_tokens),0) AS tout, "
                                  f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),0),2) AS data_api_cost, "
                                  f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}<>'google_places' THEN cost_usd ELSE 0 END),0),2) AS ai_cost, "
