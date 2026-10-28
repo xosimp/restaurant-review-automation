@@ -3686,11 +3686,17 @@ INTEGRATION_FILTERS = {
 _INT_STATE_RANK = {"error": 0, "connected": 1, "off": 2}
 
 
-def integrations(f="all", q=None, page=None, per_page=None):
+def integrations(f="all", q=None, page=None, per_page=None, include_internal=None):
     """Every connection across the fleet. With `page` the server filters
     (`f`, one of INTEGRATION_FILTERS; `q` a name or id), orders (failing
     first) and pages; `counts` are over the full set. Without it, every row
-    (internal callers)."""
+    (internal callers).
+
+    `counts` are CUSTOMER connections — what the Overview and Operations
+    cards count (admin audit 10/27/26 K-11: a demo store's failing sync read
+    "Failing 1" under a card saying "none failing"); internal and demo
+    accounts' are `counts_internal`. The paged list leaves internal rows out
+    unless `include_internal` (internal callers, page None, keep every row)."""
     with _collecting() as bucket:
         recs, _d, meta = _records_cached()
         rows = []
@@ -3724,7 +3730,14 @@ def integrations(f="all", q=None, page=None, per_page=None):
             inbound = _webhook_health(conn)
         finally:
             conn.close()
-    counts = {k: sum(1 for r in rows if fn(r)) for k, fn in INTEGRATION_FILTERS.items()}
+    customer_rows = [r for r in rows if r["segment"] == "customer"]
+    internal_rows = [r for r in rows if r["segment"] != "customer"]
+    counts = {k: sum(1 for r in customer_rows if fn(r)) for k, fn in INTEGRATION_FILTERS.items()}
+    counts_internal = {k: sum(1 for r in internal_rows if fn(r)) for k, fn in INTEGRATION_FILTERS.items()}
+    if include_internal is None:
+        include_internal = page is None
+    if not include_internal:
+        rows = customer_rows
     paging = {}
     if page is not None:
         fn = INTEGRATION_FILTERS.get(f or "all", INTEGRATION_FILTERS["all"])
@@ -3735,7 +3748,8 @@ def integrations(f="all", q=None, page=None, per_page=None):
                                 r.get("integration") or ""))
         rows, pg, pp, total, pages = _page(sel, page, per_page)
         paging = {"page": pg, "per_page": pp, "total": total, "pages": pages, "filter": f or "all"}
-    return {"ok": True, "rows": rows, "counts": counts, **paging,
+    return {"ok": True, "rows": rows, "counts": counts, "counts_internal": counts_internal,
+            "internal_included": bool(include_internal), **paging,
             "systemic": [{"label": k, "failing": v} for k, v in systemic.items() if v >= 2],
             "webhooks_inbound": inbound, **_payload_meta(meta, bucket)}
 

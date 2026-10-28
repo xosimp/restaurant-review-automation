@@ -304,3 +304,17 @@ def test_k09_the_ai_page_carries_the_owner_day_beside_the_budget_day(db_path):
     assert ai["totals"]["today"]["calls"] != ai["totals"]["today_ct"]["calls"]
     assert "UTC" in ai["labels"]["today"] and "Central" in ai["labels"]["today_ct"]
     assert "Central" in ov["ai_today_label"]
+
+
+# ── K-11: the Integrations tab counts what the cards above it count ────────
+
+def test_k11_integration_counts_are_customer_connections(db_path):
+    _rest(db_path, "Real One", billing_status="active")
+    d = _rest(db_path, "Demo Store", billing_status="trial", is_demo=1)
+    _sql(db_path, "UPDATE restaurants SET toast_restaurant_guid='g1', toast_sync_error='boom' WHERE id=?", (d,))
+    k = admin_ops.overview()["kpis"]
+    ig = admin_ops.integrations(page=1)
+    assert k["integrations_failing"] == ig["counts"]["error"] == 0
+    assert ig["counts_internal"]["error"] == 1
+    assert not any(r["restaurant_id"] == d for r in ig["rows"])
+    assert any(r["restaurant_id"] == d for r in admin_ops.integrations()["rows"])   # internal callers keep every row
