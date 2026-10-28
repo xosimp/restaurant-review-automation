@@ -105,8 +105,11 @@ def test_the_menu_notes_edit_reads_the_settings_and_saves_under_the_contract(pag
     assert 'maxlength="${MENU_NOTES_MAX}"' in rd
     assert re.search(r"const MENU_NOTES_MAX = 2000;", page)
     sv = _fn(page, "mnSave")
-    # Only the field, the version it loaded at and the value it loaded (B1).
-    assert "post(m.url, {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}})" in sv
+    # Only the field, the version it loaded at and the value it loaded (B1) —
+    # plus, since admin audit 10/27/26 (W15-c), the menu page an extraction
+    # read, with its own loaded value.
+    assert "var body = {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}};" in sv
+    assert "body.menu_url = newUrl; body.base.menu_url = m.baseUrl;" in sv and "post(m.url, body)" in sv
     assert "d._status === 409" in sv and "d.current" in sv and "d.current_version" in sv
     assert "okRes(d)" in sv and "errText(d)" in sv and "the outcome is unknown" in sv
     ex = _fn(page, "menuExtract")
@@ -216,10 +219,11 @@ def test_in_flight_sits_apart_from_delivered_and_bounced(page):
 
 def _mn_js(page):
     """The menu-notes edit over a stub DOM: need/post/api answer from P."""
-    return (_js(page, ("menuNotesHtml", "mnCountText", "mnCount", "mnSay", "mnSave", "mnPutBack", "mnUse"),
+    # busyBtn: Save is a busy button while it saves (admin audit 10/27/26 V13).
+    return (_js(page, ("menuNotesHtml", "mnCountText", "mnCount", "mnSay", "mnSave", "mnPutBack", "mnUse", "busyBtn"),
                 ("MENU_NOTES_MAX",))
             + "let _mn = null; const els = {}; const posts = []; const gets = [];\n"
-            + "function el(id){ if(!els[id]) els[id] = {value:'', textContent:'', innerHTML:'', disabled:false, style:{}, focus(){}}; return els[id]; }\n"
+            + "function el(id){ if(!els[id]) els[id] = {value:'', textContent:'', innerHTML:'', disabled:false, style:{}, focus(){}, setAttribute(){}, removeAttribute(){}}; return els[id]; }\n"
             + "const $ = (id) => els[id] || null; function skel(){ return ''; }\n"
             + "let answers = []; async function need(p){ gets.push(p); return answers.shift(); }\n"
             + "async function api(p, o){ gets.push(p); return answers.shift(); }\n"

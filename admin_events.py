@@ -456,10 +456,17 @@ def _actor_parts(actor):
     if isinstance(actor, dict):
         name = actor.get("username") or actor.get("email") or (f"user:{actor.get('id')}" if actor.get("id") else None)
         return (name or "unknown"), actor.get("id")
-    if actor:
-        return str(actor)[:120], None
     state = _request_state()
     user = (state or {}).get("actor") or {}
+    if actor:
+        name = str(actor)[:120]
+        # A username passed down from the route (run now, the storm-cap lift,
+        # a vendor cost) is this request's own actor: take their id from the
+        # request, so the trail's actor-id filter finds the row (admin audit
+        # 10/27/26 S7/F16). Any other name keeps no id.
+        if user and user.get("id") and name == str(user.get("username") or ""):
+            return name, user.get("id")
+        return name, None
     if user:
         return (user.get("username") or f"user:{user.get('id')}"), user.get("id")
     return "system", None
@@ -546,9 +553,16 @@ def audited(action, snapshot=None):
                     except Exception:
                         pass
                 status = _status_of(resp)
+                result = "ok" if status < 400 else ("refused" if status < 500 else "error")
+                if result == "ok":
+                    # A 200 that says {ok: false} (a POS sync on a store that
+                    # isn't connected) did not do the thing: refused, not ok.
+                    read_body = getattr(resp[0] if isinstance(resp, tuple) else resp, "get_json", None)
+                    body_out = read_body(silent=True) if callable(read_body) else None
+                    if isinstance(body_out, dict) and body_out.get("ok") is False:
+                        result = "refused"
                 record_admin_action(user, action, restaurant_id=kwargs.get("restaurant_id"),
-                                    target=ids or None, before=before, after=after,
-                                    result="ok" if status < 400 else ("refused" if status < 500 else "error"),
+                                    target=ids or None, before=before, after=after, result=result,
                                     summary=f"{user.get('username') or 'admin'} {action} ({status})")
             except Exception:
                 pass
@@ -923,6 +937,9 @@ def refused_list(before_id=None, limit=50, db_path=None):
 SUPPORT_NOTE_MAX = 4000
 
 
+SUPPORT_NOTE_REPEAT_SECONDS = 60
+
+
 def add_support_note(restaurant_id, author, body, db_path=None):
     """Append one note. Returns the stored note, or None for an empty body.
     Append-only on purpose: nothing edits or deletes a note."""
@@ -933,6 +950,16 @@ def add_support_note(restaurant_id, author, body, db_path=None):
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
+        # A double-clicked Add wrote the same append-only note twice (admin
+        # audit 10/27/26 W15-f): the same text from the same author on the
+        # same client inside a minute is the note already written.
+        same = conn.execute(
+            "SELECT * FROM support_notes WHERE restaurant_id=? AND body=? AND COALESCE(author,'')=? "
+            "AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (int(restaurant_id), text[:SUPPORT_NOTE_MAX], name or "",
+             f"-{SUPPORT_NOTE_REPEAT_SECONDS} seconds")).fetchone()
+        if same:
+            return dict(same, duplicate=True)
         cur = conn.execute("INSERT INTO support_notes (restaurant_id, author, author_id, body) VALUES (?,?,?,?)",
                            (int(restaurant_id), name, uid, text[:SUPPORT_NOTE_MAX]))
         conn.commit()

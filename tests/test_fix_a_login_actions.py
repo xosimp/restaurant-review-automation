@@ -192,7 +192,8 @@ def test_deactivate_ends_sessions_and_devices_and_reactivate_revives_nothing(app
     owner = _login(db_path, rid, "owner")
     phone = create_session(owner, device_type="ios", db_path=db_path)
     auth.create_trusted_device(rid, owner, "phone", db_path=db_path)
-    r = _post(c, "/admin/deactivate-client/%d" % owner)
+    # The restaurant's only owner login: confirmed with force (admin audit 10/27/26 F15).
+    r = _post(c, "/admin/deactivate-client/%d" % owner, {"force": True})
     assert r.status_code == 200 and r.get_json()["sessions_ended"] == 1 and r.get_json()["devices_forgotten"] == 1
     assert _post(c, "/admin/reactivate-client/%d" % owner).status_code == 200
     assert get_session_user(phone, db_path=db_path) is None                 # not revived

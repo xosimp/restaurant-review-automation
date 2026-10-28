@@ -1056,6 +1056,12 @@ def _send_batch(newsletter_id, limit=None, max_seconds=None, db_path: str = DB_P
     restaurant = get_restaurant(nl["restaurant_id"])
     if not restaurant:
         return {"sent": 0, "failed": 0}
+    if not _models_mod.in_service(restaurant):
+        # The one service rule (admin audit 10/27/26 F4): a newsletter
+        # already sending stops when its restaurant is paused, churned or
+        # cancelled. Recipients stay pending, so a reinstated account
+        # finishes it; the scheduler's pass moves on to the next one.
+        return {"sent": 0, "failed": 0, "held": True, "paused": True, "out_of_service": True}
     if guest_mail_paused(nl["restaurant_id"], db_path=db_path):
         # Recipients stay pending: the newsletter resumes when the window
         # clears (SEC-02).

@@ -8840,7 +8840,7 @@ def _write_parts(conn, note_id, parts, updated_by=None):
 
 def save_staff_note(restaurant_id: int, employee_name: str,
                     notes: str, db_path: str = DB_PATH, replace: bool = False,
-                    expires_on=None, updated_by: str = None, today=None) -> dict:
+                    expires_on=None, updated_by: str = None, today=None, restore_parts: list = None) -> dict:
     """Add a scheduling constraint for one person; {"id", "notes", "appended",
     "expires_on"}.
 
@@ -8855,7 +8855,12 @@ def save_staff_note(restaurant_id: int, employee_name: str,
 
     Each constraint is dated the day it was noted, and ends on `expires_on`
     (ISO or M/D/YY) or the date its own words give ("out until 6/1") —
-    after which every reader leaves it out (memory audit 9/29/26)."""
+    after which every reader leaves it out (memory audit 9/29/26).
+
+    `restore_parts` (the undo of a removal, admin audit 10/27/26 W15-h): the
+    removed constraints exactly as they were — each with its own noted and
+    end date — put back in place of `notes`. Any the person has again by
+    now (the same text) are not added twice; nothing they have is replaced."""
     from datetime import date
     name = (employee_name or "").strip()
     text = (notes or "").strip()
@@ -8863,6 +8868,13 @@ def save_staff_note(restaurant_id: int, employee_name: str,
     ends = _iso_or_none(expires_on) or staff_note_expiry(text, noted)
     part = {"text": text, "noted": noted, "expires": ends, "confirmed": None,
             "by": (updated_by or "").strip()[:120] or None}
+    restored = [{"text": str(p.get("text")).strip(), "noted": _iso_or_none(p.get("noted")) or noted,
+                 "expires": _iso_or_none(p.get("expires")), "confirmed": _iso_or_none(p.get("confirmed")),
+                 "by": (str(p.get("by") or "").strip()[:120] or None)}
+                for p in (restore_parts or []) if isinstance(p, dict) and str(p.get("text") or "").strip()]
+    if restored:
+        soonest = sorted(p["expires"] for p in restored if p.get("expires"))
+        ends = soonest[0] if soonest else None
     conn = get_conn(db_path)
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -8871,8 +8883,14 @@ def save_staff_note(restaurant_id: int, employee_name: str,
         appended = False
         if row is None:
             cur = conn.execute("INSERT INTO staff_notes (restaurant_id, employee_name, notes) VALUES (?,?,?)",
-                               (restaurant_id, name, text))
-            note_id, parts = cur.lastrowid, [part]
+                               (restaurant_id, name, _join_parts(restored) if restored else text))
+            note_id, parts = cur.lastrowid, (restored or [part])
+        elif restored:
+            note_id = row["id"]
+            existing = _note_parts(row)
+            have = {p["text"].lower() for p in existing}
+            new = [p for p in restored if p["text"].lower() not in have]
+            parts, appended = existing + new, bool(existing and new)
         else:
             note_id = row["id"]
             existing = _note_parts(row)
@@ -9049,13 +9067,16 @@ def delete_staff_note(note_id: int, db_path: str = DB_PATH, restaurant_id: int =
     went (fix round #142)."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT id, restaurant_id, employee_name, notes FROM staff_notes WHERE id=?",
-                           (note_id,)).fetchone()
+        row = conn.execute("SELECT * FROM staff_notes WHERE id=?", (note_id,)).fetchone()
         if row is None or (restaurant_id is not None and int(row["restaurant_id"]) != int(restaurant_id)):
             return None
         conn.execute("DELETE FROM staff_notes WHERE id=?", (note_id,))
         conn.commit()
-        return dict(row)
+        # `parts` too — each constraint with its own noted / end date — so an
+        # undo puts back every end date, not one for the joined text (admin
+        # audit 10/27/26 W15-h).
+        return {"id": row["id"], "restaurant_id": row["restaurant_id"], "employee_name": row["employee_name"],
+                "notes": row["notes"], "parts": _note_parts(row) or None}
     finally:
         conn.close()
 
@@ -19261,11 +19282,49 @@ def is_email_suppressed(email: str, db_path: str = DB_PATH, email_type: str = No
     return "marketing" in scopes and email_type in MARKETING_EMAIL_TYPES
 
 
-def unsuppress_email(email: str, actor: str = None, reason: str = None, db_path: str = DB_PATH):
+# Suppressions the person made themselves — their own unsubscribe (the guest
+# and the prospect opt-out links) or a spam complaint. For a guest's or a
+# prospect's opt-out the row IS the record of it (there is no guest row or
+# list behind it), so an admin never lifts one: only the person opting back
+# in does (admin audit 10/27/26 S2). A bounce is about the mailbox, which an
+# admin can know was fixed, so it stays liftable.
+PERSON_MADE_SUPPRESSIONS = ("unsubscribed", "complained")
+SUPPRESSION_NOT_LIFTABLE = ("This address opted out (or reported spam) itself, so only the person can opt back "
+                            "in — an admin can lift only a bounce.")
+# The one rule, read by this lift, the suppressions list and the console's
+# Reinstate offer (admin_ops._suppression_reinstatable): only a bounce is
+# liftable, and a reason not named here is not — it fails closed. An empty
+# reason has always been read as a bounce.
+LIFTABLE_SUPPRESSIONS = ("", "bounced", "bounce", "hard_bounce", "soft_bounce")
+
+
+def suppression_liftable(reason) -> bool:
+    return (reason or "").strip().lower() in LIFTABLE_SUPPRESSIONS
+
+
+def _suppression_restaurant(conn, email):
+    """The one restaurant this address is the owner or a login of, or None
+    (none, or several) — so a lift lands on that client's audit card."""
+    rows = conn.execute(
+        "SELECT id AS rid FROM restaurants WHERE LOWER(TRIM(COALESCE(owner_email,'')))=? "
+        "UNION SELECT restaurant_id AS rid FROM users WHERE LOWER(TRIM(COALESCE(email,'')))=? "
+        "AND COALESCE(is_admin,0)=0 AND restaurant_id IS NOT NULL", (email, email)).fetchall()
+    ids = {int(r["rid"]) for r in rows if r["rid"] is not None}
+    return ids.pop() if len(ids) == 1 else None
+
+
+def unsuppress_email(email: str, actor=None, reason: str = None, db_path: str = DB_PATH, restaurant_id=None):
     """Reinstate an address — a bounce can be a full mailbox since emptied,
-    or an address fixed after a typo. Audited: who lifted it, what the row
-    said, and why (#45). Returns the lifted row, or None when the address
-    was not suppressed."""
+    or an address fixed after a typo. Audited through the one typed call:
+    who lifted it (`actor`, the acting login's dict or a username), what
+    the row said, why, and the restaurant it concerns (`restaurant_id`, or
+    the one client the address belongs to). Returns the lifted row, or None
+    when the address was not suppressed.
+
+    A suppression the person made themselves (PERSON_MADE_SUPPRESSIONS) is
+    never lifted: the row comes back with `refused` (the sentence) and the
+    refusal is audited — it deleted any row whatever its reason, so one
+    click mailed someone who had unsubscribed or reported spam (S2)."""
     email = (email or "").strip().lower()
     if not email:
         return None
@@ -19275,26 +19334,53 @@ def unsuppress_email(email: str, actor: str = None, reason: str = None, db_path:
                            "WHERE email=?", (email,)).fetchone()
         if not row:
             return None
-        conn.execute("DELETE FROM email_suppressions WHERE email=?", (email,))
-        conn.commit()
+        if restaurant_id is None:
+            try:
+                restaurant_id = _suppression_restaurant(conn, email)
+            except Exception as e:
+                logging.getLogger(__name__).warning("suppression lift: the address's restaurant is unreadable: %s", e)
+        lifted = 0
+        if suppression_liftable(row["reason"]):
+            # Re-checked in the write: a complaint that lands between the read
+            # and the delete is not lifted with the bounce it replaced.
+            lifted = conn.execute(
+                "DELETE FROM email_suppressions WHERE email=? AND LOWER(TRIM(COALESCE(reason,''))) IN ("
+                + ",".join("?" * len(LIFTABLE_SUPPRESSIONS)) + ")", (email, *LIFTABLE_SUPPRESSIONS)).rowcount
+            conn.commit()
+            if not lifted and not conn.execute("SELECT 1 FROM email_suppressions WHERE email=?",
+                                               (email,)).fetchone():
+                return None          # lifted by someone else in between
     finally:
         conn.close()
     before = dict(row)
     before["scope"] = _scope_str(_scope_set(before.get("scope")))
-    summary = (f"Email suppression lifted for {email} by {actor or 'unknown'} "
-               f"(was {before['scope']}: {before.get('reason')})" + (f" — {reason[:200]}" if reason else ""))
+    if isinstance(actor, dict):
+        who = actor.get("username") or actor.get("email") or "unknown"
+    else:
+        who = actor or "unknown"
+    if lifted:
+        result = "ok"
+        summary = (f"Email suppression lifted for {email} by {who} "
+                   f"(was {before['scope']}: {before.get('reason')})" + (f" — {reason[:200]}" if reason else ""))
+    else:
+        result = "refused"
+        summary = (f"Email suppression NOT lifted for {email} ({before.get('reason')}: the person's own opt-out) "
+                   f"— asked by {who}")
     try:
         import admin_events
         recorder = getattr(admin_events, "record_admin_action", None)
         if recorder is not None:
-            recorder(actor or "unknown", "email.unsuppressed", target=email, before=before, after=None,
-                     result="ok", summary=summary)
+            recorder(actor or "unknown", "email.unsuppressed", restaurant_id=restaurant_id, target=email,
+                     before=before, after=({"reason": reason} if reason else None) if lifted else None,
+                     result=result, summary=summary, db_path=None if db_path == DB_PATH else db_path)
         else:
             admin_events.record("admin", "email.unsuppressed", email=email, summary=summary,
-                                payload={"actor": actor, "before": before, "reason": reason},
+                                payload={"actor": who, "before": before, "reason": reason},
                                 db_path=db_path)
     except Exception as e:
         print(f"[suppression] audit of the lift for {email} failed: {e}")
+    if not lifted:
+        return dict(before, refused=SUPPRESSION_NOT_LIFTABLE)
     return before
 
 

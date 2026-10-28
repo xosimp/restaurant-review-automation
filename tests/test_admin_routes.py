@@ -98,7 +98,9 @@ def test_admin_route_allows_real_admin(monkeypatch, app, db_path):
 # ── deactivate / reactivate client ──────────────────────────────────────────
 # Deactivating ends a login's sessions, so it is a step-up action (owner
 # decision 4, fix round A): the fake admin carries a fresh re-auth stamp,
-# as a session whose password was just typed does.
+# as a session whose password was just typed does. Each login here is its
+# restaurant's only owner, so the request confirms it ({force: true}, admin
+# audit 10/27/26 F15).
 
 def _stepped_up_admin():
     return {"id": 999, "is_admin": 1, "reauth_at": auth.sql_utc()}
@@ -108,7 +110,7 @@ def test_deactivate_client_flips_is_active(monkeypatch, app, db_path):
     monkeypatch.setattr(auth, "get_current_user", _stepped_up_admin)
     rid = _restaurant(db_path)
     uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
-    with app.test_request_context(f"/admin/deactivate-client/{uid}", method="POST"):
+    with app.test_request_context(f"/admin/deactivate-client/{uid}", method="POST", json={"force": True}):
         deactivate_client(uid)
     conn = get_conn(db_path)
     row = conn.execute("SELECT is_active FROM users WHERE id=?", (uid,)).fetchone()
@@ -121,7 +123,7 @@ def test_deactivated_user_cannot_log_in(monkeypatch, app, db_path):
     monkeypatch.setattr(auth, "get_current_user", _stepped_up_admin)
     rid = _restaurant(db_path)
     uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
-    with app.test_request_context(f"/admin/deactivate-client/{uid}", method="POST"):
+    with app.test_request_context(f"/admin/deactivate-client/{uid}", method="POST", json={"force": True}):
         deactivate_client(uid)
     assert verify_password("alice", "pw", db_path=db_path) is None
 
@@ -144,7 +146,7 @@ def test_reactivate_client_flips_is_active_back(monkeypatch, app, db_path):
     monkeypatch.setattr(auth, "get_current_user", _stepped_up_admin)
     rid = _restaurant(db_path)
     uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
-    with app.test_request_context(f"/admin/deactivate-client/{uid}", method="POST"):
+    with app.test_request_context(f"/admin/deactivate-client/{uid}", method="POST", json={"force": True}):
         deactivate_client(uid)
     assert verify_password("alice", "pw", db_path=db_path) is None
     with app.test_request_context(f"/admin/reactivate-client/{uid}", method="POST"):

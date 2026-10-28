@@ -548,7 +548,7 @@ each chosen so no two adjacent sections share a silhouette:
 | Module join | `.hb-join` — pills joined by a lit ember line | The cross-module mark on a hero card |
 | Numbered card | `.hb-card.hb-rec` in `.hb-recs` (3-up) — `.t` the action (verb first), `.why` why now, `.meta` pills (`.usd` "$N/mo at stake" only when measured, with `.hb-dbasis` "covers one Tuesday's overstaffing, per month" under it from `dollars_basis` — one Home can carry three labor figures of different scope, and each says its own; the focus card's `.money` and a Needs attention row carry the same line — then timeframe · impact — **no evidence-strength pill**: it was a second verdict that could contradict the confidence on the same card, and the confidence's Evidence strength row says it, measured), an "AI-written" `.ck-tag` after the title when `model_written`, `.ev` evidence, ONE confidence line (`.cf.hb-conf`, see §12 **Confidence**: "72% confidence — what it rests on · Why?"), `.ig` "If ignored:", then the footer: one-tap action (reprice) / Measure it / open module / Could also be… (`data-explain`, only when the source has an alternative) / Assign (inline `.hb-assign` select, only with assignees) / Done · Pass, and the ✕ hide; "Restore hidden" in the section head brings back the last one hidden (`dismissed[0]`). iOS: `HomeRecommendations` rows, same order, "Restore hidden" under the card | Recommendations — every card answers what, why now, $, how sure, if ignored |
 | Quieter line | `.hb-quiet` under the cards — "Quieter: Trim day — the last four went by unanswered." + a text button per kind ("Show trim day again" → `restore_kind`). iOS: the same line under the card | A kind the owner has let expire unanswered four times running |
-| Check, warning and miss marks (9/27/26) | One disc everywhere a status is marked: `.cv-ok` (the soft green disc, a CSS-drawn dark-green tick), `.cv-warn` (the same disc in amber, a dark "!"), `.cv-bad` (red, a dark ×) - 18px inline, `.cv-md` 20px in a step row. The tokens sit on `:root` (`--hb-pop*`, `--hb-wpop*`, `--hb-bpop*`, redefined under `[data-theme="dark"]`), so a disc reads the same on every page. Used by the Daily report (How the night was built, Today's wins and risks, Tomorrow, the graded predictions), Home's and the invoice's all-clear rows, the group table, Intel's read and listing checklist, the AI visibility road, the Studio's "every rule kept", the price monitor, schedule availability, Account's security list and recovery email, the Labor all-clear and the notifications calm state. A ✓ inside a button or a toast is text, not a mark, and stays | Never a pale tint and a bare glyph for status |
+| Check, warning and miss marks (9/27/26) | One disc everywhere a status is marked: `.cv-ok` (the soft green disc, a CSS-drawn dark-green tick), `.cv-warn` (the same disc in amber, a dark "!"), `.cv-bad` (red, a dark ×) - 18px inline, `.cv-md` 20px in a step row. The tokens sit on `:root` (`--hb-pop*`, `--hb-wpop*`, `--hb-bpop*`, redefined under `[data-theme="dark"]`), so a disc reads the same on every page. Used by the Daily report (How the night was built, Today's wins and risks, Tomorrow, the graded predictions), Home's and the invoice's all-clear rows, the group table, Intel's read and listing checklist, the AI visibility road, the Studio's "every rule kept", the price monitor, schedule availability, Account's security list and recovery email, the Labor all-clear, the notifications calm state and the admin console's checks (setup steps, onboarding counts, the clean billing-health line — the same rules, the dark tokens on the console's own `:root`, admin audit 10/27/26). A ✓ inside a button or a toast is text, not a mark, and stays | Never a pale tint and a bare glyph for status |
 | Receipt strip | `.hb-rcpt .it` — check + sentence + module. The check is a soft green disc with a dark-green tick (`--hb-pop` / `--hb-pop2` radial, the tick `--hb-pop-ink`; the all-clear row's `.hb-clear .ok` wears the same disc - every Home check is one, a `--hb-pop-ring` halo and `--hb-pop-glow`), never a pale tint: done is good news (owner, 9/26/26) | What Cavnar AI did — finished things must not look like a to-do |
 | Timeline | `.hb-tl .it` with a tone dot on a rail | The morning brief, read once top to bottom |
 | Stat tile | `.hb-stats .hb-stat` (+ `.good` / `.warn` / `.bad` — a gap still open, "Still on the table", is `.warn` amber; ember is never a tile's status, §9) | Four *kinds* of number that must never be added together. On Home's worth card they sit in `.hb-vsplit`: the measured tile alone under "What was measured", the estimate / alert total / gap under "What Cavnar surfaced · still available" ("estimates and gaps, never added in"), side by side, stacked under 760px, the second group absent when it has nothing (`.solo`). The section is "Worth · What Cavnar AI measured and surfaced" — never "Measured" over tiles that grow as the restaurant does worse. The measured tile reads **"Measured, net"** once anything got worse: `net_monthly` (below zero when that is what was measured, `.bad`), with "$X/mo from N that improved, less $Y/mo from M that got worse" under it (`hbNetSentence`: M is `worsened.priced_count` — the dollars only cover priced results — and any others are said as "(K more got worse with no dollar figure)"). A card whose only wins have no honest price (a rating rise, `unpriced_wins`) reads "N improved · not priced in dollars", never "Nothing yet" and never a figure |
@@ -2094,24 +2094,82 @@ never with text: the rebuild cut the visible text across its screens by 69%
   sheet, status page) at the foot of the rail. Every older hash (`#clients`,
   `#jobs`, `#emails`, `#recommendations/<id>`, …) lands in the area and tab it
   moved to (`ALIAS`); keep that map when a page moves again.
-- **Palette** — the web app's dark staircase (`--bg` canvas < `--rail` <
-  `--card` < `--raised`), Clash Display titles, Space Grotesk for every figure,
-  Apfel Grotezk for the rest; ember for the one primary action per screen and
-  the kickers; green / amber / red only for state.
+- **Palette** — the web app's dark staircase (`--rail`, the darkest, < `--bg`
+  canvas < `--card` < `--raised`), Clash Display titles, Space Grotesk for every
+  figure, Apfel Grotezk for the rest; ember for the one primary action per
+  screen and the kickers; green / amber / red only for state. Every colour in
+  the rules is a variable — the named literals are `--ember-t` (ember as text,
+  a link's hover), `--ember-press`, `--on-ember`, `--raised2` (a selected
+  control), the white fills `--fill-1` / `--fill` / `--fill-2` (and `--fill-3`,
+  the grey of an unknown or neutral health-ring arc) and the hairlines
+  `--line-red` / `--line-amber` (admin audit 10/27/26).
 - **Area header** — kicker, title, and one sentence written by rules from the
   page's own payload ("1 job is failing · 14 jobs are overdue.") — no model on
-  load.
-- **Rank, don't list** — hero figures (`.kc`, 40px) for the few that matter,
-  then a figure strip (`.strip`, one card split into cells, each a link), then
-  the lists.
+  load. The kicker shows only when it differs from the title (`head()`): never
+  "Operations / Operations".
+- **Rank, don't list** — hero figures (`.kc`) for the few that matter, then a
+  figure strip (`.strip`, one card split into cells), then the lists. Figures
+  sit on one scale: `--fig-xl` 40px (hero), `--fig-l` 28px (a subsystem card),
+  `--fig-m` 22px (a strip cell, a `.kpi`), `--fig-s` 16px (a `.meter`). A strip's
+  cells wrap by width (140px basis, the hairlines under the card's edge), so a
+  14-cell strip reads at a laptop; a cell links where its figure is acted on,
+  and with nowhere else to go (the page already open) it is a plain cell
+  (`stripCell('', …)`), never a link. A long strip keeps the figures a rule
+  pages on and puts the rest under a `<details class="card">` "More …"
+  (Operations → RPOWER: six, then eight more).
+- **Each figure once per screen** (admin audit 10/27/26). Overview: four hero
+  cards (MRR, paying, signups, platform health), then a three-cell strip of
+  what the ring doesn't carry (support queue, AI & data APIs — every vendor,
+  Google Places included, so never labelled "AI spend" — and API latency —
+  neutral icons, the ring holds the verdicts), then Needs you; the critical
+  count is its badge. The client page: churn in the strip and its card, setup
+  in the Overview ring, modules on Data & integrations, the billing status
+  once on the Billing tab, AI spend once on Messages & AI → AI (the tab's own
+  strip; the header's "AI · 30 days" cell steps aside there); an issue row on the client's own page carries no link back
+  to it (`needRow(i, {here: true})`). Before adding a tile, look for the figure
+  already on the screen.
+- **The laptop band, 1201–1440px.** One `@media (max-width:1440px)` rule: the
+  Overview hero (`.ovhero`, never an inline grid) two by two, `.g6` three
+  across, `.g8` four, a wide split (`.split.wide`, Jobs) stacked with its side
+  cards in an auto-fill grid. Check a new screen at 1280×800 as well as wide.
 - **Operational list** (`.lst` / `.li` / `.lx`) in place of a dense table: one
   row per thing with its state pill, one action, and the rest on expand
-  (`toggleRow`). A secondary action shows on hover (`.reveal`); a failing
-  row's action is always shown.
+  (`toggleRow`). A row is one line: what a thing does or why goes in the open
+  row (a job's description). A secondary action shows on hover (`.reveal`),
+  on keyboard focus and on a touch screen; a failing row's action is always
+  shown — secondary, never ember, because the row is already red. Fixed
+  numeric columns get a `.lbl` header row (Operations → RPOWER's stores,
+  Integrations' connections — state, last ok, actions on fixed widths,
+  `INT_HEAD` — and the Customers list). The fleet list's Data column is the
+  slim row's freshness (`_fleetDataCell`: a POS by the server's own sync
+  state, else the review fetch's age); a row the server sent no freshness
+  for is "—", never "never".
+- **One ember action per screen.** Rows carry secondary buttons under the
+  header's primary: a row list never repeats `btn p` (Open client, Apply,
+  Post update, Run now). An inline-edit row's Save is secondary until that
+  row is edited, then ember (the event calendar, `evDirty`).
+- **Destructive and fleet-wide actions look like it** — `.btn.d` for "Stop all
+  AI", Purge (cannot be undone) and Reset two-factor (a whole restaurant);
+  never a quiet ghost button. A menu's danger zone is `.dz`.
 - **Tables** stay for detail lists only, `limit` rows at a time with "Show
-  all", and raw logs sit behind a `<details class="card">`.
+  all", and raw logs sit behind a `<details class="card">`. A table inside a
+  card, an open row or a box is that surface — no border, radius or shadow of
+  its own (`.card .tw`), never a box in a box.
 - **Filters** are a segmented control (`.seg`) of the five or six that matter,
-  the rest under a More filters menu.
+  the rest under a More filters menu or a `<select>` (the support queue: one
+  segment, then severity and sort as selects; never three segs in one bar, and
+  a count said once). Every filter control is 32px; a control inside a `.seg`
+  or `.filters` bar is 26px. A filter over a log reads the server's filtered
+  rows, never the newest 200 filtered in the browser (`filteredRows`, admin
+  audit 10/27/26 P-11): Email's Undeliverable or a type
+  (`GET /admin/api/emails/rows`), Push's Failed
+  (`GET /admin/api/notifications/pushes`) — the house pulse while it reads,
+  only the newest answer for the filter still on screen drawn, a failed read
+  said with no sample in its place, the count what came back ("200+" at the
+  limit). Data sources filter on the server's state — failing, stale (no
+  failure, but the last good read is older than the source's cadence) or ok —
+  and a server that doesn't report staleness can't call a row "ok" ("not
+  failing").
 - **Actions menu** (`.menu`, `menuToggle`) — a client's 25 actions in one
   searchable menu, grouped, the danger zone red and last; every action still
   confirms.
@@ -2120,7 +2178,8 @@ never with text: the rebuild cut the visible text across its screens by 69%
   names the table), never 0 or "all clear"; a payload with failed reads gets
   the amber line (`errBanner`) and every fleet header its age (`asOf`). A
   platform system whose read failed is a grey ring segment, never green; the
-  others are green / amber / red by their own thresholds. The rail polls the
+  others are green / amber / red by the server's verdict (below), never a
+  threshold of the page's own. The rail polls the
   slim badges read; when a poll fails it keeps the last counts, dimmed
   (`.rail.stale`), and the heartbeat says "unknown" with when it last read.
 - **Writes say what really happened.** Every write control carries `.w`
@@ -2155,6 +2214,46 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **A form an action needs** opens in one modal (`formOpen(spec)`: fields,
   the go button, `submit` returning the server's answer); a refusal keeps it
   open with the server's sentence under the buttons.
+- **Loading and outcomes, the house way** (admin audit 10/27/26). A line still
+  reading is the sliding ember pulse — `pulse(label[, words])` draws
+  `.dr-pulse` with words worth keeping beside it ("up to two minutes") —
+  never "Loading…" or "Working…". A write in flight is a busy button
+  (`busyBtn(btn, on)`, `[aria-busy]`: the pulse slides along its foot; whether
+  it is disabled stays with the caller). A modal's status line says its outcome
+  in colour (`statusSay(id, ok, msg)`): green when it worked, red when it
+  didn't, amber for a working connection with a fault, plain while it only
+  informs — no ✓ / ✕ glyphs standing in for colour.
+- **Text.** Content text is 12px or more (a form label 12.5px, a timestamp
+  12px); kickers, `th`, pills and chips stay at 10.5–11.5px. A chart's axis
+  text is 11px and the chart is drawn at the width it is shown (`fitChart(id,
+  draw)` re-draws `growthChart` / `lineChart` at its container's width), so it
+  reads 11px at every width. A spark's end dot is HTML over the line
+  (`.spk-end`) — never a circle inside a stretched SVG. A time is "6:45pm"
+  ("6pm" on the hour, `fmtT`), never the locale's "6:45 PM".
+- **Explainers are behind disclosure** (§12e). A card's method sentence goes
+  in its heading's `title`, a longer one in `<details class="more-d">` "How
+  this is counted" / "How the ceilings work"; a caption that restated the
+  heading goes. An empty card says what would fill it ("No email opened in 30
+  days."), never a lone "—". A column already headed Contract says "sent" /
+  "opened" / "signed" (`contractPill(st, true)`). A health panel that is clean
+  is one checked line (Billing health); only a section with something in it
+  is drawn in full.
+- **One vocabulary for state** (admin audit 10/27/26, V23). A row's state is
+  a `.pill` (`pill(tone, text)`: good / warn / bad / neu / emb, or the older
+  ok / off / info / ember) — `.b` is folded into it; a toneless tag is a
+  `.chip`; every status dot is `.dot` (ok / warn / bad / off / info / run,
+  `.ring` set apart in a row) — a legend's key, a timeline's tone, a job's
+  state — never an inline `<i>` or a "●" glyph; a check is the house disc
+  (`.cv-ok`, `.cv-warn`, `.cv-bad`, ported from §4 with its dark tokens),
+  never a "✓" glyph or a hand-drawn circle. A card that is its own padded
+  column is `class="card pad"` (16px 18px, a 12px gap), never the inline
+  string (V19).
+- **A release has a verdict** (admin audit 10/27/26, O10). Engineering's
+  Deployment card carries platform_monitor's release health
+  (`supervisor.release` in `/admin/api/system`): pending while the window
+  after the boot is watched, ok, hold the next deploy (its warn lines in
+  amber) or regressed — roll back (its urgent lines in red). No supervisor in
+  the process, or a server that doesn't report it, is unknown — never ok.
 - **A tab's extra reads load after first paint** (`lazy(id, fn)`): the card
   shows skeleton lines, then its content, or its own amber line if its read
   failed — one slow or broken panel never blanks the page.
@@ -2164,17 +2263,24 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **Spend against a ceiling** is a `.meter` tile: spend of budget, a bar
   (green, amber past the warning line, red when stopped) and when it resets
   (M/D/YY).
-- **A system's state is the server's verdict** (Operations, fix round UI-2).
-  Each system takes its tone from what the server already decided — a job's
-  own state, the heartbeat's `stale` / `wedged` / `loop_stalled`, a platform
-  issue's severity, the messaging problems, the AI health status — never a
-  threshold the page makes up (`opsState`). Red where the server pages or
-  raised a critical, amber for its warnings, grey "Unknown" when the read
-  behind it failed. The area's sentence names every system that is failing,
+- **A system's state is the server's verdict** (fix round UI-2; one reading
+  since admin audit 10/27/26, W2/O1). The Overview ring, the rail's scheduler
+  pill and Operations' cards and sentence all draw one server reading,
+  `GET /admin/api/ops/state` (`admin_ops.ops_state`: each system ok / warn /
+  bad / unknown with its reason), read once and shared for 30 seconds
+  (`opsStateRead`) — never a threshold the page makes up (`opsState`), the
+  heartbeat's stale minutes included (`heartbeat.stale_after_minutes`). Red
+  where the server pages or raised a critical, amber for its warnings, grey
+  "Unknown" when the read behind it failed. The area's sentence names every system that is failing,
   degraded or unread, and says "Everything ran" only when all were read
-  (`opsSentence`). The subsystem cards (`subCard`, six to a row) carry the
-  state as the icon's tone, a red border when failing, and the first word of
-  the line under the trend.
+  (`opsSentence`). The subsystem cards (`subCard`, six to a row above 1440px,
+  three in the laptop band) carry the state as the icon's tone, a red border
+  when failing, and the first word of the line under the trend; the unit
+  wraps under the figure. A card's 7-day trend is the server's daily series
+  (`daySeries`: jobs `failures_daily`, push `push_daily`, email `daily` —
+  Central days; AI on UTC days like its ledger, said in the trend's title),
+  never the browser bucketing a capped sample; a series the server doesn't
+  send is said on the card, never drawn as seven zeros.
 - **A job's runs are squares in their own state** (`.sq`): ok green, partial
   amber (`.p`), failed red (`.x`), running ember (`.r`), no run yet empty
   (`.e`), newest on the right. Partial and running are never green; neither
@@ -2203,9 +2309,17 @@ never with text: the rebuild cut the visible text across its screens by 69%
     tick (the ranking's taken rate by weight bucket), dimmed under the
     floor; a bar with rows written later from raw history shows that
     share in grey under the ember (`featureWeekBars`).
-- **Reads go three at a time** (`apiAll(paths, 3)`) — four request threads
-  serve the whole platform — and an area's reads are shared across its tabs
-  for a minute; Refresh reads them again with `?fresh=1`.
+- **Reads go two at a time, through one queue** (admin audit 10/27/26,
+  P-05). Every page read — `apiAll`, each lazy panel, a filter's rows — waits
+  its turn in `api()`'s read queue (`READ_MAX` 2), because four request
+  threads serve the whole platform; the rail's poll, writes and job polls go
+  around it, and a read still waiting when the admin moves on leaves the
+  queue (one in flight is aborted). The server's own `ADMIN_READ_CONCURRENCY`
+  answers 503 busy past its limit, which `api()` waits out once. Only
+  Operations shares its reads across its tabs for a minute (`_ops`), and the
+  platform verdict is shared for 30 seconds by Overview, the rail and
+  Operations; every other area reads again on each visit. Refresh reads them
+  again with `?fresh=1`.
 - **A cursor-paged log** (the audit trail, refused attempts) ends in an
   "Older" row (`.more`) that appends the next page by `before_id`; filters go
   to the server. A numbered `.pager` is for lists the server pages by number.

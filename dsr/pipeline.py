@@ -1611,7 +1611,8 @@ def nights_missing(db_path=None, now_utc=None, use_cache=True):
         if not found:
             continue
         try:
-            if not pos.connected_provider(r.id)[0]:
+            # The row in hand (admin audit 10/27/26 P-06): no second read of it.
+            if not pos.connected_provider_for(r)[0]:
                 continue
         except Exception:
             continue

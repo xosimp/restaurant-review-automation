@@ -223,7 +223,13 @@ def admin_list_services(current_user):
 def admin_ops_state(current_user):
     """One server reading of each system's state — scheduler, jobs, api,
     email, sms, push, ai, integrations: {state: ok|warn|bad|unknown, reason,
-    since} — for Overview and Operations (#158), which derived them in the
-    browser and disagreed. Read-only; support may read it."""
+    since} (#158), plus `thresholds`, the server's own cut-offs the page
+    labels with. The console reads it in three places — the Overview health
+    ring and its sentence, the rail's scheduler pill (its two-minute poll),
+    and the Operations cards and sentence — through one shared read
+    (opsStateRead, admin audit 10/27/26 W2/O1). Kept and shared for
+    ADMIN_OPS_STATE_TTL_SECONDS on request threads (admin_ops.ops_state), so
+    the rail's poll is no fresh reading; it never starts a fleet build and
+    takes no admin read slot (status_bp). Read-only; support may read it."""
     import admin_ops
     return jsonify(admin_ops.ops_state())

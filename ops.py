@@ -1931,6 +1931,14 @@ def run_admin_task(kind, restaurant_id, name, fn, *args, context="", **kwargs):
                               "result": res})
         except Exception as e:
             finish_async_job(job_id, "error", {"ok": False, "error": str(e)[:300]})
+        finally:
+            # Finished after the POST that started it dropped the console's
+            # fleet memo (admin audit 10/27/26 P-14): drop it again.
+            try:
+                import admin_ops as _admin_ops_done
+                _admin_ops_done.invalidate_fleet_cache()
+            except Exception as e:
+                log.warning(f"fleet memo not dropped after admin task {job_id}: {e}")
     _admin_pool.submit(_go)
     return job_id, False
 
@@ -6010,12 +6018,16 @@ def send_operator_weekly_digest():
     import html as _html
     import emails as _emails_ops
     import admin_ops
-    ov = admin_ops.overview()
-    k = ov.get("kpis") or {}
-    try:
-        recs = admin_ops.clients().get("clients") or []
-    except Exception:
-        recs = []
+    # One fleet build for both reads (admin audit 10/27/26 P-16): each built
+    # the whole fleet on the scheduler thread.
+    with admin_ops.one_fleet_build():
+        ov = admin_ops.overview()
+        k = ov.get("kpis") or {}
+        try:
+            recs = admin_ops.clients().get("clients") or []
+        except Exception as e:
+            log.warning("operator digest: the client records could not be read: %s", e)
+            recs = []
     # The console's records: customer accounts only (C's segment), their
     # churn read under `churn_risk` (level, reasons, points) — this read
     # `churn`/`score`, keys the records never carried, so the at-risk list

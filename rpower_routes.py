@@ -205,6 +205,7 @@ def _bootstrap_rpower(restaurant_id, current_user):
 
 @rpower_bp.route("/admin/rpower/sync/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events.audited("pos.rpower.sync_started")
 def sync_rpower(restaurant_id, current_user):
     """Kick a sync in the background so the admin screen doesn't hang on it —
     through pos.sync_restaurant on the bounded admin pool
@@ -354,10 +355,20 @@ def revoke_rpower_credential(cred_id, current_user):
     before = credentials.get_credential(cred_id)
     if not before:
         return jsonify(ok=False, error="No such credential."), 404
+    if before.get("revoked_at"):
+        # Already retired (admin audit 10/27/26 C8): it answered 200 "Revoked."
+        # with ok false, and audited a failure that was a repeat.
+        _audit_credential(current_user, "rpower.credential_revoked", cred_id, before, before, result="refused",
+                          summary=f"{current_user.get('username') or 'admin'}: RPOWER credential #{cred_id} "
+                                  "was already revoked")
+        return jsonify(ok=False, error="That credential is already revoked.", stores=before.get("stores")), 409
     out = credentials.revoke(cred_id, actor=current_user.get("username") or "admin")
     _audit_credential(current_user, "rpower.credential_revoked", cred_id, before,
                       credentials.get_credential(cred_id), result="ok" if out.get("ok") else "failed")
-    return jsonify(ok=bool(out.get("ok")), stores=out.get("stores"),
+    if not out.get("ok"):
+        return jsonify(ok=False, error="The credential could not be revoked — read it again and retry.",
+                       stores=out.get("stores")), 409
+    return jsonify(ok=True, stores=out.get("stores"),
                    message=f"Revoked. {out.get('stores')} store(s) stop syncing until re-bound.")
 
 

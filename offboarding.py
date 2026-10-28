@@ -200,10 +200,31 @@ def _request_view(row):
             "overdue": bool(left is not None and left < 0)}
 
 
-def _not_needed(step, row, connected):
+def _stripe_live(row, db_path=None):
+    """True while the restaurant's own Stripe subscription mirror says live
+    (billing_jobs.live_subscription — what the webhooks and the reconcile
+    write); None when the mirror can't be read."""
+    try:
+        import billing_jobs
+        return bool(billing_jobs.live_subscription(int(row["id"]), db_path=db_path))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="offboarding_stripe_mirror", context=f"restaurant_id={row.get('id')}")
+        return None
+
+
+def _not_needed(step, row, connected, db_path=None):
     """Why this step has nothing to do on this account, or None."""
     status = (row.get("billing_status") or "").lower()
     if step == "stripe":
+        # The Stripe subscription mirror decides, never billing_status alone:
+        # an admin can set "churned" by hand (the legacy override), and the
+        # step then read "Stripe already reported the subscription ended" and
+        # let the delete through while Stripe kept billing (admin audit
+        # 10/27/26 F2). A mirror that can't be read leaves the step to do.
+        live = _stripe_live(row, db_path=db_path)
+        if live is not False:
+            return None
         if not (row.get("stripe_customer_id") or "").strip():
             return "No Stripe customer on this account."
         if status in ("churned", "canceled"):
@@ -246,7 +267,7 @@ def checklist(restaurant_id, db_path=None):
             item.update(status=s["status"], actor=s["actor"], note=s["note"], updated_at=s["updated_at"],
                         detail=json.loads(s["detail_json"]) if s.get("detail_json") else None)
         if item["status"] == "pending":
-            why = _not_needed(key, row, connected)
+            why = _not_needed(key, row, connected, db_path=db_path)
             if why:
                 item.update(status="not_needed", note=why)
         steps.append(item)
