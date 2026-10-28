@@ -757,8 +757,10 @@ function spark(vals, w, h, color, id){
   return `<div class="spk"><svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true" style="display:block;overflow:visible"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#${id})"/><polyline points="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg><i class="spk-end" style="left:${(ex/w*100).toFixed(2)}%;top:${(ey/h*100).toFixed(2)}%;color:${color}"></i></div>`;
 }
 function runSquares(seq){ return `<span class="sq">${seq.map(s=>`<i class="${s===null?'e':(s?'':'x')}"></i>`).join('')}</span>`; }
+// The kicker only when it differs from the title — "Operations / Operations"
+// said the same word twice (admin audit 10/27/26 V18).
 function head(kicker, title, sub, right){
-  return `<header class="ahead"><div class="t"><span class="kick">${kicker}</span><h1>${title}</h1>${sub?`<p>${sub}</p>`:''}</div>${right?`<div class="r">${right}</div>`:''}</header>`;
+  return `<header class="ahead"><div class="t">${kicker && kicker !== title ? `<span class="kick">${kicker}</span>` : ''}<h1>${title}</h1>${sub?`<p>${sub}</p>`:''}</div>${right?`<div class="r">${right}</div>`:''}</header>`;
 }
 function tabsNav(base, tabs, on){
   return `<nav class="tabs">${tabs.map(t=>`<a href="#${base}/${t[0]}" class="${on===t[0]?'on':''}">${t[1]}${t[2]?` <span class="cnt ${t[3]||''}">${t[2]}</span>`:''}</a>`).join('')}</nav>`;
@@ -1194,8 +1196,6 @@ function kpi(v, l, cls, small){ return `<div class="kpi ${cls||''}"><div class="
 function okRes(d){ return !!d && d.ok !== false && !(d._status >= 400); }
 function errText(d, fallback){ return (d && d.error) || ((fallback || 'That didn\'t work') + (d && d._status ? ' (HTTP ' + d._status + ')' : '') + '.'); }
 function say(d, okMsg){ const ok = okRes(d); toast(ok ? ((d && d.message) || okMsg || 'Done') : errText(d), ok ? 'good' : 'bad'); return ok; }
-// An admin job (#153): the action answers {job_id} at once and the work runs
-// on the server's bounded pool; its poll URL answers {status: pending} until
 // Loading and in-flight, the house way (admin audit 10/27/26 V13): the sliding
 // ember pulse, never "…" text — pulse(label[, say]) for a line still reading
 // (say: words worth keeping beside the bar, "up to two minutes"); busyBtn for
@@ -1206,6 +1206,8 @@ function say(d, okMsg){ const ok = okRes(d); toast(ok ? ((d && d.message) || okM
 function pulse(label, sayIt){ return '<span class="pulse-line" role="status" aria-label="' + esc(label || 'Working') + '"><span class="dr-pulse"><i></i></span>' + (sayIt ? esc(sayIt) : '') + '</span>'; }
 function busyBtn(b, on){ if(!b) return; if(on) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy'); }
 function statusSay(id, ok, msg){ var el = $(id); if(!el) return; el.textContent = msg; el.style.color = ok == null ? '' : (ok === 'warn' ? 'var(--amber-t)' : (ok ? 'var(--green-t)' : 'var(--red-t)')); }
+// An admin job (#153): the action answers {job_id} at once and the work runs
+// on the server's bounded pool; its poll URL answers {status: pending} until
 // the result is in. Polled every 2 s, five minutes at most. A poll carries a
 // method, so it is never dropped when the admin moves to another page.
 async function pollJob(url, onTick){
@@ -3317,7 +3319,7 @@ async function aiCallOpen(id){
   let d; try{ d = await api('/admin/api/ai/calls/' + encodeURIComponent(id), {method:'GET'}); }catch(e){ d = {ok:false, error:"Couldn't reach the server"}; }
   const err = readErr(d);
   if(err){ $('aic-body').innerHTML = `<div class="err">${esc(err)}</div>`; return; }
-  const c = d.call || {}, pre = t => `<pre style="margin:0;padding:12px;background:var(--strip);color:var(--ink2);border:1px solid var(--line);border-radius:10px;font-family:var(--num);font-size:11.5px;line-height:1.5;white-space:pre-wrap;max-height:300px;overflow:auto">${esc(t)}</pre>`;
+  const c = d.call || {}, pre = t => `<pre style="margin:0;padding:12px;background:var(--strip);color:var(--ink2);border:1px solid var(--line);border-radius:10px;font-family:var(--num);font-size:12px;line-height:1.5;white-space:pre-wrap;max-height:300px;overflow:auto">${esc(t)}</pre>`;
   $('aic-body').innerHTML = `<div class="kv" style="grid-template-columns:130px 1fr;font-size:12.5px">
       <span class="k">When</span><span class="num">${fmtDT(c.created_at)}</span><span class="k">Workflow</span><span>${esc(c.action || '')} <span class="dim">${esc(c.model || '')}</span></span>
       <span class="k">Client</span><span>${c.restaurant_id ? clientLink(c.restaurant_id, '#' + c.restaurant_id) : '—'}</span><span class="k">Outcome</span><span>${esc(c.outcome || '')}${c.stop_reason ? ' · ' + esc(c.stop_reason) : ''}${c.attempts > 1 ? ' · ' + c.attempts + ' attempts' : ''}</span>
@@ -3549,7 +3551,7 @@ async function engineering(tab){
     <section class="split">
       <div class="stack">${engSystem(S, sE)}${engProviders(S, sE)}</div>
       <div class="stack">${engKeys(sys, sE)}
-        <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Flags &amp; experiments</h2><span class="muted" style="font-size:12.5px">what changes behaviour without a deploy</span></div><div class="lst" style="border-top:1px solid var(--line)">
+        <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2 title="What changes behaviour without a deploy">Flags &amp; experiments</h2></div><div class="lst" style="border-top:1px solid var(--line)">
           ${expRows}
           ${!readErr(ex) && ex.env_pin ? flagRow('alert', 'Every restaurant is pinned', `SCHEDULE_EXPERIMENT_PIN=${esc(ex.env_pin)} — new weeks are not randomised`, pill('warn', 'env', false)) : ''}
           ${!readErr(ex) ? flagRow('users', 'Pinned restaurants', (ex.pins || []).length ? ex.pins.slice(0, 3).map(p => esc(p.restaurant || '#' + p.restaurant_id) + ' on ' + esc(p.arm)).join(' · ') + (ex.pins.length > 3 ? ' · +' + (ex.pins.length - 3) : '') : 'none — every restaurant is randomised', `<a class="btn s g" href="#engineering/experiments">Manage</a>`) : flagRow('flag', 'Schedule experiments', unknownV(readErr(ex)))}
@@ -3610,7 +3612,7 @@ function engSystem(S, sE){
   const dk = S.disk || {}, db = S.database || {}, wp = db.write || {}, vol = S.volume || {}, b = S.backup || {}, dr = S.drill, cr = S.credentials || {}, ai = S.ai || {};
   const TONE = {ok:'good', low:'warn', critical:'bad', stale:'bad', none:'neu', unknown:'neu', unconfigured:'bad', busy:'warn', failed:'bad'};
   const brk = ai.vendors ? Object.keys(ai.vendors).filter(v => ai.vendors[v].breaker !== 'closed') : [];
-  return `<div class="card" style="padding:6px 18px 8px"><div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px"><h2>System</h2><span class="muted" style="font-size:12px">this process, now</span></div><div class="lst">
+  return `<div class="card" style="padding:6px 18px 8px"><div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px"><h2>System</h2></div><div class="lst">
     ${sysRow('Disk', TONE[dk.state] || 'neu', dk.free_mb == null ? unknownV(dk.error) : `${fmtN(dk.free_mb)} MB free · ${dk.pct_free}%`, dk.free_mb == null ? '' : `database ${dk.db_mb} MB + WAL ${dk.wal_mb} MB of ${fmtN(dk.total_mb)} MB · low under ${fmtN(dk.low_below_mb)} MB, critical under ${fmtN(dk.critical_below_mb)} MB`)}
     ${sysRow('Database', db.error ? 'bad' : (TONE[wp.state] || 'neu') === 'good' && db.journal !== 'wal' ? 'warn' : (TONE[wp.state] || 'neu'), db.error ? unknownV(db.error) : `${esc(db.journal || '—')} · write ${esc(wp.state || '—')}${wp.ms != null ? ' ' + wp.ms + 'ms' : ''}`, `${esc(db.file || '')} · ${fmtN(db.clients)} client restaurants${wp.error ? ' · ' + esc(wp.error) : ''}`)}
     ${sysRow('Volume', vol.mount ? (vol.marker ? 'good' : 'warn') : 'neu', vol.mount ? esc(vol.mount) : 'no volume (local)', vol.marker ? 'marker written ' + (vol.marker.written_at ? fmtD(vol.marker.written_at) : '') + ' — an empty database here is refused at boot' : 'no volume marker yet')}
@@ -3639,7 +3641,7 @@ function engMobile(mc){
 function engProviders(S, sE){
   const p = S.providers || {}, keys = Object.keys(p).filter(k => k !== 'error');
   const T = {ok:'good', failing:'bad', error:'bad', unconfigured:'neu'};
-  return `<div class="card" style="padding:6px 18px 8px"><div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px"><h2>Providers</h2><span class="muted" style="font-size:12px">a live, non-sending check of each key</span></div><div class="lst">
+  return `<div class="card" style="padding:6px 18px 8px"><div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px"><h2 title="A live, non-sending check of each key">Providers</h2></div><div class="lst">
     ${sE ? unknownV(sE) : p.error ? unknownV(p.error) : keys.map(k => { const x = p[k]; return sysRow(esc(k.replace('_', ' ')), T[x.state] || 'neu', `${esc(x.state)}${x.streak > 1 ? ' ×' + fmtN(x.streak) : ''}`, `${x.detail ? esc(x.detail) + ' · ' : ''}checked ${agoWord(x.checked_at)}${x.state !== 'ok' ? ' · last good ' + (x.last_ok_at ? fmtDT(x.last_ok_at) : 'never') : ''}${x.latency_ms != null ? ' · ' + fmtN(Math.round(x.latency_ms)) + 'ms' : ''}`); }).join('') || '<div class="empty">No probe has run yet — the hourly provider check fills this.</div>'}
   </div></div>`;
 }
@@ -3647,8 +3649,8 @@ function engKeys(sys, sE){
   if(sE) return `<div class="card" style="padding:16px 18px"><h2>Keys on this server</h2><div style="margin-top:10px">${unknownV(sE)}</div></div>`;
   const keys = (sys.keys || []).slice().sort((a, b) => (b.required ? 1 : 0) - (a.required ? 1 : 0));
   const bad = keys.filter(k => k.state !== 'ok'), ok = keys.filter(k => k.state === 'ok');
-  return `<div class="card" style="padding:6px 18px 8px"><div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px"><h2>Keys on this server</h2><span class="muted" style="font-size:12.5px"><span class="n">${ok.length}</span> of <span class="n">${keys.length}</span> set · presence only, never a value</span></div><div class="lst">
-    ${bad.map(k => `<div class="li" style="padding:9px 0;gap:10px"><div class="tt"><b style="font-size:13px">${esc(k.label)}${k.required ? '' : ' <span class="dim" style="font-weight:400">optional</span>'}</b><span class="mono" style="font-size:11.5px">${esc((k.vars || []).join(' + '))}</span><span style="color:${k.required ? 'var(--red-t)' : 'var(--amber-t)'}">Without it: ${esc(k.breaks)}</span></div>${pill(k.required ? 'bad' : 'warn', esc(k.state))}</div>`).join('') || '<div class="empty">Every key this platform needs is set.</div>'}
+  return `<div class="card" style="padding:6px 18px 8px"><div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px"><h2>Keys on this server</h2><span class="muted" style="font-size:12.5px" title="Presence only, never a value"><span class="n">${ok.length}</span> of <span class="n">${keys.length}</span> set</span></div><div class="lst">
+    ${bad.map(k => `<div class="li" style="padding:9px 0;gap:10px"><div class="tt"><b style="font-size:13px">${esc(k.label)}${k.required ? '' : ' <span class="dim" style="font-weight:400">optional</span>'}</b><span class="mono" style="font-size:12px">${esc((k.vars || []).join(' + '))}</span><span style="color:${k.required ? 'var(--red-t)' : 'var(--amber-t)'}">Without it: ${esc(k.breaks)}</span></div>${pill(k.required ? 'bad' : 'warn', esc(k.state))}</div>`).join('') || '<div class="empty">Every key this platform needs is set.</div>'}
     ${ok.length ? `<details class="more-d" style="margin:0 -18px"><summary>Set · <span class="n">${ok.length}</span></summary><div style="padding:0 18px 12px;display:flex;flex-wrap:wrap;gap:6px">${ok.map(k => `<span class="chip ok" title="${esc((k.vars || []).join(' + '))}">${esc(k.label)}</span>`).join('')}</div></details>` : ''}
   </div></div>`;
 }
@@ -3795,9 +3797,9 @@ async function engStatus(){
   const incRow = i => `<div class="li click" onclick="toggleRow(this)" style="align-items:flex-start">${pill(SVC_TONE[i.severity] || 'warn', esc(i.severity))}<div class="tt"><b>${esc(i.title)}</b><span>${esc(i.status)} · posted ${fmtDT(i.created_at)}${(i.affected_keys || []).length ? ' · ' + i.affected_keys.map(k => esc(names[k] || k)).join(', ') : ' · no service named'}</span></div><span class="age">${ago(i.updated_at || i.created_at)}</span><span class="chev">${ico('chev','s')}</span></div>
     <div class="lx"><div class="box">${i.body ? `<span class="ink2" style="font-size:13px;white-space:pre-wrap">${esc(i.body)}</span>` : ''}
       ${(i.updates || []).length ? `<div class="list">${i.updates.map(u => `<div class="it"><span class="when">${fmtDT(u.created_at)}</span><span>${esc(u.message)}</span><span class="chip">${esc(u.status)}</span></div>`).join('')}</div>` : ''}
-      ${i.status !== 'resolved' ? `<div class="fl w"><textarea id="iu-${i.id}" rows="2" placeholder="What's changed — this is published on /status"></textarea><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select id="is-${i.id}">${statuses.map(s => `<option ${s === i.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select><button class="btn s p w" onclick="incidentUpdate(${i.id},'${jsq(i.title)}')">Post update</button><button class="btn s w" onclick="incidentResolve(${i.id},'${jsq(i.title)}')">Resolve</button></div></div>` : ''}</div></div>`;
+      ${i.status !== 'resolved' ? `<div class="fl w"><textarea id="iu-${i.id}" rows="2" placeholder="What's changed — this is published on /status"></textarea><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select id="is-${i.id}">${statuses.map(s => `<option ${s === i.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select><button class="btn s w" onclick="incidentUpdate(${i.id},'${jsq(i.title)}')">Post update</button><button class="btn s w" onclick="incidentResolve(${i.id},'${jsq(i.title)}')">Resolve</button></div></div>` : ''}</div></div>`;
   V().innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">What clients see at /status. The scheduler's checks rewrite each service every few minutes — to hold one down, post an incident naming it.</span><button class="btn p w" onclick="incidentOpen()">${ico('plus','xs')}Post an incident</button></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px" title="The scheduler's checks rewrite each service every few minutes — to hold one down, post an incident naming it.">What clients see at /status</span><button class="btn p w" onclick="incidentOpen()">${ico('plus','xs')}Post an incident</button></div>
     <section class="split">
       <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Open incidents</h2>${iErr ? '' : `<span class="cnt ${(inc.open || []).length ? 'bad' : ''}">${(inc.open || []).length}</span>`}</div><div class="lst" style="border-top:1px solid var(--line)">
         ${iErr ? `<div class="empty">${unknownV(iErr)} — couldn't read the incidents.</div>` : ((inc.open || []).map(incRow).join('') || '<div class="empty">No open incident — the page shows each service as its checks last found it.</div>')}</div>
@@ -3844,7 +3846,7 @@ function audRow(e){
   const tone = e.result === 'ok' || !e.result ? 'neu' : 'bad';
   return `<div class="li click" onclick="toggleRow(this)"><span class="n muted" style="width:110px;flex-shrink:0;font-size:12px">${fmtDT(e.created_at)}</span><div class="tt"><b style="font-size:13px"><span class="mono">${esc(e.action)}</span>${e.kind === 'request' ? ' <span class="chip">request</span>' : ''}</b><span>${esc(e.actor || '—')}${e.restaurant_id ? ' · ' + clientLink(e.restaurant_id, e.restaurant || '#' + e.restaurant_id) : ''}${e.summary ? ' · ' + esc(e.summary) : ''}</span></div>${e.result && e.result !== 'ok' ? pill(tone, esc(e.result)) : ''}<span class="chev">${ico('chev','s')}</span></div>
     <div class="lx"><div class="box" style="font-size:12.5px">${e.target ? `<span><span class="lbl">Target</span> <span class="mono">${esc(js(e.target))}</span></span>` : ''}
-      ${e.before != null || e.after != null ? `<div class="grid g2" style="gap:10px"><div><div class="lbl">Before</div><pre style="margin:4px 0 0;white-space:pre-wrap;font-family:var(--num);font-size:11.5px;color:var(--ink3)">${esc(js(e.before) || '—')}</pre></div><div><div class="lbl">After</div><pre style="margin:4px 0 0;white-space:pre-wrap;font-family:var(--num);font-size:11.5px;color:var(--ink2)">${esc(js(e.after) || '—')}</pre></div></div>` : ''}
+      ${e.before != null || e.after != null ? `<div class="grid g2" style="gap:10px"><div><div class="lbl">Before</div><pre style="margin:4px 0 0;white-space:pre-wrap;font-family:var(--num);font-size:12px;color:var(--ink3)">${esc(js(e.before) || '—')}</pre></div><div><div class="lbl">After</div><pre style="margin:4px 0 0;white-space:pre-wrap;font-family:var(--num);font-size:12px;color:var(--ink2)">${esc(js(e.after) || '—')}</pre></div></div>` : ''}
       ${e.request ? `<span class="mono dim">${esc(e.request.method || '')} ${esc(e.request.path || '')} → ${esc(e.request.status || '')}</span>` : ''}
       <span class="dim">${e.ip ? 'from ' + esc(e.ip) : ''}${e.request_id ? ' · request ' + esc(e.request_id) : ''}</span></div></div>`;
 }
@@ -3949,15 +3951,15 @@ async function analytics(tab){
     <div style="display:flex;justify-content:flex-end">${asOf(ad)}</div>
     ${errBanner(ad)}${bmE ? '' : errBanner(bm)}
     <section class="grid g4">
-      <div class="card kc"><span class="lbl">Usage</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px">${a7}</span><span class="s">of ${live.length} active this week</span></span>
+      <div class="card kc"><span class="lbl">Usage</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big">${a7}</span><span class="s">of ${live.length} active this week</span></span>
         <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">${stackBar([[a1, 'var(--green)'], [a7 - a1, 'var(--green-bg)'], [a28 - a7, 'var(--amber)'], [live.length - a28, 'var(--hover)']])}
-        <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${a1}</span> today</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${a28 - a7}</span> 1–4 weeks</span><span>● <span class="n">${live.length - a28}</span> quiet</span></span></div>`}</div>
+        <span class="s" style="font-size:12px;display:flex;gap:4px 10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${a1}</span> today</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${a28 - a7}</span> 1–4 weeks</span><span>● <span class="n">${live.length - a28}</span> quiet</span></span></div>`}</div>
       <div class="card kc"><span class="lbl" title="${esc(adE ? '' : ad.basis || '')}">Module use · 28 days</span>${adE ? unknownV(adE) : (ad.modules || []).map(m => { const p = m.paying || {}, tr = m.trial || {}; return `<div style="display:flex;flex-direction:column;gap:5px"><span style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px"><span class="ink2">${esc((MODULE_KEYS.find(k => k[0] === m.module) || [0, m.module === 'intel' ? 'Intel' : m.module])[1])}</span><span class="n">${fmtN(p.using)}/${fmtN(p.entitled)} paying${tr.entitled ? ` · <span class="dim">${fmtN(tr.using)}/${fmtN(tr.entitled)} trial</span>` : ''}</span></span><span class="bar"><i style="width:${p.rate_pct == null ? 0 : Math.round(p.rate_pct)}%;background:var(--green)"></i></span></div>`; }).join('') || '<span class="s">No module is on for anyone yet.</span>'}</div>
-      <div class="card kc"><span class="lbl">Retention</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px">${kept == null ? '—' : kept + '%'}</span><span class="s">kept · ${canceled} canceled</span></span>
+      <div class="card kc"><span class="lbl">Retention</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big">${kept == null ? '—' : kept + '%'}</span><span class="s">kept · ${canceled} canceled</span></span>
         <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px"><span class="s" style="font-size:12px">Churn risk now · paying accounts</span>${stackBar([[churn.low, 'var(--green)'], [churn.medium, 'var(--amber)'], [churn.high, 'var(--red)']])}
-        <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${churn.low}</span> low</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${churn.medium}</span> medium</span><span><span style="color:var(--red-t)">●</span> <span class="n">${churn.high}</span> high</span>${churn.unscored ? `<span>● <span class="n">${churn.unscored}</span> not scored</span>` : ''}</span></div>`}</div>
-      <div class="card kc"><span class="lbl">${esc(aiE ? 'AI & data APIs' : ((ai.labels || {}).cost_card || 'AI & data APIs'))} · 30 days</span><span class="big" style="font-size:34px">${aiE ? unknownV(aiE) : fmtUSD(t.cost, 2)}</span><span class="s">${aiE ? '' : `AI <span class="n">${fmtUSD(t.ai_cost, 2)}</span> · data APIs <span class="n">${fmtUSD(t.data_api_cost, 2)}</span>${live.length && t.cost != null ? ` · <span class="n">${fmtUSD(t.cost / live.length, 2)}</span> per account` : ''}`}</span>
-        ${b && b.budget ? `<div style="margin-top:auto;display:flex;flex-direction:column;gap:6px"><span class="bar" style="height:8px"><i style="width:${Math.min(100, b.pct)}%;background:${b.over ? 'var(--red)' : b.warn ? 'var(--amber)' : 'linear-gradient(90deg,var(--ember),var(--ember2))'}"></i></span><span class="s" style="font-size:11.5px"><span class="n">${b.pct}%</span> of the <span class="n">${fmtUSD(b.budget)}</span> monthly ceiling · resets ${fmtD(b.resets_at)}</span></div>` : ''}</div>
+        <span class="s" style="font-size:12px;display:flex;gap:4px 10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${churn.low}</span> low</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${churn.medium}</span> medium</span><span><span style="color:var(--red-t)">●</span> <span class="n">${churn.high}</span> high</span>${churn.unscored ? `<span>● <span class="n">${churn.unscored}</span> not scored</span>` : ''}</span></div>`}</div>
+      <div class="card kc"><span class="lbl">${esc(aiE ? 'AI & data APIs' : ((ai.labels || {}).cost_card || 'AI & data APIs'))} · 30 days</span><span class="big">${aiE ? unknownV(aiE) : fmtUSD(t.cost, 2)}</span><span class="s">${aiE ? '' : `AI <span class="n">${fmtUSD(t.ai_cost, 2)}</span> · data APIs <span class="n">${fmtUSD(t.data_api_cost, 2)}</span>${live.length && t.cost != null ? ` · <span class="n">${fmtUSD(t.cost / live.length, 2)}</span> per account` : ''}`}</span>
+        ${b && b.budget ? `<div style="margin-top:auto;display:flex;flex-direction:column;gap:6px"><span class="bar" style="height:8px"><i style="width:${Math.min(100, b.pct)}%;background:${b.over ? 'var(--red)' : b.warn ? 'var(--amber)' : 'linear-gradient(90deg,var(--ember),var(--ember2))'}"></i></span><span class="s" style="font-size:12px"><span class="n">${b.pct}%</span> of the <span class="n">${fmtUSD(b.budget)}</span> monthly ceiling · resets ${fmtD(b.resets_at)}</span></div>` : ''}</div>
     </section>
     ${anaHistory(bm, bmE)}
     <section class="split">
@@ -4051,7 +4053,6 @@ async function intelligence(){
   const kindRows = d.recommendations.by_kind;
   V().innerHTML = `
     ${d.computed_at ? `<div style="display:flex;justify-content:flex-end"><span class="dim">computed ${esc(mdy(dayOf(d.computed_at)))}${d.cached ? ' · cached ' + minsAgo((d.age_seconds||0)/60) : ''}</span></div>` : ''}
-    <div class="head"><div><div class="k ember">Operations</div><h1>Intelligence</h1><div class="sub">What the platform has learned. Level 1 is each restaurant's own history; every cross-restaurant figure below is an aggregate over at least ${d.floor} restaurants and names none.</div></div></div>
     <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(L.restaurants),'Active restaurants')}${kpi(fmtN(L.with_features),'With a feature row this month')}${kpi(fmtN(L.cohorts_at_floor.length),'Cohorts at the floor', L.cohorts_at_floor.length?'good':'')}${kpi(fmtN(d.patterns.new_this_week),'New patterns · 7d', d.patterns.new_this_week?'ember':'')}${kpi(pct(R.acceptance_rate),'Recommendation acceptance','',R.answered?fmtN(R.answered)+' answered':'')}${kpi(pct(R.success_rate),'Measured improvement','',R.measured?fmtN(R.measured)+' measured':'')}</div>
     ${!L.cohorts_at_floor.length && L.restaurants < d.floor ? `<div class="warnbox" style="margin-bottom:12px"><b>Below the floor.</b> ${L.restaurants} active restaurant${L.restaurants===1?'':'s'}; cross-restaurant patterns and benchmarks appear once ${d.floor} are live. Level 1 (each restaurant's own memory) is already learning.</div>` : ''}
     <div class="grid g3" style="margin-bottom:14px">
@@ -4060,7 +4061,7 @@ async function intelligence(){
       <div class="card"><div class="ch"><h2>Money by kind · never added</h2><span class="sub">${sv.source ? (sv.source === 'nightly' ? 'nightly figures' : 'computed live') + (sv.as_of ? ' · as of ' + esc(mdy(dayOf(sv.as_of))) : '') : 'not computed yet'}</span></div><div class="cb">${['delivered','avoided','surfaced','opportunity'].map(k=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0"><span>${k} <span class="dim">${esc((sv.periods||{})[k]||'')}</span></span><span class="num">${sv[k]==null ? unknownV(sv.note || 'not computed yet') : fmtUSD(sv[k],0)}</span></div>`).join('')}<div class="dim" style="white-space:normal;margin-top:6px">${esc(sv.note || '')} ${fmtN(sv.restaurants_counted)}${sv.restaurants_active != null ? ' of ' + fmtN(sv.restaurants_active) : ''} restaurants counted.</div></div></div>
     </div>
     <div class="grid g2" style="margin-bottom:14px">
-      <div><div class="k" style="margin-bottom:6px">Restaurants by category</div>${table([{h:'Category',key:'label'},{h:'Restaurants',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>`},{h:'Cohort',key:'at_floor',cell:r=>r.at_floor?'<span style="color:var(--green)">at the floor</span>':'<span class="dim">below the floor</span>'}], catRows, {id:'int-cat', sort:'n'})}<div class="dim" style="margin-top:4px">${L.inferred_categories} guessed from name and menu (a guess never joins a peer group); confirm a client's profile in its White-label branding modal → Restaurant profile, or the owner does it in Account → Restaurant profile.</div></div>
+      <div><div class="k" style="margin-bottom:6px">Restaurants by category</div>${table([{h:'Category',key:'label'},{h:'Restaurants',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>`},{h:'Cohort',key:'at_floor',cell:r=>r.at_floor?'<span style="color:var(--green)">at the floor</span>':'<span class="dim">below the floor</span>'}], catRows, {id:'int-cat', sort:'n'})}<div class="dim" style="margin-top:4px" title="The owner can also confirm it in Account → Restaurant profile.">${L.inferred_categories} guessed from name and menu — a guess never joins a peer group. Confirm one in the client's Branding &amp; peer profile.</div></div>
       <div><div class="k" style="margin-bottom:6px">Recommendation success by kind</div>${table([{h:'Kind',key:'rec_kind'},{h:'Restaurants',key:'restaurants',r:true,cell:r=>`<span class="num">${fmtN(r.restaurants)}</span>`},{h:'Accepted',key:'acceptance_rate',r:true,cell:r=>r.available?`<span class="num">${pct(r.acceptance_rate)}</span>`:'<span class="dim">below floor</span>'},{h:'Improved',key:'success_rate',r:true,cell:r=>r.available?`<span class="num">${pct(r.success_rate)}${r.measured?' <span class="dim">of '+r.measured+'</span>':''}</span>`:'—'},{h:'Days to effect',key:'median_days_to_improvement',r:true,cell:r=>r.available&&r.median_days_to_improvement!=null?`<span class="num">${Math.round(r.median_days_to_improvement)}</span>`:'—'}], kindRows, {id:'int-kind', sort:'success_rate'})}</div>
     </div>
     <div class="grid g2" style="margin-bottom:14px">
@@ -4071,7 +4072,7 @@ async function intelligence(){
     <details class="card"><summary>All patterns · ${d.patterns.rows.length}</summary><div class="cb">
     ${d.patterns.rows.length ? table([{h:'Status',key:'status',cell:r=>`<span style="color:${r.status==='active'?'var(--green)':'var(--ink4)'}">${esc(r.status)}</span>`},{h:'Cohort',key:'cohort'},{h:'Pattern',key:'sentence',wrap:true,cell:r=>esc(r.sentence)},{h:'Effect',key:'effect',r:true,cell:r=>`<span class="num">${r.effect} ${esc(r.effect_unit||'')}</span>`},{h:'Strength',key:'strength_pct',r:true,cell:r=>`<span class="num" title="${esc(r.strength_basis||'')}">${patStrength(r)}</span>`},{h:'First seen',key:'first_seen',cell:r=>`<span class="num">${/^\d{4}-\d{2}-\d{2}$/.test(String(r.first_seen||'')) ? mdy(dayOf(r.first_seen)) : fmtD(r.first_seen)}</span>`},{h:'Weeks held',key:'weeks_held',r:true,cell:r=>`<span class="num" title="ISO weeks it was active, from the weekly record">${r.weeks_held==null?'—':fmtN(r.weeks_held)}</span>`},{h:'',cell:r=>r.key?`<button class="cbtn btn s g" onclick="patHistory('${jsq(r.key)}')">History</button>`:''}], d.patterns.rows, {id:'int-pat', sort:'strength_pct'}) : '<div class="empty">Nothing discovered yet.</div>'}
     <div id="int-ph"></div></div></details>
-    <div class="dim" style="margin-top:10px">Nightly: features at 3am (bounded, resumable), learning at 4am. ${d.jobs.length ? d.jobs.map(j=>esc(j.job)+' '+ago(j.started_at)+(j.ok?'':' <span style="color:var(--red)">failed</span>')).join(' · ') : 'No runs yet.'}</div>`;
+    <div class="dim" style="margin-top:10px">Nightly: features at 3am (bounded, resumable), learning at 4am. ${d.jobs.length ? d.jobs.map(j=>esc(j.job)+' '+ago(j.started_at)+(j.ok?'':' <span style="color:var(--red-t)">failed</span>')).join(' · ') : 'No runs yet.'}</div>`;
 }
 
 // Restaurants with a feature row, week by week: an empty week is a faint
@@ -4145,11 +4146,10 @@ async function recommendations(arg){
   const cmp = (title, rows, id) => `<div><div class="k" style="margin-bottom:6px">${esc(title)}</div>${rows.length ? table(cmpCols, rows, {id, sort:'n'}) : '<div class="empty">Nothing recorded yet.</div>'}</div>`;
   const restCols = cmpCols.slice(); restCols[0] = {h:'Restaurant',key:'group',cell:r=>`<a href="#recommendations/${r.restaurant_id}">${esc(r.group)}</a>`};
   V().innerHTML = `
-    <div class="head"><div><div class="k ember">Operations · internal only</div><h1>Recommendation acceptance</h1>
-      <div class="sub">${esc(who)} · last ${d.days} days. Every recommendation any surface showed, followed to what the owner did and whether it worked. Unanswered after 14 days counts as ignored, in every denominator. The score needs ${d.min_n}+ recommendations.</div></div>
-      <div>${[7,30,90].map(n=>`<button class="btn s${n===d.days?' on':''}" onclick="recDays(${n})">${n}d</button>`).join(' ')}${rid?' <a class="btn s" href="#recommendations">All restaurants</a>':''}</div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px" title="Every recommendation any surface showed, followed to what the owner did and whether it worked. Unanswered after 14 days counts as ignored, in every denominator. The score needs ${d.min_n}+ recommendations.">${esc(who)} · last ${d.days} days</span>
+      <span style="display:flex;gap:8px;align-items:center"><span class="seg">${[7,30,90].map(n=>`<button class="${n===d.days?'on':''}" onclick="recDays(${n})">${n} days</button>`).join('')}</span>${rid?'<a class="btn s" href="#recommendations">All restaurants</a>':''}</span></div>
     <div class="grid g6" style="margin-bottom:14px">${T.ras!=null ? kpi(T.ras,'Acceptance score', T.ras>=40?'good':(T.ras<20?'bad':'')) : (T.ras_partial!=null ? kpi(T.ras_partial,'Score · behaviour only','','withheld') : kpi('—','Acceptance score','','n='+fmtN(T.n||0)))}${kpi(pct(T.accept_rate),'Accepted', '', ci)}${kpi(pct(T.open_rate),'Opened')}${kpi(pct(T.complete_rate),'Completed')}${T.outcome_rate==null ? kpi('<span class="dim" style="font-size:15px">not measured yet</span>','Improved, of taken') : kpi(pct(T.outcome_rate),'Improved, of taken','',fmtN(T.measured||0)+' measured')}${kpi(T.median_hours_to_act==null?'—':T.median_hours_to_act+'h','Median time to act')}</div>
-    <div class="dim" style="margin:-6px 0 14px;white-space:normal">Score = 100 × (${d.weights.opened} × opened + ${d.weights.accepted} × accepted + ${d.weights.completed} × completed + ${d.weights.outcome} × improved-of-taken). ${fmtN(T.n||0)} recommendations · ${fmtN(T.ignored||0)} ignored · ${fmtN(T.dismissed||0)} dismissed · ${fmtN(T.snoozed||0)} snoozed.${T.ras==null && T.ras_partial!=null ? ' The score is withheld until something taken has been measured: the behaviour-only figure re-weights opened, accepted and completed, and counts no outcome as zero.' : ''}${d.internal_excluded ? ' Internal accounts (demo, test, Cavnar AI\'s own) are left out.' : ''}</div>
+    <details class="card"><summary>How the score is counted</summary><div class="cb dim" style="white-space:normal">Score = 100 × (${d.weights.opened} × opened + ${d.weights.accepted} × accepted + ${d.weights.completed} × completed + ${d.weights.outcome} × improved-of-taken). ${fmtN(T.n||0)} recommendations · ${fmtN(T.ignored||0)} ignored · ${fmtN(T.dismissed||0)} dismissed · ${fmtN(T.snoozed||0)} snoozed.${T.ras==null && T.ras_partial!=null ? ' The score is withheld until something taken has been measured: the behaviour-only figure re-weights opened, accepted and completed, and counts no outcome as zero.' : ''}${d.internal_excluded ? ' Internal accounts (demo, test, Cavnar AI\'s own) are left out.' : ''}</div></details>
     <div class="grid g2" style="margin-bottom:14px">
       <div class="card"><div class="ch"><h2>Funnel</h2></div><div class="cb">${d.funnel.map(f=>`<div style="display:grid;grid-template-columns:130px 1fr 60px;gap:8px;align-items:center;padding:4px 0"><span>${esc(f.step)}</span><span style="height:10px;border-radius:5px;background:var(--paper3);overflow:hidden"><i style="display:block;height:100%;width:${Math.round(100*f.n/top)}%;background:var(--ember)"></i></span><span class="num r">${fmtN(f.n)}</span></div>`).join('')}</div></div>
       <div class="card"><div class="ch"><h2>Watch</h2></div><div class="cb">
@@ -4173,7 +4173,7 @@ async function recommendations(arg){
     ${cmp('By kind', d.by_kind, 'rec-kind')}</div></details>
     ${rid ? '' : `<div style="margin-top:14px"><div class="k" style="margin-bottom:6px">By restaurant</div>${d.by_restaurant.length ? table(restCols, d.by_restaurant, {id:'rec-rest', sort:'n'}) : '<div class="empty">Nothing recorded yet.</div>'}</div>`}
     <div class="grid g2" style="margin-top:14px">
-      <div class="card"><div class="ch"><h2>Calibration · 365d</h2><span class="sub">Predicted $/month (as shown) against what the tracker measured. No clear change counts as $0. A ratio needs ${cal.ok ? cal.min_n : 5}+ pairs.</span></div><div class="cb">
+      <div class="card"><div class="ch"><h2 title="Predicted $/month (as shown) against what the tracker measured. No clear change counts as $0. A ratio needs ${cal.ok ? cal.min_n : 5}+ pairs.">Calibration · 365d</h2></div><div class="cb">
         ${cal.ok && cal.by_kind.length ? table([
           {h:'Kind',key:'kind'},
           {h:'Pairs',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>${r.unpriced?` <span class="dim">+${fmtN(r.unpriced)} unpriced</span>`:''}`},
@@ -4183,7 +4183,7 @@ async function recommendations(arg){
           {h:'Within ±50%',key:'within_half',r:true,cell:r=>`<span class="num">${pct(r.within_half)}</span>`}], cal.by_kind, {id:'rec-cal', sort:'n'}) : '<div class="empty">No measured recommendation carried a predicted figure yet.</div>'}
       </div></div>
       ${confidenceCalibration(conf)}
-      <div class="card"><div class="ch"><h2>Missed detections · ${d.days}d</h2><span class="sub">An alert, issue or close-out 86 with no recommendation about it shown in the ${miss.ok ? miss.lookback_days : 14} days before.</span></div><div class="cb">
+      <div class="card"><div class="ch"><h2 title="An alert, issue or close-out 86 with no recommendation about it shown in the ${miss.ok ? miss.lookback_days : 14} days before.">Missed detections · ${d.days}d</h2></div><div class="cb">
         ${miss.ok && miss.total ? `<div style="margin-bottom:8px">${miss.by_source.map(s=>`<span class="chip">${esc(s.source)} ${fmtN(s.n)}</span>`).join(' ')}</div>` + table([
           {h:'When',key:'detected_at',cell:r=>`<span class="num">${fmtD(r.detected_at)}</span>`},
           {h:'Restaurant',key:'restaurant',cell:r=>clientLink(r.restaurant_id, r.restaurant||('#'+r.restaurant_id))},
@@ -4293,7 +4293,7 @@ function _ordTable(o, floor, id){
 }
 function _ordVerdict(o){
   if(!o || o.ordered==null) return '<span class="dim">not enough in two bands yet</span>';
-  return o.ordered ? '<span style="color:var(--green)">in order</span>' : '<span style="color:var(--red)">out of order</span>';
+  return o.ordered ? '<span style="color:var(--green-t)">in order</span>' : '<span style="color:var(--red-t)">out of order</span>';
 }
 function confidenceCalibration(k){
   if(!k || k.ok === false || !Array.isArray(k.bands)) return `<div class="card"><div class="ch"><h2>Confidence calibration</h2></div><div class="cb"><div class="empty">No calibration yet — it needs recommendations shown with a confidence percentage and measured since.</div></div></div>`;
@@ -4310,7 +4310,7 @@ function confidenceCalibration(k){
   const dimRows = key => { const d = dims[key]; return Array.isArray(d) ? d : ((d && Array.isArray(d.bands)) ? d.bands : []); };
   const dimBrier = key => { const d = dims[key]; return (d && !Array.isArray(d) && d.brier!=null && isFinite(+d.brier)) ? ` <span class="dim">Brier ${(+d.brier).toFixed(3)}</span>` : ''; };
   const dimBlock = (key, label) => dimRows(key).length ? `<div class="k" style="margin:12px 0 6px">${esc(label)}${dimBrier(key)}</div>${_calTable(dimRows(key), floor, 'cal-dim-'+key)}` : '';
-  return `<div class="card"><div class="ch"><h2>Confidence calibration</h2><span class="sub">${esc(k.meaning || 'How well supported this is — not the chance it works')}. So the check is order: a higher support band must not improve less often than a lower one. Scored on the confidence at acceptance where a showing before it carried one (${fmtN((k.scored_on||{}).acceptance||0)} at acceptance, ${fmtN((k.scored_on||{}).first_shown||0)} first shown). Rows under ${floor} are dimmed.</span></div><div class="cb">
+  return `<div class="card"><div class="ch"><h2 title="So the check is order: a higher support band must not improve less often than a lower one. Scored on the confidence at acceptance where a showing before it carried one (${fmtN((k.scored_on||{}).acceptance||0)} at acceptance, ${fmtN((k.scored_on||{}).first_shown||0)} first shown). Rows under ${floor} are dimmed.">Confidence calibration</h2><span class="sub">${esc(k.meaning || 'How well supported this is — not the chance it works')}</span></div><div class="cb">
     ${alertRows}
     ${orderBlock}
     <div class="k" style="margin:14px 0 6px">For the record — not the meaning of the %</div>
@@ -4366,8 +4366,6 @@ async function experiments(){
   const arms = [];
   d.experiments.filter(e=>e.active).forEach(e=>e.arms.forEach(a=>arms.push([e.key, a.arm, e.key+' · '+a.label])));
   V().innerHTML = `
-    <div class="head"><div><div class="k ember">Operations · internal only</div><h1>Schedule experiments</h1>
-      <div class="sub">Each generated week is in one arm, by a hash of the restaurant and the week, so a regeneration keeps it. Accepted unedited is the share of the draft's rows that went out untouched. ${esc(d.rule)}</div></div></div>
     ${d.method || d.max_weeks_per_restaurant ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px" title="${esc(d.rule || '')}"><span class="lbl">How a winner is called</span>${d.method ? `<span class="chip" title="How the verdict is reached: intervals clustered by restaurant (CR1), t on restaurants − 1 degrees of freedom">method ${esc(d.method)}</span>` : ''}${d.max_weeks_per_restaurant ? `<span class="chip">at most&nbsp;<span class="num">${fmtN(d.max_weeks_per_restaurant)}</span>&nbsp;weeks per restaurant per arm</span>` : ''}<span class="chip">demo and test accounts left out</span><span class="chip">pinned weeks not counted</span></div>` : ''}
     ${d.error?`<div class="err" style="margin-bottom:12px">${esc(d.error)}</div>`:''}
     ${d.env_pin?`<div class="err" style="margin-bottom:12px"><b>Every restaurant is pinned</b> by SCHEDULE_EXPERIMENT_PIN=${esc(d.env_pin)} — new weeks are not randomised.</div>`:''}
@@ -4540,7 +4538,7 @@ function aiRecRow(r){
   var hasRoute = r.proposed && Object.keys(r.proposed).length;
   return '<div class="li"><span style="width:150px;flex-shrink:0">' + pill(r.kind === 'quality_low' ? 'warn' : 'neu', esc(AI_REC_KIND[r.kind] || r.kind), false) + '</span>'
     + '<div class="tt"><b>' + esc(r.workflow) + '</b><span>' + esc(r.summary || '') + ' · ' + fmtD(r.created_at) + '</span></div>'
-    + (hasRoute ? '<button class="cbtn btn s p w" onclick="aiDecide(' + r.id + ',true,\'' + jsq(r.workflow) + '\')">Apply</button>' : '<span class="dim" title="It asks for a look, not a route">nothing to apply</span>')
+    + (hasRoute ? '<button class="cbtn btn s w" onclick="aiDecide(' + r.id + ',true,\'' + jsq(r.workflow) + '\')">Apply</button>' : '<span class="dim" title="It asks for a look, not a route">nothing to apply</span>')
     + '<button class="cbtn btn s g w" onclick="aiDecide(' + r.id + ',false,\'' + jsq(r.workflow) + '\')">Dismiss</button></div>';
 }
 function aiRow(w){
