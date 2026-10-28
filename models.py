@@ -19270,10 +19270,15 @@ def is_email_suppressed(email: str, db_path: str = DB_PATH, email_type: str = No
 PERSON_MADE_SUPPRESSIONS = ("unsubscribed", "complained")
 SUPPRESSION_NOT_LIFTABLE = ("This address opted out (or reported spam) itself, so only the person can opt back "
                             "in — an admin can lift only a bounce.")
+# The one rule, read by this lift, the suppressions list and the console's
+# Reinstate offer (admin_ops._suppression_reinstatable): only a bounce is
+# liftable, and a reason not named here is not — it fails closed. An empty
+# reason has always been read as a bounce.
+LIFTABLE_SUPPRESSIONS = ("", "bounced", "bounce", "hard_bounce", "soft_bounce")
 
 
 def suppression_liftable(reason) -> bool:
-    return (reason or "").strip().lower() not in PERSON_MADE_SUPPRESSIONS
+    return (reason or "").strip().lower() in LIFTABLE_SUPPRESSIONS
 
 
 def _suppression_restaurant(conn, email):
@@ -19318,8 +19323,8 @@ def unsuppress_email(email: str, actor=None, reason: str = None, db_path: str = 
             # Re-checked in the write: a complaint that lands between the read
             # and the delete is not lifted with the bounce it replaced.
             lifted = conn.execute(
-                "DELETE FROM email_suppressions WHERE email=? AND LOWER(TRIM(COALESCE(reason,''))) NOT IN "
-                "('unsubscribed','complained')", (email,)).rowcount
+                "DELETE FROM email_suppressions WHERE email=? AND LOWER(TRIM(COALESCE(reason,''))) IN ("
+                + ",".join("?" * len(LIFTABLE_SUPPRESSIONS)) + ")", (email, *LIFTABLE_SUPPRESSIONS)).rowcount
             conn.commit()
             if not lifted and not conn.execute("SELECT 1 FROM email_suppressions WHERE email=?",
                                                (email,)).fetchone():

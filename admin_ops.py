@@ -2407,14 +2407,11 @@ def _suppressed_for(r, users, d):
 
 # Suppressions an admin may lift: a bounce (the mailbox, which can be fixed).
 # One the person made — an unsubscribe, a spam complaint — is theirs to
-# undo, and the reinstate route refuses it (WS-2's models.suppression_liftable,
-# PERSON_MADE_SUPPRESSIONS; the lead reconciles the two at merge). An empty
-# reason has always been read as a bounce here.
-_BOUNCE_SUPPRESSIONS = ("", "bounced", "bounce", "hard_bounce", "soft_bounce")
-
-
+# undo. The rule is the reinstate route's own (models.suppression_liftable),
+# so Reinstate is offered exactly when the lift would be allowed.
 def _suppression_reinstatable(reason):
-    return (reason or "").strip().lower() in _BOUNCE_SUPPRESSIONS
+    from models import suppression_liftable
+    return suppression_liftable(reason)
 
 
 def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, billing=None, users=None,

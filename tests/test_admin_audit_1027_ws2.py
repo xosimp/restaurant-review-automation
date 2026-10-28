@@ -498,3 +498,14 @@ def test_a_double_clicked_support_note_is_written_once(app, db_path):
     assert len(_events(db_path, "support_note.added")) == 1
     _post(c, f"/admin/api/client/{rid}/notes", {"body": "A different note."})
     assert len(_rows(db_path, "SELECT id FROM support_notes WHERE restaurant_id=?", (rid,))) == 2
+
+
+def test_one_reinstate_rule_and_an_unknown_reason_is_not_liftable():
+    # Lead merge (admin audit 10/27/26): the console's Reinstate offer and the
+    # route's lift read one rule, and it fails closed — only a bounce lifts.
+    import admin_ops
+    import models
+    for reason in ("bounced", "bounce", "hard_bounce", "", None, " Bounced "):
+        assert models.suppression_liftable(reason) and admin_ops._suppression_reinstatable(reason), reason
+    for reason in ("unsubscribed", "complained", "manual", "spam_trap"):
+        assert not models.suppression_liftable(reason) and not admin_ops._suppression_reinstatable(reason), reason
