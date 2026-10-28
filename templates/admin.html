@@ -3905,13 +3905,36 @@ async function engineering(tab){
     </section>`;
   changelogLoad();
 }
+// The release verdict (admin audit 10/27/26, O10): platform_monitor's
+// release health, in /admin/api/system as supervisor.release — null while
+// the window after this deployment's first boot is still being watched
+// (pending), then {build, verdict: ok | hold | regressed | unknown, urgent,
+// warn}. An urgent line means roll back; a warn line, hold the next deploy.
+// No supervisor in this process, or a server that doesn't report it, is
+// unknown — never "ok". ES5.
+var REL = {ok: ['good', 'ok'], hold: ['warn', 'hold the next deploy'], regressed: ['bad', 'regressed — roll back'],
+  pending: ['neu', 'pending'], unknown: ['neu', 'unknown']};
+function relVerdict(S, sE){
+  var sup = S && S.supervisor, rel;
+  if(sE) return {v: 'unknown', why: sE, urgent: [], warn: []};
+  if(!sup) return {v: 'unknown', why: 'No supervisor in this process.', urgent: [], warn: []};
+  if(!Object.prototype.hasOwnProperty.call(sup, 'release')) return {v: 'unknown', why: "This server doesn't report release health.", urgent: [], warn: []};
+  rel = sup.release;
+  if(rel == null) return {v: 'pending', why: 'Judged once the first minutes after this deployment\'s boot have passed.', urgent: [], warn: []};
+  return {v: REL[rel.verdict] ? rel.verdict : 'unknown', why: 'Release ' + (rel.build || '') + ' against the deployment before it.',
+    urgent: rel.urgent || [], warn: rel.warn || []};
+}
 function engDeploy(sys, sE, S){
   const loop = ((S.boots || {}).crash_loop) || {}, recent = (S.boots || {}).recent || [], last = recent[0] || {};
   const tone = sE ? 'neu' : loop.looping ? 'bad' : 'good';
+  var rv = relVerdict(S, sE), rp = REL[rv.v];
+  var lines = rv.urgent.map(function(x){ return '<span style="color:var(--red-t);font-size:12.5px">' + esc(x) + '</span>'; }).join('')
+    + rv.warn.map(function(x){ return '<span style="color:var(--amber-t);font-size:12.5px">' + esc(x) + '</span>'; }).join('');
   return `<div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico emb">${ico('rocket')}</span><span class="lbl">Deployment</span><span style="margin-left:auto">${pill(tone, sE ? 'Unknown' : loop.looping ? 'Restarting' : 'Serving')}</span></span>
     <span class="n" style="font-size:26px;font-weight:600">${sE ? unknownV(sE) : esc((sys.build || '—').slice(0, 12))}</span>
     <div class="kv" style="grid-template-columns:110px 1fr;margin-top:auto"><span class="k">Environment</span><span>${sE ? '—' : esc(sys.env || '—')}</span><span class="k">Database</span><span class="mono">${sE ? '—' : esc(sys.db || '—')}</span>
-    <span class="k">Up since</span><span class="num">${last.ready_at ? fmtDT(last.ready_at) : '—'}${last.boot_ms ? ' · booted in ' + fmtN(last.boot_ms) + 'ms' : ''}</span><span class="k">Boots · hour</span><span class="num" style="${loop.looping ? 'color:var(--red-t)' : ''}">${sE ? '—' : fmtN(loop.boots_last_hour)}${loop.unclean ? ' · ' + fmtN(loop.unclean) + ' after a crash' : ''}</span></div></div>`;
+    <span class="k">Up since</span><span class="num">${last.ready_at ? fmtDT(last.ready_at) : '—'}${last.boot_ms ? ' · booted in ' + fmtN(last.boot_ms) + 'ms' : ''}</span><span class="k">Boots · hour</span><span class="num" style="${loop.looping ? 'color:var(--red-t)' : ''}">${sE ? '—' : fmtN(loop.boots_last_hour)}${loop.unclean ? ' · ' + fmtN(loop.unclean) + ' after a crash' : ''}</span>
+    <span class="k">Release</span><span title="${esc(rv.why)}">${pill(rp[0], rp[1], false)}</span></div>${lines ? `<div style="display:flex;flex-direction:column;gap:4px">${lines}</div>` : ''}</div>`;
 }
 const CUST = ['web', 'web_api', 'mobile'];
 function engApi(S, sE){

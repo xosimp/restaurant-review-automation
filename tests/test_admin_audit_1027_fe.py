@@ -268,3 +268,29 @@ def test_the_rpower_store_picker_shows_beside_a_failed_bootstrap():
     assert out["okShown"] == "none" and out["okSaid"] == "Connected to EJ."
     assert "rpowerPicker(d)" in _fn("rpowerStatus")            # a status that names stores shows them too
     assert "posSyncFollow(d.job_id, 'RPOWER'" in _fn("rpowerSync")   # Sync now is followed (round 1, W5)
+
+
+# ── O10: the Deployment card draws the release verdict ──────────────────────
+
+def test_the_deployment_card_says_the_release_verdict_and_its_lines():
+    js = _js(("relVerdict", "engDeploy", "pill", "unknownV", "parseTs", "mdy", "fmtT", "fmtDT"), ("REL",)) + r"""
+    var sys = {build: 'abc1234def', env: 'production', db: 'postgres'};
+    var mkS = function(sup){ return {boots: {crash_loop: {boots_last_hour: 1}, recent: []}, supervisor: sup}; };
+    console.log(JSON.stringify({
+      pending: engDeploy(sys, null, mkS({scheduler_thread: 'alive', release: null})),
+      ok: engDeploy(sys, null, mkS({release: {build: 'abc', verdict: 'ok', urgent: [], warn: []}})),
+      hold: engDeploy(sys, null, mkS({release: {build: 'abc', verdict: 'hold', urgent: [], warn: ['3 schedule_generate rows failed in the window']}})),
+      bad: engDeploy(sys, null, mkS({release: {build: 'abc', verdict: 'regressed', urgent: ['5xx rate 12% against 0.4% before'], warn: []}})),
+      nosup: engDeploy(sys, null, mkS(null)),
+      older: engDeploy(sys, null, mkS({scheduler_thread: 'alive'})),
+      failed: engDeploy(sys, 'HTTP 500', {})
+    }));
+    """
+    out = _node(js)
+    assert 'class="pill neu' in out["pending"] and ">pending<" in out["pending"]
+    assert 'class="pill good' in out["ok"] and ">ok<" in out["ok"]
+    assert ">hold the next deploy<" in out["hold"] and "color:var(--amber-t)" in out["hold"] and "schedule_generate" in out["hold"]
+    assert ">regressed — roll back<" in out["bad"] and "color:var(--red-t);font-size:12.5px\">5xx rate" in out["bad"]
+    for k in ("nosup", "older", "failed"):                      # unknown, never ok and never pending
+        assert ">unknown<" in out[k], k
+    assert "No supervisor in this process." in out["nosup"] and "doesn&#39;t report release health" in out["older"]
