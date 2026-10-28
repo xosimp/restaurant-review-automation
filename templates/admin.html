@@ -901,7 +901,7 @@ function railHealth(st){
 
 // ── ⌘K: jump anywhere, or search the fleet ─────────────────────────────────
 const PAGES = [
-  ['Overview','#overview','Page'], ['Needs you','#overview','Page'],
+  ['Overview','#overview','Page'],
   ['Operations · Jobs','#operations/jobs','Page'], ['Operations · Email & SMS','#operations/email','Page'], ['Operations · Push & alerts','#operations/push','Page'], ['Operations · AI','#operations/ai','Page'], ['Operations · Integrations','#operations/integrations','Page'], ['Operations · RPOWER','#operations/rpower','Page'], ['Operations · Event calendar','#operations/events','Page'],
   ['Customers · Restaurants','#customers/restaurants','Page'], ['Customers · Billing','#customers/billing','Page'], ['Customers · Onboarding','#customers/onboarding','Page'], ['Customers · Support queue','#customers/support','Page'],
   ['Customers · Bug reports','#customers/support?view=bugs','Page'], ['Customers · Deletion requests','#customers/support?view=deletions','Page'], ['Customers · Resolved issues','#customers/support?view=resolved','Page'],
@@ -913,7 +913,22 @@ const PAGES = [
 let _palSel = 0, _qt;
 function palOpen(){ $('pal').classList.add('on'); $('q').value=''; palRender([]); setTimeout(()=>$('q').focus(), 20); }
 function palClose(){ const p = $('pal'); if(p) p.classList.remove('on'); }
-function palRender(results){
+// `note` is a line above the matches: the fleet search still running, or
+// why it couldn't run (admin audit 10/27/26, V29) — a failed search never
+// reads as "No matches."
+function palNote(text, bad){ return bad ? '<div class="warnline" role="status" style="margin:6px 8px">' + esc(text) + '</div>' : '<div class="dim" role="status" style="padding:10px 14px;font-size:12.5px">' + esc(text) + '</div>'; }
+var _qSeq = 0;
+function palSearch(q){
+  var mine = ++_qSeq;
+  return api('/admin/api/search?q=' + encodeURIComponent(q), {method: 'GET'})
+    .then(null, function(e){ return {ok: false, _status: 0, error: String((e && e.message) || e)}; })
+    .then(function(d){
+      if(mine !== _qSeq || $('q').value.trim() !== q) return;       // a newer search, or the box changed
+      if(!okRes(d)) palRender([], palNote("Search couldn't run — " + errText(d), true));
+      else palRender(d.results || []);
+    });
+}
+function palRender(results, note){
   const q = $('q').value.trim().toLowerCase();
   const pages = PAGES.filter(p => !q || p[0].toLowerCase().indexOf(q) >= 0).slice(0, q ? 6 : 12);
   // Each fleet result says what it matched — a phone number, a Place ID, a
@@ -921,12 +936,12 @@ function palRender(results){
   const rows = results.map(r => ({href: r.type==='brand' ? '#locations?brand='+encodeURIComponent(r.title) : (r.id ? '#client/'+r.id : '#customers'), t: r.type, title: r.title, d: r.sub||'', m: r.match||''}))
     .concat(pages.map(p => ({href: p[1], t: p[2], title: p[0], d: '', m: ''})));
   _palSel = Math.min(_palSel, Math.max(0, rows.length-1));
-  $('q-res').innerHTML = rows.length ? rows.map((r,i)=>{ const fn = r.href.indexOf('fn:') === 0 ? r.href.slice(3) : null;
-    return `<a href="${fn ? '#' : esc(r.href)}" class="${i===_palSel?'act':''}" onclick="palClose();${fn ? fn + '();return false' : ''}"><span class="t">${esc(r.t)}</span><b>${esc(r.title)}</b>${r.m?`<span class="chip" title="What this result matched">${esc(r.m)}</span>`:''}<span class="d">${esc(r.d)}</span></a>`; }).join('') : '<div class="empty">No matches.</div>';
+  $('q-res').innerHTML = (note || '') + (rows.length ? rows.map((r,i)=>{ const fn = r.href.indexOf('fn:') === 0 ? r.href.slice(3) : null;
+    return `<a href="${fn ? '#' : esc(r.href)}" class="${i===_palSel?'act':''}" onclick="palClose();${fn ? fn + '();return false' : ''}"><span class="t">${esc(r.t)}</span><b>${esc(r.title)}</b>${r.m?`<span class="chip" title="What this result matched">${esc(r.m)}</span>`:''}<span class="d">${esc(r.d)}</span></a>`; }).join('') : (note ? '' : '<div class="empty">No matches.</div>'));
 }
-$('q').addEventListener('input', () => { clearTimeout(_qt); _palSel = 0; const q = $('q').value.trim(); if(q.length<2){ palRender([]); return; } _qt = setTimeout(async () => {
-  let d; try{ d = await api('/admin/api/search?q='+encodeURIComponent(q)); }catch(e){ return; } palRender(d.ok !== false && d.results ? d.results : []);
-}, 200); });
+$('q').addEventListener('input', () => { clearTimeout(_qt); _palSel = 0; _qSeq++; const q = $('q').value.trim(); if(q.length<2){ palRender([]); return; }
+  palRender([], palNote('Searching the fleet…'));
+  _qt = setTimeout(function(){ palSearch(q); }, 200); });
 $('q').addEventListener('keydown', e => {
   const links = $('q-res').querySelectorAll('a'); if(!links.length) return;
   if(e.key==='ArrowDown' || e.key==='ArrowUp'){ e.preventDefault(); _palSel = (_palSel + (e.key==='ArrowDown'?1:-1) + links.length) % links.length; links.forEach((a,i)=>a.classList.toggle('act', i===_palSel)); links[_palSel].scrollIntoView({block:'nearest'}); }
@@ -1269,9 +1284,17 @@ function jobSaid(r, label){
 // A panel that reads its own data after the page is drawn: the page never
 // waits for it, and a failure is said inside the panel, not over the page.
 function skel(n){ let h = ''; for(let i = 0; i < (n || 2); i++) h += '<div class="sk" style="width:' + (38 + 17*i) + '%"></div>'; return h; }
-function lazy(id, fn){
-  Promise.resolve().then(fn).then(html => { const el = $(id); if(el && html != null) el.innerHTML = html; })
-    .catch(e => { if(e && e.message === STALE) return; const el = $(id); if(el) el.innerHTML = `<div class="warnline" role="status">${ico('alert','xs')} This panel couldn't load — ${esc((e && e.message) || e)}</div>`; console.error(e); });
+// With `rid`, the panel belongs to that client's page (admin audit 10/27/26,
+// W3): a reload a slow write asks for after the admin has opened another
+// client is not drawn there — the panel ids (cd-intake, off-card, …) are the
+// same on every client page, and the read itself is never dropped once the
+// route has moved on.
+function onClient(rid){ var m = /^#client\/(\d+)/.exec(location.hash || ''); return !!m && +m[1] === +rid; }
+function lazy(id, fn, rid){
+  var here = function(){ return rid == null || onClient(rid); };
+  if(!here()) return;
+  Promise.resolve().then(fn).then(html => { if(!here()) return; const el = $(id); if(el && html != null) el.innerHTML = html; })
+    .catch(e => { if(e && e.message === STALE) return; if(!here()) return; const el = $(id); if(el) el.innerHTML = `<div class="warnline" role="status">${ico('alert','xs')} This panel couldn't load — ${esc((e && e.message) || e)}</div>`; console.error(e); });
 }
 // A read for a panel: throws the server's sentence so lazy() can say it.
 async function need(path){ const d = await api(path); if(!d || d.ok === false || d._status >= 400) throw new Error((d && d.error) || ('HTTP ' + (d && d._status))); return d; }
@@ -1434,12 +1457,18 @@ function brandRow(b){
 }
 async function loadClients(){ if(!_clients){ const d = await api('/admin/api/clients'); if(!okRes(d)) throw new Error(errText(d, 'The client records couldn\'t be read')); _clients = d.clients; } return _clients; }
 function clientsPage(n){ _cpage = n; clientsView(); }
+// Each list keeps its own request count (admin audit 10/27/26, W14): typing
+// re-reads under the same route, so only the newest answer is drawn — a
+// slower answer for "Sim" never lands over the one for "Simple".
+var _cvSeq = 0, _isSeq = 0;
 async function clientsView(){
+  var mine = ++_cvSeq;
   const p = new URLSearchParams({segment: _showDemo ? 'all' : 'customer', sort: _csort, page: String(_cpage), per_page: '50'});
   // Demo accounts are always listed, tagged "demo" (10/17/26) - still never counted.
   if(!_showDemo) p.set('include_demo', '1');
   if(_cq) p.set('q', _cq); if(_ch) p.set('health', _ch); if(_cs) p.set('status', _cs);
   const d = await api('/admin/api/clients/list?' + p.toString());
+  if(mine !== _cvSeq) return;
   if(!okRes(d)) throw new Error(errText(d, 'The restaurant list couldn\'t be read'));
   const rows = d.items || [], cnt = d.counts || {}, hc = cnt.health || {}, sc = cnt.status || {}, segc = cnt.segment || {};
   const hTotal = Object.keys(hc).reduce((n,k)=>n+hc[k],0);
@@ -1731,7 +1760,8 @@ async function issues(qs){
   if(_sview === 'resolved') return resolvedIssues(nav);
   const p = new URLSearchParams({segment:_sf, sort:_ssort, page:String(_spage), per_page:'40'});
   if(_ssev) p.set('severity', _ssev); if(_sq) p.set('q', _sq);
-  const d = await api('/admin/api/issues/list?' + p.toString()); if(!okRes(d)) throw new Error(errText(d, 'The support queue couldn\'t be read'));
+  var mine = ++_isSeq;
+  const d = await api('/admin/api/issues/list?' + p.toString()); if(mine !== _isSeq) return; if(!okRes(d)) throw new Error(errText(d, 'The support queue couldn\'t be read'));
   const c = d.counts || {}, n = x => (c[x] || {}).total || 0;
   const segs = [['attention','Needs attention', c.attention || 0],['customer','Customers', n('customer')],['platform','Platform', n('platform')],['internal','Internal', n('internal')]];
   V().innerHTML = `${errBanner(d)}
@@ -2043,7 +2073,7 @@ async function intakeStore(rid, name){
   const d = await post('/admin/api/client/' + rid + '/intake/store', {location_id: v});
   if(say(d, 'Store mapped')) intakeReload(rid, name);
 }
-function intakeReload(rid, name){ lazy('cd-intake', () => intakeHtml({id:rid, name:name})); }
+function intakeReload(rid, name){ lazy('cd-intake', () => intakeHtml({id:rid, name:name}), rid); }
 async function intakeCreate(rid, name){
   const v = $('intake-senders').value.trim();
   if(!v){ toast('Name at least one sender — mail from anyone else is held', 'bad'); return; }
@@ -2097,12 +2127,12 @@ async function contactAdd(id, name){
   if(!ph){ toast('Enter a mobile number', 'bad'); return; }
   if(!confirm('Add ' + (nm || ph) + ' as an alert contact for ' + name + '?')) return;
   const d = await post('/admin/api/alert-contacts/' + id, {name: nm, phone: ph});
-  if(say(d, 'Alert contact added')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}));
+  if(say(d, 'Alert contact added')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}), id);
 }
 async function contactDelete(id, cid, who, name){
   if(!confirm('Remove ' + who + ' from ' + name + "'s alert contacts? They stop getting alerts.")) return;
   const d = await post('/admin/api/alert-contacts/' + id + '/' + cid + '/delete', {});
-  if(say(d, who + ' removed')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}));
+  if(say(d, who + ' removed')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}), id);
 }
 async function templatesHtml(c){
   const d = await need('/admin/api/templates/' + c.id);
@@ -2113,12 +2143,12 @@ async function templatesHtml(c){
 function templateAdd(id, name){
   formOpen({title:'New reply template — ' + name, go:'Add template', done:'Template added',
     fields:[{id:'title', label:'Title', placeholder:'e.g. Thanks for a 5-star visit'},{id:'category', label:'For', type:'select', options:[['general','Any review'],['positive','Positive reviews'],['negative','Negative reviews'],['neutral','Neutral reviews']]},{id:'body', label:'Reply text', type:'textarea', rows:5}],
-    submit: v => post('/admin/api/templates/' + id, v), after: () => lazy('cd-templates', () => templatesHtml({id:id, name:name}))});
+    submit: v => post('/admin/api/templates/' + id, v), after: () => lazy('cd-templates', () => templatesHtml({id:id, name:name}), id)});
 }
 async function templateDelete(id, tid, title, name){
   if(!confirm('Delete the reply template “' + title + '” from ' + name + '?')) return;
   const d = await post('/admin/api/templates/' + id + '/' + tid + '/delete', {});
-  if(say(d, 'Template deleted')) lazy('cd-templates', () => templatesHtml({id:id, name:name}));
+  if(say(d, 'Template deleted')) lazy('cd-templates', () => templatesHtml({id:id, name:name}), id);
 }
 // Staff scheduling notes (#142): a new note is added to the person's notes,
 // never written over them; a removal offers Undo.
@@ -2233,7 +2263,7 @@ async function menuExtract(id, source){
   if(!okRes(d) || !d.job_id){ out.innerHTML = `<div class="warnline">${esc(errText(d, 'The extraction didn\'t start'))}</div>`; return; }
   out.innerHTML = `<span class="muted" style="font-size:12.5px">Reading the menu… this can take a minute.</span>`;
   const r = await pollJob('/admin/api/menu-extract/' + encodeURIComponent(d.job_id));
-  if(!$('mx-out')) return;
+  if(!$('mx-out') || !onClient(id)) return;                // the admin has opened another page (W3)
   if(!okRes(r) || !r.menu_notes){ $('mx-out').innerHTML = `<div class="warnline">${esc(errText(r, 'Nothing came back'))}</div>`; return; }
   // Into the notes box above when it loaded for this client; the legacy
   // settings page only when it couldn't be read.
@@ -2294,10 +2324,10 @@ async function testText(id, name){
   if(!confirm('Text a test alert to ' + contacts.map(x=>(x.name||'contact') + ' (…' + String(x.phone||'').slice(-4) + ')').join(', ') + ' for ' + name + '?')) return;
   const d = await post('/admin/alert-contacts/test/' + id, {});
   const res = (d && d.results) || [];
-  const el = $('cm-test');
+  const el = onClient(id) ? $('cm-test') : null;
   if(el) el.innerHTML = res.length ? res.map(r=>`<div style="font-size:13px"><span class="chip ${r.ok?'ok':'bad'}">${r.ok?'accepted':'failed'}</span> …${esc(r.to_last4||'')} ${r.ok?'<span class="dim">Twilio took it; the status updates when the phone gets it</span>':'<span style="color:var(--red-t)">'+esc((r.error_code?r.error_code+' · ':'')+(r.error||r.status||''))+'</span>'}</div>`).join('') : `<div class="warnline">${esc(errText(d, 'No text went out'))}</div>`;
   say(d, 'Test text sent to ' + ((d && d.sent) || 0) + ' contact' + ((d && d.sent) === 1 ? '' : 's'));
-  lazy('cm-sms', () => smsHtml({id:id, name:name}));
+  lazy('cm-sms', () => smsHtml({id:id, name:name}), id);
 }
 async function stormHtml(c){
   const d = await need('/admin/api/messaging/health');
@@ -2512,7 +2542,7 @@ async function offStep(id, step, status, label, name){
   else if(status === 'done' && step === 'docusign'){ if(!confirm('Void the DocuSign envelope still waiting for ' + name + '’s signature? It can no longer be signed. A contract that is already signed is not voided — skip this step with a note instead.')) return; }
   else if(!confirm((status === 'done' ? 'Mark “' + label + '” done for ' : 'Set “' + label + '” back to pending for ') + name + '?')) return;
   const d = await post('/admin/api/client/' + id + '/offboarding/' + encodeURIComponent(step), {status, note});
-  if(say(d, status === 'done' ? label + ' — done' : (status === 'skipped' ? label + ' — skipped' : label + ' — back to pending'))) lazy('off-card', () => offboardHtml({id:id, name:name}));
+  if(say(d, status === 'done' ? label + ' — done' : (status === 'skipped' ? label + ' — skipped' : label + ' — back to pending'))) lazy('off-card', () => offboardHtml({id:id, name:name}), id);
 }
 // The POS archive for the export step (Audit #23 A7-13): built on the admin
 // pool, then downloaded once (the server deletes it as it sends it).
@@ -2573,7 +2603,7 @@ async function notesHtml(c, before){
 async function noteAdd(id, name){
   const body = ($('note-body').value || '').trim(); if(!body){ toast('Write the note first', 'bad'); return; }
   const d = await post('/admin/api/client/' + id + '/notes', {body});
-  if(say(d, 'Note added to ' + name)) lazy('cs-notes', () => notesHtml({id:id, name:name}));
+  if(say(d, 'Note added to ' + name)) lazy('cs-notes', () => notesHtml({id:id, name:name}), id);
 }
 async function timelineHtml(c, before, keep){
   const q = new URLSearchParams({limit:'60'}); if(_tlTypes.length) q.set('types', _tlTypes.join(',')); if(before) q.set('before', before);
@@ -2615,7 +2645,7 @@ async function auditFind(id, name){
 async function auditLink(aid, rid, auditName, name, pageId){
   if(!confirm((rid ? 'Link the sales audit “' + auditName + '” to ' : 'Unlink the sales audit “' + auditName + '” from ') + name + '?')) return;
   const d = await post('/admin/api/audits/' + aid + '/link', {restaurant_id: rid});
-  if(say(d, rid ? 'Audit linked to ' + name : 'Audit unlinked')) lazy('cs-audits', () => salesAuditsHtml({id:pageId, name:name}));
+  if(say(d, rid ? 'Audit linked to ' + name : 'Audit unlinked')) lazy('cs-audits', () => salesAuditsHtml({id:pageId, name:name}), pageId);
 }
 
 // ── Operations ──────────────────────────────────────────────────────────────

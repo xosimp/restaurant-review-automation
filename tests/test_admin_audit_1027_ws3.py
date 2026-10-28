@@ -299,3 +299,84 @@ def test_no_page_threshold_judges_a_system_any_more(page):
     eng = _fn(page, "engSched")
     assert "S.scheduler" in eng and "SCHED_TONE" in eng
     assert "['warn', 'Loop stalled']" in _fn(page, "opsJobs")     # the Jobs tab agrees with the server: stalled is amber
+
+
+# ── W3: a slow write never redraws into another client's page ───────────────
+
+def test_a_panel_reload_for_one_client_is_not_drawn_on_another_clients_page(page):
+    js = _page_js(page, ("onClient", "lazy"), ("STALE",)) + r"""
+    var console_error = console.error; console.error = function(){};
+    mk('cd-intake').innerHTML = 'B page';
+    location.hash = '#client/9?tab=data';                    // the admin opened client 9 meanwhile
+    lazy('cd-intake', function(){ return 'A intake'; }, 5);
+    lazy('off-card', function(){ return 'never'; }, 5);
+    setTimeout(function(){
+      var other = $('cd-intake').innerHTML;
+      location.hash = '#client/5?tab=data';
+      lazy('cd-intake', function(){ return 'A intake'; }, 5);
+      setTimeout(function(){
+        var same = $('cd-intake').innerHTML;
+        lazy('cd-intake', function(){ return 'no rid'; });  // a render-time panel (no rid) is drawn as before
+        setTimeout(function(){ console.log(JSON.stringify([other, same, $('cd-intake').innerHTML, onClient(5), onClient(50)])); }, 5);
+      }, 5);
+    }, 5);
+    """
+    assert _node(js) == ["B page", "A intake", "no rid", True, False]
+
+
+def test_every_reload_after_a_client_page_write_names_its_client(page):
+    for fn, needle in (("intakeReload", "intakeHtml({id:rid, name:name}), rid)"),
+                       ("contactAdd", "contactsHtml({id:id, name:name}), id)"),
+                       ("contactDelete", "contactsHtml({id:id, name:name}), id)"),
+                       ("templateAdd", "templatesHtml({id:id, name:name}), id)"),
+                       ("templateDelete", "templatesHtml({id:id, name:name}), id)"),
+                       ("testText", "smsHtml({id:id, name:name}), id)"),
+                       ("offStep", "offboardHtml({id:id, name:name}), id)"),
+                       ("noteAdd", "notesHtml({id:id, name:name}), id)"),
+                       ("auditLink", "salesAuditsHtml({id:pageId, name:name}), pageId)")):
+        assert needle in _fn(page, fn), fn
+    assert "onClient(id) ? $('cm-test')" in _fn(page, "testText")
+    assert "!onClient(id)" in _fn(page, "menuExtract")
+
+
+# ── W14: a slower search answer never overwrites a newer one ────────────────
+
+def test_a_slower_restaurant_search_answer_is_dropped(page):
+    js = _page_js(page, ("okRes", "errText", "clientsView"), ("esc", "_clients", "_cvSeq")) + r"""
+    function V(){ return $('view'); } mk('view');
+    function errBanner(){ return ''; } function pager(){ return ''; } var CUST_COLS = '';
+    function custRow(r){ return '<row ' + r.name + '>'; } function brandRow(b){ return '<brand>'; }
+    var answers = [[20, 'Sim'], [5, 'Simple']], n = 0;
+    function api(){ var a = answers[n++]; return new Promise(function(res){ setTimeout(function(){
+      res({ok: true, _status: 200, items: [{name: a[1], brand: a[1]}], counts: {}, page: 1, pages: 1, total: 1}); }, a[0]); }); }
+    (async function(){
+      await Promise.all([clientsView(), clientsView()]);
+      console.log(JSON.stringify($('view').innerHTML.indexOf('<row Simple>') >= 0 && $('view').innerHTML.indexOf('<row Sim>') < 0));
+    })();
+    """
+    assert _node(js) is True
+    iss = _fn(page, "issues")
+    assert "var mine = ++_isSeq;" in iss and "if(mine !== _isSeq) return;" in iss
+
+
+# ── V29: Cmd-K says when the search failed ──────────────────────────────────
+
+def test_a_failed_palette_search_says_so_and_needs_you_is_not_listed_twice(page):
+    assert "['Needs you','#overview','Page']" not in page
+    js = _page_js(page, ("okRes", "errText", "palNote", "palSearch", "palRender"), ("esc", "PAGES", "_palSel", "_qSeq")) + r"""
+    mk('q').value = 'zz'; mk('q-res');
+    var answers = [];
+    function api(){ var a = answers.shift(); return new Promise(function(res){ setTimeout(function(){ res(a[1]); }, a[0]); }); }
+    (async function(){
+      answers = [[1, {ok: false, _status: 500, error: 'database is locked'}]];
+      await palSearch('zz'); var failed = $('q-res').innerHTML;
+      $('q').value = 'sim';
+      answers = [[20, {ok: true, _status: 200, results: [{type: 'location', id: 1, title: 'Old answer'}]}],
+                 [5, {ok: true, _status: 200, results: [{type: 'location', id: 2, title: 'Simple'}]}]];
+      await Promise.all([palSearch('sim'), palSearch('sim')]);
+      console.log(JSON.stringify({failed: failed, now: $('q-res').innerHTML}));
+    })();
+    """
+    out = _node(js)
+    assert "Search couldn&#39;t run — database is locked" in out["failed"] and "No matches." not in out["failed"]
+    assert "Simple" in out["now"] and "Old answer" not in out["now"]
