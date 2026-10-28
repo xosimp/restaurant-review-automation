@@ -551,7 +551,19 @@ function posCell(f){
   return `<span class="num">${ago(ps.last_synced || (f && f.pos))}</span>${ps.provider?' <span class="dim">'+esc(String(ps.provider).toUpperCase()==='RPOWER'?'RPOWER':ps.provider)+'</span>':''}${bad?` <span class="chip ${ps.state==='error'?'bad':'warn'}" title="${esc(ps.error||'')}">${esc(ps.state)}</span>`:''}`;
 }
 function setupDone(r){ return (r && (r.setup_completeness || r.data_completeness)) || {}; }
-function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round((Date.now()-d)/60000); if(m<1) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<48) return h+'h'; const dd=Math.round(h/24); if(dd<60) return dd+'d'; return Math.round(dd/30)+'mo'; }
+// One humanising duration for the whole console (admin audit 10/27/26, L1):
+// minutes as "12m", "3h", "28d", "4mo" — never "41,020m". ago(), minsAgo()
+// and every heartbeat, lease, bound and stale-after on the page read through it.
+function durMin(m){
+  if(m == null || m === '' || isNaN(m)) return '—';
+  m = Math.max(0, +m);
+  if(m < 1) return '<1m';
+  var mm = Math.round(m); if(mm < 60) return mm + 'm';
+  var h = Math.round(m / 60); if(h < 48) return h + 'h';
+  var d = Math.round(m / 1440); if(d < 60) return d + 'd';
+  return Math.round(m / 43200) + 'mo';
+}
+function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round((Date.now()-d)/60000); if(m<1) return 'now'; return durMin(m); }
 // Dates read M/D/YY everywhere (CLAUDE.md), the console included.
 function mdy(d){ return d ? (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2) : '—'; }
 function fmtD(s){ return mdy(parseTs(s)); }
@@ -2610,7 +2622,7 @@ function fillUtcDays(rows, n){ const by = {}; (rows||[]).forEach(r => { by[r.day
   return out; }
 // Minutes since, as words: "just now" under a minute, never "0m ago".
 function agoWord(ts){ const a = ago(ts); return a === 'now' ? 'just now' : (a === '—' ? '—' : a + ' ago'); }
-function minsAgo(m){ return m == null ? '—' : (m < 1 ? 'just now' : fmtN(Math.round(m)) + 'm ago'); }
+function minsAgo(m){ return m == null ? '—' : (m < 1 ? 'just now' : durMin(m) + ' ago'); }
 function tsAt(v){ return typeof v === 'number' ? new Date(v*1000) : parseTs(v); }
 // Every write in these areas: a confirm that says what it does and names
 // the client or recipient, then a toast from the server's own answer — its
@@ -2879,7 +2891,7 @@ function jobRow(j, d){
   const live = j.state === 'running' || j.state === 'stuck';
   const last = live ? 'running · ' + ago(j.running_since) : (j.last_ok_at ? agoWord(j.last_ok_at) : 'never ran clean');
   const sid = 'jr-' + String(j.job).replace(/[^A-Za-z0-9_-]/g, '_');
-  const facts = [j.sla_minutes ? `SLA ${fmtN(Math.round(j.sla_minutes / 60 * 10) / 10)}h between successes` : 'no SLA', `stuck after ${fmtN(j.stuck_after_minutes)}m`, j.lane ? esc(j.lane) + ' lane' : '', j.retry ? 'retried after a failure' : '', `7 days: ${fmtN(j.runs_7d)} runs · ${fmtN(j.failed_7d)} failed · ${fmtN(j.partial_7d)} partial`].filter(Boolean).join(' · ');
+  const facts = [j.sla_minutes ? `SLA ${fmtN(Math.round(j.sla_minutes / 60 * 10) / 10)}h between successes` : 'no SLA', `stuck after ${durMin(j.stuck_after_minutes)}`, j.lane ? esc(j.lane) + ' lane' : '', j.retry ? 'retried after a failure' : '', `7 days: ${fmtN(j.runs_7d)} runs · ${fmtN(j.failed_7d)} failed · ${fmtN(j.partial_7d)} partial`].filter(Boolean).join(' · ');
   const od = j.overdue ? `<span style="color:var(--red-t);font-size:13px">Overdue: <span class="n">${fmtN(j.overdue.hours_since)}h</span> since its last success (SLA <span class="n">${fmtN(j.overdue.max_hours)}h</span>) · last success ${j.overdue.last_ok_at ? fmtDT(j.overdue.last_ok_at) : 'never'}</span>` : '';
   return `<div class="li click" onclick="toggleRow(this)"><i style="display:block;width:9px;height:9px;border-radius:50%;background:${JOB_TONE[j.state] || 'var(--ink5)'};box-shadow:0 0 0 4px var(--hover);flex-shrink:0"></i>
     <div class="tt"><b>${esc(j.label || j.job)}${j.sends ? ' <span class="pill emb nd" style="height:18px;font-size:10.5px;margin-left:6px"><i></i>sends</span>' : ''}${held && held.refused_n ? ` <span class="chip bad" title="The newest run refused a window under its floor">${fmtN(held.refused_n)} refused</span>` : ''}${held && held.capped_n ? ` <span class="chip warn" title="The newest run hit the per-pass cap">${fmtN(held.capped_n)} capped</span>` : ''}</b><span><span class="mono">${esc(j.job)}</span> · ${esc(j.cadence || '')}${j.what ? ' · ' + esc(j.what) : ''}</span></div>
@@ -2931,8 +2943,8 @@ function opsJobs(d){
   const reqs = (d.requests || []).slice(0, 6), tasks = (d.inflight || []).slice(0, 10);
   const missed = d.missed_windows || [], dsr = d.dsr_missing || [];
   V().innerHTML = `
-    ${h.wedged ? `<div class="err"><b>Wedged:</b> ${esc(h.running_job)} has run ${fmtN(Math.round(h.running_minutes))} minutes, past its ${fmtN(h.running_bound_minutes)}-minute bound. The heartbeat stops vouching for it; check Railway's logs.</div>` : ''}
-    ${h.loop_stalled ? `<div class="err"><b>Loop stalled:</b> no scheduler tick has finished in ${fmtN(Math.round(h.loop_completed_age_minutes))} minutes and no job is running to explain it.</div>` : ''}
+    ${h.wedged ? `<div class="err"><b>Wedged:</b> ${esc(h.running_job)} has run ${durMin(h.running_minutes)}, past its ${durMin(h.running_bound_minutes)} bound. The heartbeat stops vouching for it; check Railway's logs.</div>` : ''}
+    ${h.loop_stalled ? `<div class="err"><b>Loop stalled:</b> no scheduler tick has finished in ${durMin(h.loop_completed_age_minutes)} and no job is running to explain it.</div>` : ''}
     ${d.local_sends_refused ? `<div class="warnbox"><b>Jobs that email, text or push are off on this server.</b> ${esc(d.local_sends_refused_reason || '')}</div>` : ''}
     ${retentionNow(d.retention)}
     ${missed.length || dsr.length ? `<div class="warnbox"><b>Missed:</b> ${missed.slice(0, 4).map(m => `${esc(m.job)} for ${m.restaurant_id ? clientLink(m.restaurant_id, m.restaurant || '#' + m.restaurant_id) : 'the platform'} on ${mdy(dayOf(m.local_date))}${m.detail ? ' (' + esc(m.detail) + ')' : ''}`).join(' · ')}${missed.length > 4 ? ` · +${missed.length - 4} more` : ''}${dsr.length ? `${missed.length ? ' · ' : ''}Daily Sales Report not delivered for ${dsr.slice(0, 4).map(x => `${clientLink(x.restaurant_id, x.restaurant || '#' + x.restaurant_id)} (${mdy(dayOf(x.business_date))})`).join(', ')}${dsr.length > 4 ? ' +' + (dsr.length - 4) : ''}` : ''}</div>` : ''}
@@ -2946,7 +2958,7 @@ function opsJobs(d){
         ${!js.length ? '<div class="empty">The job registry came back empty — check jobs_registry.py on this deploy.</div>' : ''}
       </div>
       <div class="stack">
-        ${card('Scheduler heartbeat', `<div class="kv" style="grid-template-columns:130px 1fr"><span class="k">Last beat</span><span class="n">${h.beat_age_minutes == null ? 'never' : minsAgo(h.beat_age_minutes)}</span><span class="k">Last full tick</span><span class="n">${minsAgo(h.loop_completed_age_minutes)}</span><span class="k">Running</span><span>${h.running_job ? `<span class="mono">${esc(h.running_job)}</span> · <span class="n">${fmtN(Math.round(h.running_minutes))}m</span> of <span class="n">${fmtN(h.running_bound_minutes)}m</span>` : '—'}</span><span class="k">Stale after</span><span class="n">${fmtN(h.stale_after_minutes)}m</span></div>`, pill(hbState[0], hbState[1]))}
+        ${card('Scheduler heartbeat', `<div class="kv" style="grid-template-columns:130px 1fr"><span class="k">Last beat</span><span class="n">${h.beat_age_minutes == null ? 'never' : minsAgo(h.beat_age_minutes)}</span><span class="k">Last full tick</span><span class="n">${minsAgo(h.loop_completed_age_minutes)}</span><span class="k">Running</span><span>${h.running_job ? `<span class="mono">${esc(h.running_job)}</span> · <span class="n">${durMin(h.running_minutes)}</span> of <span class="n">${durMin(h.running_bound_minutes)}</span>` : '—'}</span><span class="k">Stale after</span><span class="n">${durMin(h.stale_after_minutes)}</span></div>`, pill(hbState[0], hbState[1]))}
         ${card('Lease', lease ? `<div class="kv" style="grid-template-columns:130px 1fr"><span class="k">Held by</span><span class="mono" style="white-space:normal;word-break:break-all">${esc(lease.owner || '—')}</span><span class="k">Renewed</span><span class="n">${lease.heartbeat_at ? agoWord(lease.heartbeat_at) : '—'}</span><span class="k">Kept alive</span><span>${lease.kept ? 'yes, every 60 seconds' : 'no'}</span></div>` : '<span class="muted" style="font-size:13px">No process holds the scheduler lease — nothing is scheduling.</span>', lease ? '' : pill('bad', 'None'))}
         ${card('Backup', `<span style="font-size:13px" class="ink2">${esc(bk.summary || 'Backup state unknown.')}</span><span class="muted" style="font-size:12px">${bk.offsite_targets && bk.offsite_targets.length ? 'Off-site: ' + esc(bk.offsite_targets.join(' and ')) : 'No off-site copy is configured'}${bk.last_run_at ? ' · last run ' + fmtDT(bk.last_run_at) : ''} · <a href="#engineering">details</a></span>`, pill(bk.state === 'ok' ? 'good' : (bk.state === 'never' || bk.state == null ? 'neu' : 'bad'), esc({ok:'OK', stale:'Stale', failed:'Failed', no_offsite:'No off-site copy', never:'Never ran'}[bk.state] || 'Unknown')))}
         ${card('Last operator alert', oa ? `<span style="font-size:13px"><b>${esc(oa.subject || oa.key || '')}</b></span><span class="muted" style="font-size:12px">${fmtDT(oa.created_at)}${oa.channels ? ' · ' + esc(oa.channels) : ''}${oa.error ? ' · <span style="color:var(--red-t)">' + esc(oa.error) + '</span>' : ''}</span>` : '<span class="muted" style="font-size:13px">No operator page on record.</span>', oa ? pill(oa.sent ? 'good' : 'bad', oa.sent ? 'Sent' : 'Failed') : '')}
@@ -3553,9 +3565,9 @@ function engSched(S, sE){
   const hb = S.heartbeat_minutes, sup = S.supervisor || null, lease = S.lease || null, sla = sup ? sup.last_sla : null;
   const bad = !sE && (hb == null || hb > 15 || (sup && sup.scheduler_thread === 'dead'));
   return `<div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico ${sE ? 'neu' : bad ? 'bad' : 'good'}">${ico('clock')}</span><span class="lbl">Scheduler</span><span style="margin-left:auto">${pill(sE ? 'neu' : bad ? 'bad' : 'good', sE ? 'Unknown' : bad ? 'Stale' : 'Beating')}</span></span>
-    <span class="n" style="font-size:26px;font-weight:600">${sE ? unknownV(sE) : (hb == null ? 'never' : fmtN(Math.round(hb)) + 'm')} <span style="font-size:14px;color:var(--ink4);font-weight:500">since the last beat</span></span>
+    <span class="n" style="font-size:26px;font-weight:600">${sE ? unknownV(sE) : (hb == null ? 'never' : durMin(hb))} <span style="font-size:14px;color:var(--ink4);font-weight:500">since the last beat</span></span>
     <div class="kv" style="grid-template-columns:110px 1fr;margin-top:auto;font-size:12.5px"><span class="k">Thread</span><span>${sup ? esc(sup.scheduler_thread) + (sup.scheduler_restarts ? ' · restarted ' + fmtN(sup.scheduler_restarts) + '×' : '') : '<span class="dim">no supervisor in this process</span>'}</span>
-    <span class="k">Lease</span><span class="mono" style="white-space:normal;word-break:break-all">${lease && lease.owner ? esc(lease.owner) + (lease.age_seconds != null ? ' · ' + fmtN(lease.age_seconds) + 's ago' : '') : (lease && lease.error ? unknownV(lease.error) : 'nobody')}</span>
+    <span class="k">Lease</span><span class="mono" style="white-space:normal;word-break:break-all">${lease && lease.owner ? esc(lease.owner) + (lease.age_seconds != null ? ' · ' + (lease.age_seconds < 60 ? fmtN(lease.age_seconds) + 's' : durMin(lease.age_seconds / 60)) + ' ago' : '') : (lease && lease.error ? unknownV(lease.error) : 'nobody')}</span>
     <span class="k">Last SLA check</span><span>${sla ? `${fmtN(sla.jobs_overdue)} overdue${sla.alerted ? ' · paged' : ''}` : '—'}${sup && sup.last_tick_at ? ' · ' + agoWord(sup.last_tick_at) : ''}</span></div></div>`;
 }
 function sysRow(label, tone, value, sub){

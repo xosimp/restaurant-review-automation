@@ -168,3 +168,31 @@ def test_a_failed_pool_task_says_its_own_reason(page):
     out = _node(js)
     assert out[0] == ["Toast refused the credentials", "bad"]
     assert out[1] == ["Sync Toast — finished", "good"]
+
+
+# ── L1: one humanising duration ─────────────────────────────────────────────
+
+def test_one_duration_formatter_never_prints_tens_of_thousands_of_minutes(page):
+    js = _page_js(page, ("parseTs", "durMin", "ago", "agoWord", "minsAgo"), ("fmtN",)) + r"""
+    var iso = function(min){ return new Date(Date.now() - min * 60000).toISOString(); };
+    console.log(JSON.stringify({
+      d: [durMin(null), durMin(0.3), durMin(12), durMin(59.6), durMin(180), durMin(41020), durMin(100000)],
+      m: [minsAgo(null), minsAgo(0.2), minsAgo(41019), minsAgo(14)],
+      a: [ago(iso(0.1)), ago(iso(3 * 60)), ago(iso(41020)), agoWord(iso(41020))]}));
+    """
+    out = _node(js)
+    assert out["d"] == ["—", "<1m", "12m", "1h", "3h", "28d", "2mo"]
+    assert out["m"] == ["—", "just now", "28d ago", "14m ago"]
+    assert out["a"] == ["now", "3h", "28d", "28d ago"]
+
+
+def test_the_heartbeat_lease_and_bounds_read_through_the_formatter(page):
+    eng = _fn(page, "engSched")
+    assert "durMin(hb)" in eng and "fmtN(Math.round(hb)) + 'm'" not in eng
+    assert "durMin(lease.age_seconds / 60)" in eng
+    jobs = _fn(page, "opsJobs")
+    assert "durMin(h.running_minutes)" in jobs and "durMin(h.stale_after_minutes)" in jobs
+    assert "durMin(h.loop_completed_age_minutes)" in jobs
+    assert "minutes, past its" not in jobs
+    assert "durMin(j.stuck_after_minutes)" in _fn(page, "jobRow")
+    assert "fmtN(Math.round(m)) + 'm ago'" not in page
