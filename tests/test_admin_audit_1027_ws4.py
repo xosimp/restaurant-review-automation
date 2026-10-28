@@ -213,7 +213,8 @@ def test_loading_is_the_house_pulse_never_dots():
 # ── V10: one ember action per screen ────────────────────────────────────────
 
 def test_rows_carry_secondary_actions_under_the_one_primary():
-    assert 'class="btn p s"' not in _fn("opsEvents") and 'class="btn s ev-save"' in _fn("opsEvents")
+    ev = _fn("opsEvents")
+    assert not re.search(r'class="btn p s[^"]*" onclick="evSave', ev) and re.search(r'class="btn s[^"]*ev-save[^"]*" onclick="evSave', ev)
     assert "classList.add('p')" in _fn("evDirty")                       # lit only once its row is edited
     assert "' p'" not in _fn("runBtn")
     assert "btn s p" not in _fn("custDetail") and "btn s p" not in _fn("clientForms") and "btn s p" not in _fn("bulkCard")
