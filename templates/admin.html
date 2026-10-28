@@ -4063,7 +4063,11 @@ async function analytics(tab){
   const live = real.filter(r => ['churned', 'canceled'].indexOf(r.status) < 0);
   const within = (r, days) => { const t = parseTs(r.last_active); return t && (Date.now() - t) < days * 864e5; };
   const a7 = live.filter(r => within(r, 7)).length, a1 = live.filter(r => within(r, 1)).length, a28 = live.filter(r => within(r, 28)).length;
-  const canceled = real.length - live.length, kept = real.length ? Math.round(live.length / real.length * 100) : null;
+  // Retention over the accounts that ever paid, "—" over none (admin audit
+  // 10/27/26, L2/K-12): it read "100% kept" with nobody paying, every trial
+  // that never paid counted as kept.
+  var ret = retentionOf(real), perAcct = custCostPer(ai, live);
+  const canceled = ret.lost, kept = ret.rate;
   // Churn risk is scored for paying accounts only (#83); the rest are "not scored".
   // Only a paying account is scored (#83): any other level ("n/a") is not scored.
   const churn = {low:0, medium:0, high:0, unscored:0}; live.forEach(r => { if(r.churn === 'low' || r.churn === 'medium' || r.churn === 'high') churn[r.churn]++; else churn.unscored++; });
@@ -4085,10 +4089,10 @@ async function analytics(tab){
         <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">${stackBar([[a1, 'var(--green)'], [a7 - a1, 'var(--green-bg)'], [a28 - a7, 'var(--amber)'], [live.length - a28, 'var(--hover)']])}
         <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${a1}</span> today</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${a28 - a7}</span> 1–4 weeks</span><span>● <span class="n">${live.length - a28}</span> quiet</span></span></div>`}</div>
       <div class="card kc"><span class="lbl" title="${esc(adE ? '' : ad.basis || '')}">Module use · 28 days</span>${adE ? unknownV(adE) : (ad.modules || []).map(m => { const p = m.paying || {}, tr = m.trial || {}; return `<div style="display:flex;flex-direction:column;gap:5px"><span style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px"><span class="ink2">${esc((MODULE_KEYS.find(k => k[0] === m.module) || [0, m.module === 'intel' ? 'Intel' : m.module])[1])}</span><span class="n">${fmtN(p.using)}/${fmtN(p.entitled)} paying${tr.entitled ? ` · <span class="dim">${fmtN(tr.using)}/${fmtN(tr.entitled)} trial</span>` : ''}</span></span><span class="bar"><i style="width:${p.rate_pct == null ? 0 : Math.round(p.rate_pct)}%;background:var(--green)"></i></span></div>`; }).join('') || '<span class="s">No module is on for anyone yet.</span>'}</div>
-      <div class="card kc"><span class="lbl">Retention</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px">${kept == null ? '—' : kept + '%'}</span><span class="s">kept · ${canceled} canceled</span></span>
+      <div class="card kc"><span class="lbl">Retention</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px" title="${esc(ret.basis)}">${kept == null ? '—' : kept + '%'}</span><span class="s">kept · ${canceled} canceled</span></span>
         <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px"><span class="s" style="font-size:12px">Churn risk now · paying accounts</span>${stackBar([[churn.low, 'var(--green)'], [churn.medium, 'var(--amber)'], [churn.high, 'var(--red)']])}
         <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${churn.low}</span> low</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${churn.medium}</span> medium</span><span><span style="color:var(--red-t)">●</span> <span class="n">${churn.high}</span> high</span>${churn.unscored ? `<span>● <span class="n">${churn.unscored}</span> not scored</span>` : ''}</span></div>`}</div>
-      <div class="card kc"><span class="lbl">${esc(aiE ? 'AI & data APIs' : ((ai.labels || {}).cost_card || 'AI & data APIs'))} · 30 days</span><span class="big" style="font-size:34px">${aiE ? unknownV(aiE) : fmtUSD(t.cost, 2)}</span><span class="s">${aiE ? '' : `AI <span class="n">${fmtUSD(t.ai_cost, 2)}</span> · data APIs <span class="n">${fmtUSD(t.data_api_cost, 2)}</span>${live.length && t.cost != null ? ` · <span class="n">${fmtUSD(t.cost / live.length, 2)}</span> per account` : ''}`}</span>
+      <div class="card kc"><span class="lbl">${esc(aiE ? 'AI & data APIs' : ((ai.labels || {}).cost_card || 'AI & data APIs'))} · 30 days</span><span class="big" style="font-size:34px">${aiE ? unknownV(aiE) : fmtUSD(t.cost, 2)}</span><span class="s">${aiE ? '' : `AI <span class="n">${fmtUSD(t.ai_cost, 2)}</span> · data APIs <span class="n">${fmtUSD(t.data_api_cost, 2)}</span>${cErr || !perAcct ? '' : ` · <span class="n" title="${esc(perAcct.basis)}">${perAcct.per == null ? '—' : fmtUSD(perAcct.per, 2)}</span> per customer account`}`}</span>
         ${b && b.budget ? `<div style="margin-top:auto;display:flex;flex-direction:column;gap:6px"><span class="bar" style="height:8px"><i style="width:${Math.min(100, b.pct)}%;background:${b.over ? 'var(--red)' : b.warn ? 'var(--amber)' : 'linear-gradient(90deg,var(--ember),var(--ember2))'}"></i></span><span class="s" style="font-size:11.5px"><span class="n">${b.pct}%</span> of the <span class="n">${fmtUSD(b.budget)}</span> monthly ceiling · resets ${fmtD(b.resets_at)}</span></div>` : ''}</div>
     </section>
     ${anaHistory(bm, bmE)}
@@ -4106,6 +4110,36 @@ async function analytics(tab){
           ${L ? `<span class="ink2" style="font-size:13px">Cross-restaurant patterns start once a cohort reaches <span class="n">${intel.floor}</span> restaurants.</span>${Object.entries(L.cohorts).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([cName, n]) => `<div style="display:flex;flex-direction:column;gap:5px"><span style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(L.cohort_labels[cName] || (cName === 'uncategorised' ? 'Uncategorised' : cName))}</span><span class="n">${Math.min(n, intel.floor)}/${intel.floor}</span></span><span class="bar"><i style="width:${Math.min(100, Math.round(n / intel.floor * 100))}%;background:var(--ember2)"></i></span></div>`).join('')}<a href="#analytics/intelligence" style="font-size:12.5px;font-weight:700">Patterns, cohorts and benchmarks</a>` : `<span class="muted">${unknownV(inE)} — Intelligence couldn't be read.</span>`}</div>
       </div>
     </section>`;
+}
+// Retention (L2/K-12): of the customer accounts that ever paid, the share
+// still in service — null (drawn "—") when none ever paid. Ever paid is the
+// row's converted_at when the list carries it; otherwise a paying status
+// (active, past due, paused) or a cancelled one, which then also counts a
+// trial that ended unpaid — the basis says which.
+var PAYING_STATUSES = ['active', 'past_due', 'paused'];
+function retentionOf(rows){
+  rows = rows || [];
+  var exact = rows.some(function(r){ return Object.prototype.hasOwnProperty.call(r, 'converted_at'); }), kept = 0, lost = 0;
+  rows.forEach(function(r){
+    var gone = r.status === 'churned' || r.status === 'canceled', paying = PAYING_STATUSES.indexOf(r.status) >= 0;
+    if(exact ? !r.converted_at : !(gone || paying)) return;
+    if(gone) lost++; else kept++;
+  });
+  var base = kept + lost;
+  return {rate: base ? Math.round(kept / base * 100) : null, kept: kept, lost: lost,
+          basis: base ? 'Of ' + base + ' account' + (base === 1 ? '' : 's') + ' that ever paid' + (exact ? '' : ' (a cancelled trial counts too — the list has no conversion dates)') : 'No account has paid yet'};
+}
+// AI and data-API cost per customer account (K-12): the cost attributed to
+// the customer accounts in service, over how many there are — not the whole
+// fleet's spend (demo, internal and unattributed calls) over them. null when
+// the AI read failed; per is null over no accounts.
+function custCostPer(ai, live){
+  if(!ai || readErr(ai) || !Array.isArray(ai.by_client)) return null;
+  var ids = {}, cost = 0;
+  (live || []).forEach(function(r){ ids[r.id] = 1; });
+  ai.by_client.forEach(function(c){ if(c && ids[c.restaurant_id]) cost += +c.cost || 0; });
+  var n = (live || []).length;
+  return {per: n ? cost / n : null, cost: cost, n: n, basis: n ? 'Cost attributed to the ' + n + ' customer account' + (n === 1 ? '' : 's') + ' in service, divided by them' : 'No customer account in service'};
 }
 // The customer accounts as the slim, server-paged rows (#79) — segment,
 // billing status, last active and churn level are all this page reads; the

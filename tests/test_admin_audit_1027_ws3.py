@@ -630,3 +630,29 @@ def test_the_menu_page_an_extraction_read_is_saved_with_the_notes(page):
     assert out["posted"][1] == {"menu_notes": "Burger, fries, shakes", "expected_version": 8, "base": {"menu_notes": "Burger, fries"}}
     assert out["baseUrl"] == "https://ejs.example/menu"
     assert "_mn.extractUrl = r.menu_url || null" in _fn(page, "menuExtract")
+
+
+# ── L2 / K-12: a rate over an empty base is "—" ─────────────────────────────
+
+def test_retention_is_over_accounts_that_ever_paid_and_dash_over_none(page):
+    js = _page_js(page, ("retentionOf", "readErr", "custCostPer"), ("PAYING_STATUSES",)) + r"""
+    var trials = [{id: 1, status: 'trial'}, {id: 2, status: 'trial'}];
+    console.log(JSON.stringify({
+      none: retentionOf(trials),
+      approx: retentionOf(trials.concat([{id: 3, status: 'active'}, {id: 4, status: 'canceled'}])),
+      exact: retentionOf([{id: 1, status: 'canceled', converted_at: null}, {id: 2, status: 'active', converted_at: '2026-09-01'},
+                          {id: 3, status: 'churned', converted_at: '2026-08-01'}, {id: 4, status: 'trial', converted_at: null}]),
+      cost: custCostPer({ok: true, by_client: [{restaurant_id: 1, cost: 3}, {restaurant_id: 6, cost: 40}, {restaurant_id: null, cost: 9}]}, [{id: 1}, {id: 2}]),
+      empty: custCostPer({ok: true, by_client: [{restaurant_id: 6, cost: 40}]}, []),
+      failed: custCostPer({ok: false, _status: 500, error: 'x'}, [{id: 1}])}));
+    """
+    out = _node(js)
+    assert out["none"]["rate"] is None and out["none"]["basis"] == "No account has paid yet"     # was "100% kept"
+    assert out["approx"]["rate"] == 50 and "no conversion dates" in out["approx"]["basis"]
+    assert out["exact"] == {"rate": 50, "kept": 1, "lost": 1, "basis": "Of 2 accounts that ever paid"}
+    assert out["cost"]["per"] == 1.5                      # the demo (#6) and unattributed calls are not a customer's
+    assert out["empty"]["per"] is None and out["failed"] is None
+    a = _fn(page, "analytics")
+    assert "retentionOf(real)" in a and "custCostPer(ai, live)" in a
+    assert "t.cost / live.length" not in a and "Math.round(live.length / real.length * 100)" not in a
+    assert "perAcct.per == null ? '—'" in a and "kept == null ? '—'" in a
