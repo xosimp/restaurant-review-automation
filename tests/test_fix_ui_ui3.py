@@ -105,8 +105,11 @@ def test_the_menu_notes_edit_reads_the_settings_and_saves_under_the_contract(pag
     assert 'maxlength="${MENU_NOTES_MAX}"' in rd
     assert re.search(r"const MENU_NOTES_MAX = 2000;", page)
     sv = _fn(page, "mnSave")
-    # Only the field, the version it loaded at and the value it loaded (B1).
-    assert "post(m.url, {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}})" in sv
+    # Only the field, the version it loaded at and the value it loaded (B1) —
+    # plus, since admin audit 10/27/26 (W15-c), the menu page an extraction
+    # read, with its own loaded value.
+    assert "var body = {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}};" in sv
+    assert "body.menu_url = newUrl; body.base.menu_url = m.baseUrl;" in sv and "post(m.url, body)" in sv
     assert "d._status === 409" in sv and "d.current" in sv and "d.current_version" in sv
     assert "okRes(d)" in sv and "errText(d)" in sv and "the outcome is unknown" in sv
     ex = _fn(page, "menuExtract")

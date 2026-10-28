@@ -46,7 +46,7 @@ def _fn(src, name):
 
 def _decl(src, name):
     """A top-level `const|let|var NAME = …` line."""
-    m = re.search(r"\n((?:const|let|var) " + re.escape(name) + r"\b.*?;)[ \t]*\n", src, re.S)
+    m = re.search(r"\n((?:const|let|var) " + re.escape(name) + r"\b.*?;)[ \t]*(?://[^\n]*)?\n", src, re.S)
     assert m, f"{name} is gone from admin.html"
     return m.group(1)
 
@@ -590,3 +590,43 @@ def test_the_small_wiring_defects(page):
     assert "'Mark pending' : 'Undo'" in off and "OFF_DONE_STAYS[s.step]" in off                     # W15-g
     assert "gone.expires_on" in _fn(page, "staffNoteDelete")                                         # W15-h
     assert "fd.append('expires_on', expires)" in _fn(page, "staffNoteAdd")
+
+
+# ── WS-2 follow-ups: suppressions, and the menu page with the notes ─────────
+
+def test_reinstate_is_offered_only_where_the_server_allows_it_and_names_the_client(page):
+    for fn in ("supLoad", "suppressionsHtml"):
+        assert "reinstatable === false ? NOT_REINSTATABLE" in _fn(page, fn), fn
+    assert "reinstate('${jsq(s.email)}','${jsq(c.name)}',${c.id})" in _fn(page, "suppressionsHtml")
+    js = _page_js(page, ("okRes", "errText", "say", "reinstate")) + r"""
+    var posted = []; function prompt(){ return 'bounced once, fixed'; }
+    function post(path, body){ posted.push(body); return Promise.resolve({ok: false, _status: 409, refused: true,
+      error: 'This address unsubscribed itself — only the person can undo that.'}); }
+    (async function(){ await reinstate('a@b.c', "Simple EJ's", 5); console.log(JSON.stringify({posted: posted, toasts: _toasts, routed: _routed})); })();
+    """
+    out = _node(js)
+    assert out["posted"] == [{"email": "a@b.c", "reason": "bounced once, fixed", "restaurant_id": 5}]
+    assert out["toasts"] == [["This address unsubscribed itself — only the person can undo that.", "bad"]]
+    assert out["routed"] == 0
+
+
+def test_the_menu_page_an_extraction_read_is_saved_with_the_notes(page):
+    js = _page_js(page, ("okRes", "errText", "mnCountText", "mnCount", "mnSay", "mnSave", "mnUse"),
+                  ("fmtN", "MENU_NOTES_MAX", "_mn")) + r"""
+    var posted = [];
+    function post(path, body){ posted.push(body); return Promise.resolve({ok: true, _status: 200, version: 8, saved: {menu_notes: body.menu_notes, menu_url: body.menu_url}}); }
+    mk('mn-text').value = 'Old notes'; mk('mn-save'); mk('mn-status'); mk('mn-mine'); mk('mn-count'); mk('mx-text').value = 'Burger, fries';
+    t = $('mn-text'); t.focus = function(){};
+    _mn = {id: 5, name: "Simple EJ's", version: 7, base: 'Old notes', url: '/admin/client-settings/5', mine: null, baseUrl: null, newUrl: null, extractUrl: 'https://ejs.example/menu'};
+    (async function(){
+      mnUse(); await mnSave();
+      $('mn-text').value = 'Burger, fries, shakes'; await mnSave();          // the next save sends the notes alone
+      console.log(JSON.stringify({posted: posted, baseUrl: _mn.baseUrl}));
+    })();
+    """.replace("t = $('mn-text')", "var t = $('mn-text')")
+    out = _node(js)
+    assert out["posted"][0] == {"menu_notes": "Burger, fries", "expected_version": 7,
+                                "base": {"menu_notes": "Old notes", "menu_url": None}, "menu_url": "https://ejs.example/menu"}
+    assert out["posted"][1] == {"menu_notes": "Burger, fries, shakes", "expected_version": 8, "base": {"menu_notes": "Burger, fries"}}
+    assert out["baseUrl"] == "https://ejs.example/menu"
+    assert "_mn.extractUrl = r.menu_url || null" in _fn(page, "menuExtract")

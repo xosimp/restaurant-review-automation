@@ -2273,7 +2273,10 @@ async function menuNotesHtml(c){
   const d = await need('/admin/api/client/' + c.id + '/settings');
   const s = d.settings || {};
   _mn = {id: c.id, name: c.name, version: d.version, base: s.menu_notes == null ? null : s.menu_notes,
-         url: d.save_url || ('/admin/client-settings/' + c.id), mine: null};
+         url: d.save_url || ('/admin/client-settings/' + c.id), mine: null,
+         // The page a menu was read from rides with the next save (W15-c):
+         // the stored one (for `base`), and one an extraction brought.
+         baseUrl: s.menu_url == null ? null : s.menu_url, newUrl: null, extractUrl: null};
   return `<label class="lbl" for="mn-text">Menu notes</label>
     <textarea id="mn-text" rows="6" maxlength="${MENU_NOTES_MAX}" style="width:100%" placeholder="Signature dishes, current specials — what the AI should know about the menu" oninput="mnCount()">${esc(_mn.base || '')}</textarea>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn s w" id="mn-save" onclick="mnSave()">Save menu notes</button><span class="dim" id="mn-count">${mnCountText(_mn.base || '')}</span><span id="mn-status" role="status" style="font-size:12.5px"></span></div>
@@ -2286,15 +2289,22 @@ async function mnSave(){
   const t = $('mn-text'), m = _mn;
   if(!t || !m) return;
   const v = t.value.trim();
-  if(v === String(m.base || '').trim()){ mnSay('', 'Nothing changed.'); return; }
+  var newUrl = m.newUrl && m.newUrl !== String(m.baseUrl || '') ? m.newUrl : null;
+  if(v === String(m.base || '').trim() && !newUrl){ mnSay('', 'Nothing changed.'); return; }
   $('mn-save').disabled = true; mnSay('', 'Saving…');
-  let d; try{ d = await post(m.url, {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}}); }catch(e){ d = null; }
+  // The notes, and the menu page they were read from when an extraction
+  // brought one (W15-c: it fed the website-ownership proof and was never
+  // saved) — each field sent with the value it loaded at (B1).
+  var body = {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}};
+  if(newUrl){ body.menu_url = newUrl; body.base.menu_url = m.baseUrl; }
+  let d; try{ d = await post(m.url, body); }catch(e){ d = null; }
   if($('mn-save')) $('mn-save').disabled = false;
   if(_mn !== m || !$('mn-text')) return;                 // the admin has moved on
   if(!d){ mnSay('bad', 'No answer from the server — the outcome is unknown. Reload before saving again.'); return; }
   if(okRes(d)){
     const saved = (d.saved || {}).menu_notes;
     m.base = saved == null ? null : saved; m.version = d.version; m.mine = null;
+    if(newUrl){ m.baseUrl = Object.prototype.hasOwnProperty.call(d.saved || {}, 'menu_url') ? d.saved.menu_url : newUrl; m.newUrl = null; }
     $('mn-text').value = m.base || ''; $('mn-mine').innerHTML = ''; mnCount();
     mnSay('good', (m.base || '') === v ? 'Saved for ' + m.name + '.' : 'Saved for ' + m.name + ' — as the box now shows (tags are removed, and anything past ' + fmtN(MENU_NOTES_MAX) + ' characters is cut).');
     return;
@@ -2304,10 +2314,11 @@ async function mnSave(){
     // now (the 409 carries it; a race lost at the write itself doesn't, so
     // read it again) and keep this text to put back.
     const cur = d.current || {};
+    if(Object.prototype.hasOwnProperty.call(cur, 'menu_url')) m.baseUrl = cur.menu_url;
     if(Object.prototype.hasOwnProperty.call(cur, 'menu_notes') && d.current_version != null){ m.base = cur.menu_notes; m.version = d.current_version; }
     else {
       let f; try{ f = await api('/admin/api/client/' + m.id + '/settings', {method:'GET'}); }catch(e){ f = null; }
-      if(okRes(f)){ m.base = (f.settings || {}).menu_notes; m.version = f.version; }
+      if(okRes(f)){ m.base = (f.settings || {}).menu_notes; m.version = f.version; m.baseUrl = (f.settings || {}).menu_url == null ? null : f.settings.menu_url; }
       else { mnSay('bad', errText(d) + ' The notes stored now couldn\'t be read — reload the page.'); return; }
     }
     if(_mn !== m || !$('mn-text')) return;
@@ -2330,6 +2341,7 @@ function mnUse(){
   const t = $('mn-text'), x = $('mx-text'); if(!t || !x) return;
   const long = x.value.length > MENU_NOTES_MAX;
   t.value = x.value.slice(0, MENU_NOTES_MAX); mnCount();
+  if(_mn.extractUrl) _mn.newUrl = _mn.extractUrl;         // saved with the notes (W15-c)
   mnSay('', 'The extracted menu is in the box — review it, then Save menu notes.' + (long ? ' Cut to ' + fmtN(MENU_NOTES_MAX) + ' characters, the most the notes keep.' : ''));
   t.focus();
 }
@@ -2346,6 +2358,7 @@ async function menuExtract(id, source){
   // Into the notes box above when it loaded for this client; the legacy
   // settings page only when it couldn't be read.
   const box = _mn && _mn.id === id && $('mn-text');
+  if(box) _mn.extractUrl = r.menu_url || null;            // the page it was read from, when there was one
   $('mx-out').innerHTML = `<textarea id="mx-text" rows="8" style="width:100%">${esc(r.menu_notes)}</textarea><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn s" onclick="navigator.clipboard&&navigator.clipboard.writeText($('mx-text').value).then(()=>toast('Copied','good'))">Copy</button>${box ? '<button class="btn s w" onclick="mnUse()">Put it in the menu notes</button>' : `<a class="btn s w" href="/admin/client-settings/${id}">Open Settings to save it</a>`}<span class="dim">Not saved.${r.message?' '+esc(r.message):''}</span></div>`;
 }
 // ── the client's Messages & AI tab ──
@@ -2381,12 +2394,14 @@ function dayKeysBack(n){ const out = []; for(let i = 0; i < n; i++){ const x = n
 async function suppressionsHtml(c){
   const d = await need('/admin/api/suppressions?restaurant_id=' + c.id);
   const rows = d.suppressions || [];
-  return `<h2>Suppressed addresses</h2>${rows.map(s=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1;min-width:0"><b>${esc(s.email)}</b> <span class="dim">${esc((s.roles||[]).join(', '))} · ${esc(s.reason||'')} ${fmtD(s.created_at)}</span><div class="dim">${s.scope==='marketing'?'Marketing only — alerts and reports still go.':(s.scope==='guest'?'Guest mail only.':'Gets no email from Cavnar AI — alerts, briefs and reports included.')}${s.operator?' (operator address: never suppressed for operator mail)':''}</div></span><button class="btn s w" onclick="reinstate('${jsq(s.email)}','${jsq(c.name)}')">Reinstate</button></div>`).join('') || '<span class="muted" style="font-size:13px">No address this client\'s mail goes to is suppressed.</span>'}`;
+  return `<h2>Suppressed addresses</h2>${rows.map(s=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1;min-width:0"><b>${esc(s.email)}</b> <span class="dim">${esc((s.roles||[]).join(', '))} · ${esc(s.reason||'')} ${fmtD(s.created_at)}</span><div class="dim">${s.scope==='marketing'?'Marketing only — alerts and reports still go.':(s.scope==='guest'?'Guest mail only.':'Gets no email from Cavnar AI — alerts, briefs and reports included.')}${s.operator?' (operator address: never suppressed for operator mail)':''}</div></span>${s.reinstatable === false ? NOT_REINSTATABLE : `<button class="btn s w" onclick="reinstate('${jsq(s.email)}','${jsq(c.name)}',${c.id})">Reinstate</button>`}</div>`).join('') || '<span class="muted" style="font-size:13px">No address this client\'s mail goes to is suppressed.</span>'}`;
 }
-async function reinstate(email, name){
+async function reinstate(email, name, rid){
   const why = prompt('Reinstate ' + email + (name ? ' (' + name + ')' : '') + '? Mail to it starts going out again. Why (for the record)?');
   if(why === null) return;
-  const d = await post('/admin/api/suppressions/reinstate', {email, reason: why});
+  // From a client page the lift names its client (WS-2 C7); a 409 (their own opt-out) says the server's sentence.
+  var body = {email: email, reason: why}; if(rid) body.restaurant_id = rid;
+  const d = await post('/admin/api/suppressions/reinstate', body);
   if(say(d, email + ' reinstated')) route();
 }
 async function smsHtml(c){
@@ -3196,6 +3211,10 @@ function opsEmail(d, mh){
 }
 // Suppressions (#45, #101): scope, reason, and whether it is an operator
 // address (never suppressed now — but it bounced). Reinstate is audited.
+// A suppression the server won't lift (WS-2 S2: the person's own unsubscribe
+// or spam complaint, `reinstatable: false`) offers no Reinstate; its 409
+// sentence is said if one is asked for anyway (say()).
+var NOT_REINSTATABLE = '<span class="dim" title="An unsubscribe or a spam complaint — only the person can undo it.">their own choice</span>';
 function supLoad(){
   const q = ($('sup-q') || {}).value || '';
   lazyRead('ops-sup', '/admin/api/suppressions?limit=200' + (q ? '&q=' + encodeURIComponent(q) : ''), x => table([
@@ -3203,7 +3222,7 @@ function supLoad(){
     {h:'Scope', key:'scope', cell:r => `<span class="chip">${esc(r.scope || 'all')}</span>`},
     {h:'Why', key:'reason', wrap:true, cell:r => `${esc(r.reason || '')}${r.detail ? ' <span class="dim">' + esc(String(r.detail).slice(0, 120)) + '</span>' : ''}`},
     {h:'Since', key:'created_at', cell:r => `<span class="num">${fmtD(r.created_at)}</span>`},
-    {h:'', cell:r => `<button class="btn s w" onclick="supReinstate('${jsq(r.email)}','${jsq(r.scope || 'all')}')">Reinstate</button>`}], x.suppressions || [], {id:'sup-t', sort:'created_at', limit:15, empty: q ? 'No suppressed address matches.' : 'No address is suppressed.'}));
+    {h:'', cell:r => r.reinstatable === false ? NOT_REINSTATABLE : `<button class="btn s w" onclick="supReinstate('${jsq(r.email)}','${jsq(r.scope || 'all')}')">Reinstate</button>`}], x.suppressions || [], {id:'sup-t', sort:'created_at', limit:15, empty: q ? 'No suppressed address matches.' : 'No address is suppressed.'}));
 }
 async function supReinstate(email, scope){
   const reason = prompt(`Reinstate ${email}? Mail to it (${scope} scope) starts again, and it is recorded with your name.\n\nWhy (for the record):`, '');
