@@ -3780,6 +3780,17 @@ _OUTCOME_SQL = ("COALESCE(outcome, CASE WHEN COALESCE(status,'ok')='ok' THEN 'ok
 _VENDOR_SQL = ("COALESCE(vendor, CASE WHEN COALESCE(model,'') LIKE 'google-places%' THEN 'google_places' "
                "WHEN COALESCE(model,'') LIKE 'perplexity%' OR COALESCE(model,'') LIKE 'sonar%' THEN 'perplexity' "
                "ELSE 'anthropic' END)")
+# The accounts _segment calls internal, as SQL over restaurants (K-12): a
+# demo, internal billing, a test account (exclude_from_learning), or one
+# whose every login is internal (admin or support — models.INTERNAL_LOGIN_SQL).
+_INTERNAL_RIDS_SQL = ("SELECT r.id FROM restaurants r WHERE COALESCE(r.is_demo,0)=1 "
+                      "OR LOWER(TRIM(COALESCE(r.billing_status,'')))='internal' "
+                      "OR COALESCE(r.exclude_from_learning,0)=1 "
+                      "OR (EXISTS (SELECT 1 FROM users u WHERE u.restaurant_id=r.id) "
+                      "AND NOT EXISTS (SELECT 1 FROM users u WHERE u.restaurant_id=r.id "
+                      "AND COALESCE(u.is_admin,0)=0 AND LOWER(COALESCE(u.role,''))<>'support'))")
+
+
 # THE failed AI call (admin audit 10/27/26 K-08) — one definition for
 # Overview, the AI page and the client page, which counted four different
 # things: a Claude call that reached the provider and failed (outcome
@@ -4116,6 +4127,16 @@ def ai_ops(days=30):
     # shows one clock's "today" under the other's.
     t_today_ct = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (_utc_stamp(_today_start()),)) or {}
     t_month = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (month,)) or {}
+    # What customer accounts cost — the numerator of "per account" (admin
+    # audit 10/27/26 K-12): the window's total also carries demo and internal
+    # accounts and the platform's own unattributed calls, and dividing it by
+    # the customer accounts overstated what one customer costs.
+    cust = f"(restaurant_id IS NOT NULL AND restaurant_id NOT IN ({_INTERNAL_RIDS_SQL}))"
+    t_customer = _one_dict(conn, f"SELECT ROUND(COALESCE(SUM(CASE WHEN {cust} THEN cost_usd ELSE 0 END),0),2) AS cost, "
+                                 f"ROUND(COALESCE(SUM(CASE WHEN {cust} AND {_VENDOR_SQL}<>'google_places' THEN cost_usd ELSE 0 END),0),2) AS ai_cost, "
+                                 f"ROUND(COALESCE(SUM(CASE WHEN {cust} AND {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),0),2) AS data_api_cost, "
+                                 f"COUNT(DISTINCT CASE WHEN {cust} THEN restaurant_id END) AS accounts "
+                                 f"FROM ai_usage WHERE created_at >= ?", (since,)) or {}
     by_action = _by_action(conn, since)
     by_client = _rows_dict(conn, f"SELECT a.restaurant_id, r.name, r.location_group, SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END) AS calls, "
                                  f"ROUND(SUM(a.cost_usd),4) AS cost, "
@@ -4195,7 +4216,10 @@ def ai_ops(days=30):
     return {"ok": True, "days": days, "window_tz": "UTC", "generated_at": _utcnow().strftime(_ZFMT),
             "labels": {"cost_card": "AI & data APIs", "today": "today (UTC, the budget's day)",
                        "today_ct": "today (since midnight Central)", "month": "this month (UTC)"},
-            "totals": {**totals, "today": t_today, "today_ct": t_today_ct, "month": t_month}, "by_action": by_action,
+            "totals": {**totals, "today": t_today, "today_ct": t_today_ct, "month": t_month,
+                       "customer_cost": t_customer.get("cost"), "customer_ai_cost": t_customer.get("ai_cost"),
+                       "customer_data_api_cost": t_customer.get("data_api_cost"),
+                       "customer_accounts_with_cost": t_customer.get("accounts")}, "by_action": by_action,
             "by_client": by_client, "daily": daily, "by_provider": by_provider, "by_vendor": by_vendor,
             "outcomes": outcomes, "blocked": blocked, "rate_limit_hits": rate_hits,
             "failures": failures, "recent": recent, "anomalies": anomalies,
@@ -7042,7 +7066,12 @@ def _slim(r):
             "issues": len(r["issues"]), "critical": sum(1 for i in r["issues"] if i["severity"] == "critical"),
             "churn": (r["churn_risk"] or {}).get("level"), "setup": (r["setup_completeness"] or {}).get("score"),
             "integration_health": r["integration_health"], "onboarding": f"{r['onboarding']['done']}/{r['onboarding']['total']}",
-            "deletion_due": (r.get("deletion") or {}).get("due_at")}
+            "deletion_due": (r.get("deletion") or {}).get("due_at"),
+            # Retention's base (K-12): an account that ever paid — a recorded
+            # conversion, or paying (or paused) now. A trial that never paid
+            # is not a retained customer.
+            "converted_at": b.get("converted_at"),
+            "ever_paid": bool(b.get("converted_at")) or b["status"] in PAYING_STATES + ("paused",)}
 
 
 def clients_page(q=None, health=None, segment="customer", status=None, sort="name", page=1, per_page=50,

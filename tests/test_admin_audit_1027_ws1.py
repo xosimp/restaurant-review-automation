@@ -318,3 +318,18 @@ def test_k11_integration_counts_are_customer_connections(db_path):
     assert ig["counts_internal"]["error"] == 1
     assert not any(r["restaurant_id"] == d for r in ig["rows"])
     assert any(r["restaurant_id"] == d for r in admin_ops.integrations()["rows"])   # internal callers keep every row
+
+
+# ── K-12: per-account cost and retention have the right bases ──────────────
+
+def test_k12_customer_cost_and_ever_paid_are_served(db_path):
+    rid = _rest(db_path, "Paying Place", billing_status="active")
+    trial = _rest(db_path, "Trial Place", billing_status="trial")
+    demo = _rest(db_path, "Demo Place", billing_status="trial", is_demo=1)
+    ai_utils.log_ai_usage(rid, "insights", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=2.0)
+    ai_utils.log_ai_usage(demo, "insights", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=5.0)
+    ai_utils.log_ai_usage(None, "sales_audit", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=3.0)
+    t = admin_ops.ai_ops(30)["totals"]
+    assert t["cost"] == 10.0 and t["customer_cost"] == 2.0 and t["customer_accounts_with_cost"] == 1
+    rows = {r["id"]: r for r in admin_ops.clients_page(per_page=200)["items"]}
+    assert rows[rid]["ever_paid"] is True and rows[trial]["ever_paid"] is False
