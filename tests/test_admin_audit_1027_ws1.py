@@ -519,3 +519,20 @@ def test_p01_derived_resend_events_are_read_on_a_window(db_path):
         conn.close()
     resend = next(p for p in wh["providers"] if p["provider"] == "resend")
     assert resend["source"] != "derived" or resend["last_verified_at"] is None
+
+
+# ── P-03: the Email chart's daily counts come from the database ────────────
+
+def test_p03_email_daily_counts_are_grouped_in_sql_on_chicago_days(db_path, monkeypatch):
+    now = datetime.now(timezone.utc)
+    for i, status in enumerate(("delivered", "bounced", "failed", "delivered")):
+        _sql(db_path, "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at, status) "
+                      "VALUES (NULL, 'digest', ?, 's', ?, ?)",
+             (f"p{i}@ex.com", (now - timedelta(hours=1 + i)).strftime("%Y-%m-%d %H:%M:%S"), status))
+    seen = []
+    real = admin_ops._rows_dict
+    monkeypatch.setattr(admin_ops, "_rows_dict", lambda conn, sql, *a, **k: (seen.append(sql), real(conn, sql, *a, **k))[1])
+    out = admin_ops.emails()
+    assert not any(sql.strip().startswith("SELECT sent_at, status FROM email_log") for sql in seen)
+    assert sum(d["n"] for d in out["daily"]) == 4 and sum(d["failed"] for d in out["daily"]) == 2
+    assert len(out["daily"]) == 30 and out["daily"][-1]["day"] == admin_ops._now_ct().date().isoformat()

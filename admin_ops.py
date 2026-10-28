@@ -4688,7 +4688,15 @@ def emails(limit=200):
                                        "SUM(CASE WHEN status='complained' THEN 1 ELSE 0 END) AS complained "
                                        "FROM email_log WHERE sent_at >= ? GROUP BY email_type ORDER BY n DESC",
                                  (w["week"],))
-            month_rows = _rows_dict(conn, "SELECT sent_at, status FROM email_log WHERE sent_at >= ?", (w["month"],))
+            # Counted by the database per UTC hour (admin audit 10/27/26 P-03):
+            # every row of 30 days was loaded into Python for a histogram —
+            # 1.5M dicts at 1,500 restaurants, an out-of-memory once guest
+            # newsletters are in the ledger. At most 720 hour rows come back
+            # and are bucketed into Chicago days below, exactly.
+            month_hours = _rows_dict(conn, "SELECT substr(sent_at, 1, 13) AS hr, COUNT(*) AS n, "
+                                           "SUM(CASE WHEN status IN ('failed','bounced','complained') THEN 1 ELSE 0 END) "
+                                           "AS bad FROM email_log WHERE sent_at >= ? GROUP BY substr(sent_at, 1, 13)",
+                                     (w["month"],), label="email_log")
             storms = _rows_dict(conn, "SELECT to_email, COUNT(*) AS n FROM email_log WHERE sent_at >= ? "
                                       "GROUP BY to_email HAVING n >= 8 ORDER BY n DESC", (w["today"],))
             sup_cols = _columns(conn, "email_suppressions")
@@ -4722,11 +4730,7 @@ def emails(limit=200):
     today = {k: int(totals.get(k) or 0) for k in ("n", "failed", "bounced", "complained", "delivered")}
     # "Sent today" is what left without an error at our end or Resend's.
     today["sent"] = today["n"] - today["failed"] - today["bounced"] - today["complained"]
-    bad = ("failed", "bounced", "complained")
-    daily = _fill_days(month_rows, "sent_at", 30)
-    fails = _fill_days(month_rows, "sent_at", 30, pred=lambda r: r.get("status") in bad)
-    for day, f in zip(daily, fails):
-        day["failed"] = f["n"]
+    daily = _days_from_hours(month_hours, 30)
     resend = next((p for p in hooks["providers"] if p["provider"] == "resend"), None)
     # An operator address is never suppressed (E, #101): one on the list
     # bounced, and is flagged rather than shown as a live suppression.
@@ -4741,6 +4745,24 @@ def emails(limit=200):
             "today": today, "engagement": engagement, "rates": rates,
             "resend_webhook": resend, "reinstate_route": "/admin/api/suppressions/reinstate",
             "windows": _window_meta(), **_merge_problems(bucket)}
+
+
+def _days_from_hours(hours, days):
+    """[{day, n, failed}] for every Chicago day of the window, zero-filled,
+    from per-UTC-hour counts ({hr: 'YYYY-MM-DD HH', n, bad})."""
+    today = _now_ct().date()
+    buckets = {(today - timedelta(days=i)).isoformat(): {"day": (today - timedelta(days=i)).isoformat(), "n": 0,
+                                                          "failed": 0}
+               for i in range(days - 1, -1, -1)}
+    for row in hours:
+        at = _parse_utc(str(row.get("hr") or "").replace("T", " ") + ":00:00", "UTC")
+        if at is None:
+            continue
+        b = buckets.get(_ct(at).date().isoformat())
+        if b is not None:
+            b["n"] += int(row.get("n") or 0)
+            b["failed"] += int(row.get("bad") or 0)
+    return list(buckets.values())
 
 
 def _issue_texts(conn, w, rid=None):
