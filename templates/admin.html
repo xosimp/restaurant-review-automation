@@ -645,6 +645,27 @@ let _seq = 0;
 var NO_ANSWER = 'No answer from the server — the outcome is unknown. Refresh before trying again.';
 var _readCtl = null;
 function isWrite(opts){ var m = opts && opts.method ? String(opts.method).toUpperCase() : 'GET'; return m !== 'GET' && m !== 'HEAD'; }
+// One read queue for the whole page (admin audit 10/27/26, P-05, round 2):
+// at most READ_MAX page reads in flight, whoever asks — apiAll, every lazy
+// panel, a filter's rows — so one console page never holds more than two of
+// the server's four request threads (the server's own ADMIN_READ_CONCURRENCY
+// answers 503 busy past that, which api() waits out once). The rail's poll,
+// writes and job polls (a method in opts) go around it. A read still waiting
+// when the admin moves to another page leaves the queue at once (STALE,
+// route() → readQueueDrop); one in flight is aborted. A free slot is taken
+// at once, so an idle page's reads start in the order they were asked. ES5.
+var READ_MAX = 2, _readQ = [], _readIn = 0;
+function readDone(){ var done = false; return function(){ if(done) return; done = true; _readIn--; readPump(); }; }
+function readNow(){ if(_readIn < READ_MAX && !_readQ.length){ _readIn++; return readDone(); } return null; }
+function readTurn(s){ return new Promise(function(res, rej){ _readQ.push({s: s, res: res, rej: rej}); readPump(); }); }
+function readPump(){
+  while(_readIn < READ_MAX && _readQ.length){
+    var it = _readQ.shift();
+    if(it.s !== _seq){ it.rej(new Error(STALE)); continue; }
+    _readIn++; it.res(readDone());
+  }
+}
+function readQueueDrop(){ var q = _readQ; _readQ = []; q.forEach(function(it){ it.rej(new Error(STALE)); }); }
 let _reauthP = null, _reauthRes = null;
 async function api(path, opts, _retry, _s0){
   const s = _s0 == null ? _seq : _s0;
@@ -652,15 +673,22 @@ async function api(path, opts, _retry, _s0){
   // path (auth._admin_wants_json), not a 302 to a login page.
   const o = Object.assign({}, opts || {});
   o.headers = Object.assign({'Accept': 'application/json'}, (opts && opts.headers) || {});
-  if(!(opts && (opts.method || opts.signal)) && _readCtl && s === _seq) o.signal = _readCtl.signal;
-  var r;
-  try{ r = await fetch(path, o); }
-  catch(e){
-    if(s !== _seq && !(opts && opts.method)) throw new Error(STALE);
-    if(isWrite(opts)) return {ok:false, _status:0, network:true, error:NO_ANSWER};
-    throw e;
-  }
-  let j; try{ j = await r.json(); }catch(e){ j = {ok:false, error:'HTTP '+r.status}; }
+  var pageRead = !(opts && (opts.method || opts.signal));
+  if(pageRead && _readCtl && s === _seq) o.signal = _readCtl.signal;
+  // A page read waits its turn in the read queue (above); it holds the slot
+  // only while its request is out — never through a busy or step-up retry.
+  if(pageRead && s !== _seq) throw new Error(STALE);
+  var r, release = pageRead ? (readNow() || await readTurn(s)) : null;
+  let j;
+  try{
+    try{ r = await fetch(path, o); }
+    catch(e){
+      if(s !== _seq && !(opts && opts.method)) throw new Error(STALE);
+      if(isWrite(opts)) return {ok:false, _status:0, network:true, error:NO_ANSWER};
+      throw e;
+    }
+    try{ j = await r.json(); }catch(e){ j = {ok:false, error:'HTTP '+r.status}; }
+  } finally { if(release) release(); }
   if(j && typeof j === 'object' && !Array.isArray(j)) j._status = r.status;
   if(r.headers.get('X-Redacted') === 'support') document.body.classList.add('role-support');
   if(r.status===401 || (r.redirected && r.url.indexOf(location.origin + '/login') === 0)){ location.href='/login?next=/admin'; }
@@ -827,6 +855,7 @@ async function route(){
   if(_readCtl) _readCtl.abort();
   _readCtl = typeof AbortController === 'function' ? new AbortController() : null;
   const seq = ++_seq;
+  readQueueDrop();
   const view = $('view'); view.classList.remove('enter');
   view.innerHTML = '<div class="sk" style="width:28%;height:26px"></div><div class="sk blk"></div><div class="sk blk"></div>';
   try {
@@ -2891,7 +2920,8 @@ function readErr(d, tables){
 // platform, and a console page must leave two of them to owners, the iPhone
 // app, webhooks and /health. A read that throws (the network) becomes a
 // failed payload, so it draws as unknown; a read the admin has navigated
-// away from stops the rest.
+// away from stops the rest. Since round 2 every page read also waits its
+// turn in api()'s one read queue (READ_MAX), shared with the lazy panels.
 var API_ALL_MAX = 2;
 async function apiAll(paths, limit){
   const out = new Array(paths.length); let next = 0, stale = null;

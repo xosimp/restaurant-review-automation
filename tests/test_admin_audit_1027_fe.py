@@ -294,3 +294,46 @@ def test_the_deployment_card_says_the_release_verdict_and_its_lines():
     for k in ("nosup", "older", "failed"):                      # unknown, never ok and never pending
         assert ">unknown<" in out[k], k
     assert "No supervisor in this process." in out["nosup"] and "doesn&#39;t report release health" in out["older"]
+
+
+# ── P-05: one read queue, two at a time, emptied by navigation ──────────────
+
+QUEUE_FNS = ("isWrite", "readDone", "readNow", "readTurn", "readPump", "readQueueDrop", "api", "apiAll")
+QUEUE_DECLS = ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP", "READ_MAX", "API_ALL_MAX")
+
+
+def test_every_page_read_shares_one_queue_of_two_and_navigation_empties_it():
+    js = _js(QUEUE_FNS, QUEUE_DECLS) + r"""
+    function reauth(){ return Promise.resolve(false); }
+    var now = 0, peak = 0, fetched = [];
+    var fetch = function(path, o){
+      var counted = path.indexOf('/admin/api/admin-jobs') < 0 && path.indexOf('/admin/api/badges') < 0;
+      fetched.push(path); if(counted){ now++; peak = Math.max(peak, now); }
+      return new Promise(function(res, rej){
+        if(o.signal) o.signal.addEventListener('abort', function(){ if(counted) now--; rej(new Error('aborted')); });
+        setTimeout(function(){ if(counted) now--; res({status: 200, headers: {get: function(){ return null; }}, json: function(){ return Promise.resolve({ok: true, p: path}); }}); }, 10);
+      }); };
+    (async function(){
+      _readCtl = new AbortController(); _seq = 1;
+      // an apiAll of three and two lazy panels, asked at once, plus a poll and the rail
+      var all = apiAll(['/a1', '/a2', '/a3'], 2), l1 = api('/lazy1'), l2 = api('/lazy2');
+      var poll = api('/admin/api/admin-jobs/9', {method: 'GET'}), rail = api('/admin/api/badges', {method: 'GET'});
+      var got = await Promise.all([all, l1, l2, poll, rail]);
+      var peak1 = peak;
+      // the admin moves on while reads are queued: the queued ones never go out
+      fetched = []; peak = 0;
+      var q = [api('/b1'), api('/b2'), api('/b3'), api('/b4')].map(function(p){ return p.then(function(){ return 'drawn'; }, function(e){ return e.message; }); });
+      await new Promise(function(r){ setTimeout(r, 1); });
+      _readCtl.abort(); _readCtl = new AbortController(); _seq++; readQueueDrop();
+      var after = await Promise.all(q);
+      console.log(JSON.stringify({peak1: peak1, got: got.map(function(x){ return Array.isArray(x) ? x.map(function(y){ return y.p; }) : x.p; }),
+                                  fetched2: fetched, after: after, left: _readIn}));
+    })();
+    """
+    out = _node(js)
+    assert out["peak1"] == 2                                   # apiAll and the lazy panels share the two slots
+    assert out["got"] == [["/a1", "/a2", "/a3"], "/lazy1", "/lazy2", "/admin/api/admin-jobs/9", "/admin/api/badges"]
+    assert out["fetched2"] == ["/b1", "/b2"]                   # b3 and b4 waited, then left with the page
+    assert out["after"] == ["__stale__"] * 4 and out["left"] == 0
+    r = _fn("route")
+    assert r.index("++_seq") < r.index("readQueueDrop()")

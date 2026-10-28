@@ -92,8 +92,9 @@ def _page_js(page, fns=(), decls=()):
 # ── W4/C2: a write whose answer never came back ─────────────────────────────
 
 def test_a_write_that_gets_no_answer_says_so_and_a_read_still_throws(page):
-    js = _page_js(page, ("isWrite", "api", "post", "okRes", "errText", "say", "opsWrite"),
-                  ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP")) + r"""
+    # api() takes its turn in the page's read queue since round 2 (P-05).
+    js = _page_js(page, ("isWrite", "readDone", "readNow", "readTurn", "readPump", "api", "post", "okRes", "errText", "say", "opsWrite"),
+                  ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP", "READ_MAX")) + r"""
     function reauth(){ return Promise.resolve(false); }
     var fetch = function(){ return Promise.reject(new TypeError('Failed to fetch')); };
     (async function(){
@@ -116,7 +117,8 @@ def test_a_write_that_gets_no_answer_says_so_and_a_read_still_throws(page):
 
 
 def test_a_read_the_admin_left_is_dropped_and_a_page_read_carries_the_abort_signal(page):
-    js = _page_js(page, ("isWrite", "api"), ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP")) + r"""
+    js = _page_js(page, ("isWrite", "readDone", "readNow", "readTurn", "readPump", "api"),
+                  ("STALE", "_seq", "NO_ANSWER", "_readCtl", "_reauthP", "READ_MAX")) + r"""
     function reauth(){ return Promise.resolve(false); }
     var seen = [];
     var fetch = function(path, o){ seen.push([path, !!o.signal]);
