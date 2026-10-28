@@ -456,10 +456,17 @@ def _actor_parts(actor):
     if isinstance(actor, dict):
         name = actor.get("username") or actor.get("email") or (f"user:{actor.get('id')}" if actor.get("id") else None)
         return (name or "unknown"), actor.get("id")
-    if actor:
-        return str(actor)[:120], None
     state = _request_state()
     user = (state or {}).get("actor") or {}
+    if actor:
+        name = str(actor)[:120]
+        # A username passed down from the route (run now, the storm-cap lift,
+        # a vendor cost) is this request's own actor: take their id from the
+        # request, so the trail's actor-id filter finds the row (admin audit
+        # 10/27/26 S7/F16). Any other name keeps no id.
+        if user and user.get("id") and name == str(user.get("username") or ""):
+            return name, user.get("id")
+        return name, None
     if user:
         return (user.get("username") or f"user:{user.get('id')}"), user.get("id")
     return "system", None
@@ -546,9 +553,16 @@ def audited(action, snapshot=None):
                     except Exception:
                         pass
                 status = _status_of(resp)
+                result = "ok" if status < 400 else ("refused" if status < 500 else "error")
+                if result == "ok":
+                    # A 200 that says {ok: false} (a POS sync on a store that
+                    # isn't connected) did not do the thing: refused, not ok.
+                    read_body = getattr(resp[0] if isinstance(resp, tuple) else resp, "get_json", None)
+                    body_out = read_body(silent=True) if callable(read_body) else None
+                    if isinstance(body_out, dict) and body_out.get("ok") is False:
+                        result = "refused"
                 record_admin_action(user, action, restaurant_id=kwargs.get("restaurant_id"),
-                                    target=ids or None, before=before, after=after,
-                                    result="ok" if status < 400 else ("refused" if status < 500 else "error"),
+                                    target=ids or None, before=before, after=after, result=result,
                                     summary=f"{user.get('username') or 'admin'} {action} ({status})")
             except Exception:
                 pass

@@ -6439,10 +6439,16 @@ def set_vendor_cost(vendor, month, amount_usd, note=None, actor="admin"):
     finally:
         conn.close()
     try:
+        # The one typed call (admin audit 10/27/26 S7/C7): actor (with the
+        # request's id), before and after, result — the untyped writer left
+        # a payload-only row the trail's filters could not see.
         import admin_events
-        admin_events.record("admin", "vendor_cost.set", amount=amount,
-                            summary=f"{vendor} {month} set to ${amount:,.2f} by {actor}"
-                                    + (f" (was ${float(before['amount_usd']):,.2f})" if before else ""))
+        admin_events.record_admin_action(
+            actor, "vendor_cost.set", target=f"vendor_cost:{vendor}:{month}",
+            before={"amount_usd": before.get("amount_usd")} if before else None,
+            after={"amount_usd": amount, "note": (note or "")[:300] or None},
+            summary=f"{vendor} {month} set to ${amount:,.2f} by {actor}"
+                    + (f" (was ${float(before['amount_usd']):,.2f})" if before else ""))
     except Exception:
         pass
     return {"ok": True, "vendor": vendor, "month": month, "amount_usd": amount}

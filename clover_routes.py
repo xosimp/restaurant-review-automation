@@ -55,6 +55,7 @@ def admin_save_clover(restaurant_id, current_user):
 
 @clover_bp.route("/admin/clover/sync/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events.audited("pos.clover.sync_started")
 def admin_sync_clover(restaurant_id, current_user):
     """A background sync through pos.sync_restaurant on the bounded admin
     pool (scheduler.start_manual_pos_sync), as Toast's and RPOWER's are

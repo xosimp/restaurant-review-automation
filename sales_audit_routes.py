@@ -187,6 +187,11 @@ def api_create(current_user):
         answers["locations"] = d["locations"]
     audit_date = d.get("audit_date") if isinstance(d.get("audit_date"), str) and len(d.get("audit_date")) == 10 else date.today().isoformat()
     aid = store.create_audit(answers=answers, audit_date=audit_date, created_by=current_user.get("id"))
+    # In the trail as itself (admin audit 10/27/26 S7). The autosave is not:
+    # it fires on every keystroke pause, and its request rows already say who.
+    _admin_events.record_admin_action(current_user, "sales_audit.created", target=f"sales_audit:{aid}",
+                                      after={"restaurant_name": answers.get("restaurant_name"),
+                                             "audit_date": audit_date})
     return jsonify(ok=True, id=aid)
 
 
@@ -339,12 +344,17 @@ def api_status(audit_id, current_user):
     st = d.get("status")
     if st not in STATUSES:
         return jsonify(ok=False, error="Unknown status"), 400
+    was = (store.get_audit(audit_id) or {}).get("status")
     if st == "Archived":
         store.archive_audit(audit_id)
+        _admin_events.record_admin_action(current_user, "sales_audit.status_set", target=f"sales_audit:{audit_id}",
+                                          before={"status": was}, after={"status": st})
         return jsonify(ok=True, status=st)
     saved = store.save_audit(audit_id, status=st)
     if not saved:
         return jsonify(ok=False, error="Audit not found"), 404
+    _admin_events.record_admin_action(current_user, "sales_audit.status_set", target=f"sales_audit:{audit_id}",
+                                      before={"status": was}, after={"status": saved["status"]})
     return jsonify(ok=True, status=saved["status"], version=saved["version"])
 
 
@@ -357,6 +367,15 @@ def api_delete(audit_id, current_user):
     if not a.get("archived_at") and a.get("status") != "Archived":
         return jsonify(ok=False, error="Archive the audit first, then delete it."), 400
     store.delete_audit(audit_id)
+    # A permanent delete: what it was is kept in the trail (admin audit
+    # 10/27/26 S7) — the request row alone named only the id.
+    answers = a.get("answers") if isinstance(a.get("answers"), dict) else {}
+    _admin_events.record_admin_action(current_user, "sales_audit.deleted",
+                                      restaurant_id=a.get("linked_restaurant_id"), target=f"sales_audit:{audit_id}",
+                                      before={"restaurant_name": answers.get("restaurant_name"),
+                                              "audit_date": a.get("audit_date"), "status": a.get("status"),
+                                              "linked_restaurant_id": a.get("linked_restaurant_id")},
+                                      after=None)
     return jsonify(ok=True)
 
 

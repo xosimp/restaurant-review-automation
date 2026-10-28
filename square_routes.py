@@ -55,6 +55,7 @@ def admin_save_square(restaurant_id, current_user):
 
 @square_bp.route("/admin/square/sync/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events.audited("pos.square.sync_started")
 def admin_sync_square(restaurant_id, current_user):
     """A background sync through pos.sync_restaurant on the bounded admin
     pool (scheduler.start_manual_pos_sync), as Toast's and RPOWER's are

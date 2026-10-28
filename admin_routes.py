@@ -1172,6 +1172,9 @@ def test_alert_sms_route(restaurant_id, current_user):
     blocked = _send_blocked()
     if blocked:
         payload, code = blocked
+        _audit_admin_action(current_user, "alert_contact.test_texted", restaurant_id=restaurant_id,
+                            target=f"restaurant:{restaurant_id}", result="refused",
+                            after={"refused": payload.get("error")})
         return jsonify(**payload), code
     from notify import send_test_sms
     result = dict(send_test_sms(restaurant_id) or {})
@@ -1179,6 +1182,14 @@ def test_alert_sms_route(restaurant_id, current_user):
     # the contacts' full phone numbers in a console response (docs pass);
     # `results` already carries to_last4.
     result["errors"] = ["…" + str(p)[-4:] for p in (result.get("errors") or [])]
+    # It texts real people, so it is in the trail as itself, not only as the
+    # generic request row (admin audit 10/27/26 S7): counts, never numbers.
+    _audit_admin_action(current_user, "alert_contact.test_texted", restaurant_id=restaurant_id,
+                        target=f"restaurant:{restaurant_id}", result="ok" if result.get("ok") else "failed",
+                        after={"sent": int(result.get("sent") or 0), "failed": len(result["errors"]),
+                               "error": result.get("error")},
+                        summary=f"{current_user.get('username') or 'admin'} texted the alert contacts a test "
+                                f"({int(result.get('sent') or 0)} sent)")
     return jsonify(**result)
 
 
@@ -2542,6 +2553,9 @@ def fetch_reviews_now(restaurant_id, current_user):
         "review_fetch_one", restaurant_id, "review_fetch_one", _sched_fetch.run_daily_fetch,
         restaurant_ids=[restaurant_id],
         context=f"restaurant_id={restaurant_id} manual by {current_user.get('username') or 'admin'}")
+    _audit_admin_action(current_user, "reviews.fetch_now", restaurant_id=restaurant_id,
+                        target=f"restaurant:{restaurant_id}", after={"job_id": job_id, "joined": bool(joined)},
+                        result="ok" if job_id else "failed")
     return jsonify(ok=True, job_id=job_id, joined=joined,
                    message="Fetching — reviews are analysed before anyone is alerted.")
 
@@ -4156,8 +4170,23 @@ def admin_api_schedule_experiment_pin(current_user):
         return jsonify(ok=False, error="Missing restaurant_id")
     arm = data.get("arm")
     arm = str(arm).strip() if arm not in (None, "") else None
-    return jsonify(**admin_ops.set_schedule_experiment_pin(rid, str(data.get("experiment") or ""), arm,
-                                                           current_user.get("username") or "admin"))
+    experiment = str(data.get("experiment") or "")
+    out = admin_ops.set_schedule_experiment_pin(rid, experiment, arm, current_user.get("username") or "admin")
+    _audit_experiment(current_user, "schedule_experiment.pinned", experiment, out, restaurant_id=rid,
+                      after={"arm": arm})
+    return jsonify(**out)
+
+
+def _audit_experiment(current_user, action, experiment, out, restaurant_id=None, after=None):
+    """A schedule-experiment write in the trail as itself (admin audit
+    10/27/26 S7): pin, promote and revert change which arm restaurants'
+    schedules are generated with, and were only the generic request row."""
+    _audit_admin_action(current_user, action, restaurant_id=restaurant_id,
+                        target=f"schedule_experiment:{experiment[:80]}", after=after,
+                        result="ok" if (out or {}).get("ok") else "refused",
+                        summary=(f"{current_user.get('username') or 'admin'} {action.split('.')[-1]} "
+                                 f"{experiment[:80]}" + ("" if (out or {}).get("ok")
+                                                         else f" (refused: {(out or {}).get('error')})"))[:300])
 
 
 @admin_bp.route("/admin/api/schedule-experiments/promote", methods=["POST"])
@@ -4168,9 +4197,12 @@ def admin_api_schedule_experiment_promote(current_user):
     note?}. Refused unless the verdict calls that arm now."""
     import admin_ops
     data = request.get_json(force=True, silent=True) or {}
-    return jsonify(**admin_ops.promote_schedule_experiment(
-        str(data.get("experiment") or ""), str(data.get("arm") or ""),
-        by=current_user.get("username") or "admin", note=data.get("note")))
+    experiment, arm = str(data.get("experiment") or ""), str(data.get("arm") or "")
+    out = admin_ops.promote_schedule_experiment(experiment, arm, by=current_user.get("username") or "admin",
+                                                note=data.get("note"))
+    _audit_experiment(current_user, "schedule_experiment.promoted", experiment, out,
+                      after={"arm": arm, "note": (str(data.get("note") or "")[:300] or None)})
+    return jsonify(**out)
 
 
 @admin_bp.route("/admin/api/schedule-experiments/revert", methods=["POST"])
@@ -4179,8 +4211,10 @@ def admin_api_schedule_experiment_revert(current_user):
     """End a promotion: the experiment randomises again. {experiment}."""
     import admin_ops
     data = request.get_json(force=True, silent=True) or {}
-    return jsonify(**admin_ops.revert_schedule_experiment(str(data.get("experiment") or ""),
-                                                          by=current_user.get("username") or "admin"))
+    experiment = str(data.get("experiment") or "")
+    out = admin_ops.revert_schedule_experiment(experiment, by=current_user.get("username") or "admin")
+    _audit_experiment(current_user, "schedule_experiment.reverted", experiment, out)
+    return jsonify(**out)
 
 
 # ── AI routes and AI costs (orchestration design 10/7/26, phase 6) ──────────
@@ -4798,12 +4832,31 @@ def admin_api_issue_resolve(current_user):
     if not key:
         return jsonify(ok=False, error="Missing key"), 400
     if data.get("undo"):
-        return jsonify(**admin_ops.unresolve_issue(key, current_user.get("username")))
+        out = admin_ops.unresolve_issue(key, current_user.get("username"))
+        _audit_issue(current_user, "issue.reopened", key, out)
+        return jsonify(**out)
     # The occurrence the console saw (issue.occurrence_at) scopes the
     # resolution to it; a newer occurrence reopens the issue (fix round C, #24).
-    out = admin_ops.resolve_issue(key, (data.get("note") or "")[:300], current_user.get("username"),
+    note = (data.get("note") or "")[:300]
+    out = admin_ops.resolve_issue(key, note, current_user.get("username"),
                                   occurrence_at=data.get("occurrence_at"))
+    _audit_issue(current_user, "issue.resolved", key, out, note=note, occurrence_at=data.get("occurrence_at"))
     return jsonify(**out), (200 if out.get("ok") else (409 if out.get("resolvable") is False else 400))
+
+
+def _audit_issue(current_user, action, key, out, note=None, occurrence_at=None):
+    """An issue resolved or reopened, in the trail as itself (admin audit
+    10/27/26 S7/F16/W15-k): it wrote only its own history table and the
+    generic request row. The issue key leads with its restaurant id
+    ("<rid>:<category>") for a client's issue; a platform issue has none."""
+    head = str(key).split(":", 1)[0]
+    rid = int(head) if head.isdigit() else None
+    _audit_admin_action(current_user, action, restaurant_id=rid, target=f"issue:{key}"[:160],
+                        after={"note": note or None, "occurrence_at": occurrence_at} if action == "issue.resolved"
+                        else None,
+                        result="ok" if (out or {}).get("ok") else "refused",
+                        summary=f"{current_user.get('username') or 'admin'} "
+                                f"{'resolved' if action == 'issue.resolved' else 'reopened'} {key}"[:300])
 
 
 @admin_bp.route("/admin/api/activity")
