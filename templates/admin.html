@@ -1255,14 +1255,17 @@ function errText(d, fallback){ return (d && d.error) || ((fallback || 'That didn
 function say(d, okMsg){ const ok = okRes(d); toast(ok ? ((d && d.message) || okMsg || 'Done') : errText(d), ok ? 'good' : 'bad'); return ok; }
 // An admin job (#153): the action answers {job_id} at once and the work runs
 // on the server's bounded pool; its poll URL answers {status: pending} until
-// the result is in. Polled every 2 s, five minutes at most. A poll carries a
-// method, so it is never dropped when the admin moves to another page.
-async function pollJob(url, onTick){
+// the result is in. Polled every 2 s, five minutes at most unless the caller
+// names a longer bound (maxMs); past it the answer is {ok:false, timed_out}.
+// A poll carries a method, so it is never dropped when the admin moves to
+// another page — every poll in the console is this one (C3).
+async function pollJob(url, onTick, maxMs){
   const t0 = Date.now();
+  var bound = maxMs || 300000;
   for(;;){
     let d; try{ d = await api(url, {method:'GET'}); }catch(e){ d = {ok:false, error:String((e && e.message) || e)}; }
     if(!d || d.status !== 'pending') return d || {ok:false, error:'No answer from the server.'};
-    if(Date.now() - t0 > 300000) return {ok:false, error:'Still running after five minutes — check back later.'};
+    if(Date.now() - t0 > bound) return {ok:false, timed_out:true, error:'Still running after ' + durMin(bound / 60000) + ' — check back later.'};
     if(onTick) onTick(d);
     await new Promise(r => setTimeout(r, 2000));
   }
@@ -1584,15 +1587,31 @@ async function bulkApply(){
   if(!d.ok){ toast(d.error || 'The list was not applied', 'bad'); $('bulk-apply').disabled = false; return; }
   $('bulk-token').value = '';
   $('bulk-out').innerHTML = `<div class="sub">Creating ${d.rows} row${d.rows===1?'':'s'}…</div>`;
-  for(let i = 0; i < 120; i++){
-    await new Promise(r=>setTimeout(r, 1500));
-    const j = await api('/admin/api/onboarding/provision/' + d.job_id);
-    if(j.status === 'pending') continue;
-    if(j.ok === false && !j.rows){ $('bulk-out').innerHTML = `<div class="warnline">${esc(j.error||'Failed')}</div>`; return; }
-    const c = j.counts || {};
-    $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.created||0}</span> created · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> not created</div>` + bulkRows(j.rows);
-    toast((c.created||0) + ' restaurants created'); return;
-  }
+  return bulkFollow(d.job_id);
+}
+// The provisioning job followed through pollJob (admin audit 10/27/26,
+// W10/O11/C3): never dropped when the admin moves on, up to 20 minutes for a
+// long list. Its table is drawn when the Onboarding page is still open; the
+// toast says the counts wherever the admin is — in red when any row failed —
+// and a list still running says where its restaurants appear.
+var BULK_MAX_MS = 1200000;
+function bulkFollow(jobId){
+  return pollJob('/admin/api/onboarding/provision/' + encodeURIComponent(jobId), null, BULK_MAX_MS).then(function(j){
+    var out = $('bulk-out'), c = (j && j.counts) || {}, bad, msg;
+    if(j && j.timed_out){
+      msg = 'The list is still being created after ' + durMin(BULK_MAX_MS / 60000) + ' — its restaurants appear in Customers → Restaurants as they are made.';
+      if(out) out.innerHTML = '<div class="warnline">' + esc(msg) + '</div>';
+      toast(msg, 'bad'); return;
+    }
+    if(!j || (j.ok === false && !j.rows)){
+      msg = errText(j, 'The list was not applied');
+      if(out) out.innerHTML = '<div class="warnline">' + esc(msg) + '</div>';
+      toast(msg, 'bad'); return;
+    }
+    bad = j.ok === false || (c.error || 0) > 0;
+    if(out) out.innerHTML = '<div class="sub"><span class="n">' + fmtN(c.created || 0) + '</span> created · <span class="n">' + fmtN(c.exists || 0) + '</span> already here · <span class="n">' + fmtN(c.error || 0) + '</span> not created</div>' + bulkRows(j.rows);
+    toast(fmtN(c.created || 0) + ' restaurant' + (c.created === 1 ? '' : 's') + ' created' + ((c.error || 0) ? ' · ' + fmtN(c.error) + ' not created' : '') + (j.ok === false && j.error ? ' — ' + j.error : '') + (out ? '' : ' — see Customers → Restaurants'), bad ? 'bad' : 'good');
+  });
 }
 async function openSetup(rid){
   const d = await api('/admin/api/onboarding/' + rid + '/setup'); if(!d.ok){ toast(d.error||'Setup couldn\'t be read','bad'); return; }
@@ -2550,15 +2569,38 @@ async function posExport(id){
   const el = $('posx-'+id); const d = await post('/admin/api/client/'+id+'/pos-export', {});
   if(!okRes(d)){ if(el) el.textContent = errText(d); return; }
   if(el) el.textContent = 'Building…';
-  let st = {status:'pending'};
-  for(let i = 0; i < 120 && st.status === 'pending'; i++){ await new Promise(r => setTimeout(r, 2000)); st = await api('/admin/api/client/'+id+'/pos-export/'+d.job_id); }
-  if(!st || st.ok === false || st.status !== 'done'){ if(el) el.textContent = errText(st, 'The export failed'); return; }
-  const go = async () => { const r = await fetch('/admin/api/client/'+id+'/pos-export/'+d.job_id+'/download', {method:'POST'});
-    if(r.status === 403){ const j = await r.json().catch(() => ({})); if(j.reauth_required && await reauth()) return go(); if(el) el.textContent = j.error || 'Refused'; return; }
-    if(!r.ok){ if(el) el.textContent = 'The file is gone; build it again.'; return; }
-    const b = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = st.file || 'pos-export.zip'; document.body.appendChild(a); a.click(); a.remove();
-    if(el) el.textContent = 'Downloaded ' + Math.round((st.bytes||0)/1024) + ' KB. Send it to the owner and note where in the export step.'; };
-  await go();
+  return posExportFollow(id, d.job_id);
+}
+// The build followed through pollJob (admin audit 10/27/26, C3/W15-j): a
+// plain read died on navigation and left the one-shot zip orphaned. The file
+// is downloaded when it is ready wherever the admin is; the line on the
+// Access tab says so, or a toast when that page is no longer open.
+function posExportFollow(id, jobId){
+  var say2 = function(msg, ok){ var el = $('posx-' + id); if(el) el.textContent = msg; else toast('POS archive for #' + id + ': ' + msg, ok ? 'good' : 'bad'); };
+  return pollJob('/admin/api/client/' + id + '/pos-export/' + encodeURIComponent(jobId)).then(function(st){
+    if(!st || st.ok === false || st.status !== 'done'){ say2(errText(st, 'The export failed'), false); return; }
+    return downloadOnce('/admin/api/client/' + id + '/pos-export/' + encodeURIComponent(jobId) + '/download', st.file || 'pos-export.zip').then(function(res){
+      say2(res.ok ? 'Downloaded ' + Math.round((st.bytes || 0) / 1024) + ' KB. Send it to the owner and note where in the export step.' : res.error, res.ok);
+    });
+  });
+}
+// A file the server hands over once, on a POST: the step-up password when it
+// asks (once), then the browser's own save. {ok} or {ok:false, error}.
+function downloadOnce(url, filename, retried){
+  return fetch(url, {method: 'POST'}).then(function(r){
+    if(r.status === 403){
+      return r.json().then(null, function(){ return {}; }).then(function(j){
+        if(j && j.reauth_required && !retried) return reauth().then(function(ok){ return ok ? downloadOnce(url, filename, true) : {ok: false, error: j.error || 'Confirm your password to download it.'}; });
+        return {ok: false, error: (j && j.error) || 'Refused'};
+      });
+    }
+    if(!r.ok) return {ok: false, error: 'The file is gone; build it again.'};
+    return r.blob().then(function(b){
+      var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      return {ok: true};
+    });
+  }, function(){ return {ok: false, error: NO_ANSWER}; });
 }
 async function withdrawDeletion(id, name){
   const note = prompt('Withdraw ' + name + "'s request to close their account? The account carries on as before. A note for the record (optional):");

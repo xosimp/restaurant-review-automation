@@ -380,3 +380,72 @@ def test_a_failed_palette_search_says_so_and_needs_you_is_not_listed_twice(page)
     out = _node(js)
     assert "Search couldn&#39;t run — database is locked" in out["failed"] and "No matches." not in out["failed"]
     assert "Simple" in out["now"] and "Old answer" not in out["now"]
+
+
+# ── C3/W10/O11/W15-j: every poll is pollJob, and its result lands somewhere ──
+
+def test_poll_job_takes_a_longer_bound_and_says_when_it_ran_out(page):
+    js = _page_js(page, ("durMin", "pollJob")) + r"""
+    var t = Date.now(); Date.now = function(){ return t += 60000; };   // a minute per look
+    var _st = setTimeout; setTimeout = function(f){ return _st(f, 0); };
+    var looks = 0; function api(){ looks++; return Promise.resolve({status: 'pending'}); }
+    (async function(){
+      var r = await pollJob('/admin/api/onboarding/provision/j', null, 20 * 60000);
+      console.log(JSON.stringify({r: r, looks: looks}));
+    })();
+    """
+    out = _node(js)
+    assert out["r"]["ok"] is False and out["r"]["timed_out"] is True
+    assert out["r"]["error"] == "Still running after 20m — check back later."
+    assert out["looks"] > 15                                           # it kept looking past the old 3 minutes
+    for fn in ("bulkApply", "bulkFollow", "posExport", "posExportFollow"):
+        body = _fn(page, fn)
+        assert "setTimeout" not in body, fn
+    assert "pollJob('/admin/api/onboarding/provision/'" in _fn(page, "bulkFollow")
+    assert "pollJob('/admin/api/client/' + id + '/pos-export/'" in _fn(page, "posExportFollow")
+
+
+def test_a_bulk_list_says_its_counts_wherever_the_admin_is_and_a_partial_failure_is_red(page):
+    js = _page_js(page, ("okRes", "errText", "durMin", "bulkFollow"), ("esc", "fmtN", "BULK_MAX_MS")) + r"""
+    function bulkRows(rows){ return '<rows ' + rows.length + '>'; }
+    var answers = [];
+    function pollJob(url, onTick, maxMs){ return Promise.resolve(answers.shift()); }
+    (async function(){
+      var out = [];
+      answers = [{ok: false, status: 'error', counts: {created: 2, exists: 1, error: 1}, rows: [{}, {}, {}, {}], error: 'RPOWER refused one store'}];
+      mk('bulk-out'); await bulkFollow('j1'); out.push([$('bulk-out').innerHTML, _toasts.pop()]);
+      delete _els['bulk-out'];                                         // the admin moved on
+      answers = [{ok: true, status: 'done', counts: {created: 3, exists: 0, error: 0}, rows: [{}, {}, {}]}];
+      await bulkFollow('j2'); out.push(_toasts.pop());
+      answers = [{ok: false, timed_out: true, error: 'Still running'}];
+      await bulkFollow('j3'); out.push(_toasts.pop());
+      console.log(JSON.stringify(out));
+    })();
+    """
+    out = _node(js)
+    assert "<rows 4>" in out[0][0] and out[0][1][1] == "bad"
+    assert "2 restaurants created · 1 not created — RPOWER refused one store" == out[0][1][0]
+    assert out[1] == ["3 restaurants created — see Customers → Restaurants", "good"]
+    assert "Customers → Restaurants" in out[2][0] and out[2][1] == "bad"
+    assert "BULK_MAX_MS, " in _fn(page, "bulkFollow") or "BULK_MAX_MS)" in _fn(page, "bulkFollow")
+
+
+def test_the_pos_archive_downloads_after_navigation_and_asks_for_the_password_once(page):
+    js = _page_js(page, ("okRes", "errText", "downloadOnce", "posExportFollow"), ("NO_ANSWER",)) + r"""
+    var clicks = 0, reauths = 0, fetches = [];
+    document.createElement = function(){ return {click: function(){ clicks++; }, remove: function(){}}; };
+    document.body.appendChild = function(){};
+    var URL = {createObjectURL: function(){ return 'blob:x'; }};
+    function reauth(){ reauths++; return Promise.resolve(true); }
+    var fetch = function(url, o){ fetches.push(o.method);
+      if(fetches.length === 1) return Promise.resolve({status: 403, ok: false, json: function(){ return Promise.resolve({reauth_required: true}); }});
+      return Promise.resolve({status: 200, ok: true, blob: function(){ return Promise.resolve('zip'); }}); };
+    function pollJob(){ return Promise.resolve({ok: true, status: 'done', file: 'ejs.zip', bytes: 20480}); }
+    (async function(){
+      await posExportFollow(5, 'job-1');                       // #posx-5 is gone: the admin left the Access tab
+      console.log(JSON.stringify({clicks: clicks, reauths: reauths, fetches: fetches, toasts: _toasts}));
+    })();
+    """
+    out = _node(js)
+    assert out["clicks"] == 1 and out["reauths"] == 1 and out["fetches"] == ["POST", "POST"]
+    assert out["toasts"] == [["POS archive for #5: Downloaded 20 KB. Send it to the owner and note where in the export step.", "good"]]
