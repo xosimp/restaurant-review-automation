@@ -7180,11 +7180,17 @@ def admin_api_ai_emergency_stop(current_user):
     """Arm (body {"armed": true, "reason": "..."}) or clear ({"armed":
     false}) the emergency stop: every model call for every client refused,
     in every process within seconds, no deploy (blind re-audit 10/20/26
-    R4-02). AI_EMERGENCY_STOP in the environment still holds while set."""
+    R4-02). AI_EMERGENCY_STOP in the environment still holds while set.
+
+    `armed` must be said (admin audit 10/27/26 C8): a body without it read
+    as "clear", so an empty POST switched every model call back on. 400
+    without it, and nothing changes."""
     if not current_user.get("is_admin"):
         return jsonify(ok=False, error="Admins only."), 403
     import ai_utils
     body = request.get_json(silent=True) or {}
+    if body.get("armed") not in (True, False, 1, 0, "1", "0", "true", "false", "yes", "no"):
+        return jsonify(ok=False, error="Say armed: true to stop every AI call, or armed: false to clear it."), 400
     armed = body.get("armed") in (True, 1, "1", "true", "yes")
     before = ai_utils.emergency_stop_armed()
     if armed:
@@ -7203,11 +7209,20 @@ def admin_api_ai_emergency_stop(current_user):
 def admin_api_ai_fleet_brake_release(current_user):
     """Release the automatic fleet brake (R4-02): the paused background AI
     work resumes, and the brake does not re-arm by itself for
-    AI_FLEET_BRAKE_ACK_HOURS (the fleet page still fires)."""
+    AI_FLEET_BRAKE_ACK_HOURS (the fleet page still fires).
+
+    Refused 409 while no brake is on (admin audit 10/27/26 C8): a release
+    from a stale page or a second click wrote that hold-off anyway, so the
+    automatic brake could not arm for hours with nothing released."""
     if not current_user.get("is_admin"):
         return jsonify(ok=False, error="Admins only."), 403
     import ai_utils
     before = ai_utils.fleet_brake_scope()
+    if not before:
+        _audit_admin_action(current_user, "ai.fleet_brake_release", target="all", before={"brake": None},
+                            after={"brake": None}, result="refused",
+                            summary=f"AI fleet brake release refused (not on) for {current_user.get('username')}")
+        return jsonify(ok=False, error="The fleet brake isn't on — nothing to release.", fleet_brake=None), 409
     ai_utils.release_fleet_brake(actor=current_user.get("username"))
     _g_audit(current_user, "ai.fleet_brake_release", target="all", before={"brake": before},
              after={"brake": None}, summary=f"AI fleet brake released by {current_user.get('username')}")

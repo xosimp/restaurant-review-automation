@@ -644,3 +644,113 @@ def test_s10_the_legacy_alert_contact_add_never_echoes_the_whole_number(app, db_
     d = r.get_json()
     assert d["ok"] and d["phone_last4"] == "0123" and "phone" not in d
     assert "5125550123" not in r.get_data(as_text=True)
+
+
+# ── C8: route tests for the untested admin writes ────────────────────────────
+
+def _events(db_path, action):
+    return _rows(db_path, "SELECT * FROM admin_events WHERE source='admin' AND event_type=? ORDER BY id", (action,))
+
+
+def test_c8_the_pos_export_builds_polls_downloads_once_and_audits(app, db_path, monkeypatch, tmp_path):
+    import offboarding
+    monkeypatch.setattr(offboarding, "export_dir", lambda: str(tmp_path))
+    rid, other = _rid(db_path, "Export Grill"), _rid(db_path, "Other Grill")
+    c, uid = _admin(app, db_path)
+    r = _post(c, f"/admin/api/client/{rid}/pos-export")
+    assert r.status_code == 200 and r.get_json()["ok"]
+    job = r.get_json()["job_id"]
+    st = c.get(f"/admin/api/client/{rid}/pos-export/{job}").get_json()
+    assert st["status"] == "done" and st["file"].startswith(f"pos-export-{rid}-")
+    assert c.get(f"/admin/api/client/{other}/pos-export/{job}").status_code == 404, "another client's job is no job"
+    assert _post(c, f"/admin/api/client/{other}/pos-export/{job}/download").status_code == 404
+    d = _post(c, f"/admin/api/client/{rid}/pos-export/{job}/download")
+    assert d.status_code == 200 and d.headers["Content-Type"] == "application/zip"
+    assert d.headers["Cache-Control"] == "no-store" and d.data[:2] == b"PK"
+    assert _post(c, f"/admin/api/client/{rid}/pos-export/{job}/download").status_code == 404, "once"
+    built, got = _events(db_path, "offboarding.pos_export_built"), _events(db_path, "offboarding.pos_export_downloaded")
+    assert built and built[-1]["restaurant_id"] == rid and built[-1]["actor_id"] == uid
+    assert got and got[-1]["restaurant_id"] == rid
+    assert _post(c, "/admin/api/client/999999/pos-export").status_code == 404
+
+
+def test_c8_the_pos_export_needs_step_up_and_is_refused_to_support(app, db_path):
+    rid = _rid(db_path, "Export Grill")
+    c, _uid = _admin(app, db_path, stepped_up=False, username="cold")
+    r = _post(c, f"/admin/api/client/{rid}/pos-export")
+    assert r.status_code == 403 and r.get_json().get("reauth_required") is True
+    s = _support(app, db_path)
+    assert _post(s, f"/admin/api/client/{rid}/pos-export").status_code == 403
+
+
+def test_c8_the_emergency_stop_arms_clears_audits_and_needs_armed(app, db_path, monkeypatch):
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "_page", lambda *a, **k: False)
+    monkeypatch.delenv("AI_EMERGENCY_STOP", raising=False)
+    c, uid = _admin(app, db_path)
+    r = _post(c, "/admin/api/ai/emergency-stop", {"armed": True, "reason": "runaway"})
+    assert r.status_code == 200 and r.get_json()["emergency_stop"] is True and ai_utils.emergency_stop_armed()
+    r = _post(c, "/admin/api/ai/emergency-stop", {})
+    assert r.status_code == 400 and ai_utils.emergency_stop_armed(), "an empty body never clears the stop"
+    r = _post(c, "/admin/api/ai/emergency-stop", {"armed": False})
+    assert r.status_code == 200 and r.get_json()["emergency_stop"] is False and not ai_utils.emergency_stop_armed()
+    ev = _events(db_path, "ai.emergency_stop")
+    assert len(ev) == 2 and all(e["actor_id"] == uid for e in ev)
+    assert [json.loads(e["after_json"])["armed"] for e in ev] == [True, False]
+    s = _support(app, db_path)
+    assert _post(s, "/admin/api/ai/emergency-stop", {"armed": True}).status_code == 403
+    assert not ai_utils.emergency_stop_armed()
+
+
+def test_c8_the_fleet_brake_release_releases_audits_and_refuses_when_off(app, db_path, monkeypatch):
+    import time
+    import ai_utils
+    c, uid = _admin(app, db_path)
+    r = _post(c, "/admin/api/ai/fleet-brake/release")
+    assert r.status_code == 409 and r.get_json()["fleet_brake"] is None
+    assert not ai_utils._row_armed(ai_utils._control_row(ai_utils.FLEET_BRAKE_ACK_ROW)), \
+        "releasing nothing never holds the automatic brake off"
+    assert _events(db_path, "ai.fleet_brake_release")[-1]["result"] == "refused"
+    ai_utils._write_control(ai_utils.FLEET_BRAKE_ROW, time.time() + 3600,
+                            reason=json.dumps({"all": True, "detail": "spend runaway"}))
+    assert ai_utils.fleet_brake_scope()["all"] is True
+    s = _support(app, db_path)
+    assert _post(s, "/admin/api/ai/fleet-brake/release").status_code == 403 and ai_utils.fleet_brake_scope()
+    r = _post(c, "/admin/api/ai/fleet-brake/release")
+    assert r.status_code == 200 and r.get_json()["fleet_brake"] is None and ai_utils.fleet_brake_scope() is None
+    ev = _events(db_path, "ai.fleet_brake_release")[-1]
+    assert ev["result"] == "ok" and ev["actor_id"] == uid and json.loads(ev["before_json"])["brake"]["all"] is True
+
+
+def test_c8_rpower_credential_rotate_and_revoke(app, db_path, monkeypatch):
+    import credentials
+    import rpower
+    cred = credentials.credential_for_token("rpower", "old-token-1234", actor="t", db_path=db_path)
+    rid = _rid(db_path, "Bound Grill")
+    _x(db_path, "UPDATE restaurants SET rpower_credential_id=?, rpower_cg='CG1', rpower_store_mid='S1' WHERE id=?",
+       (cred, rid))
+    c, uid = _admin(app, db_path)
+    s = _support(app, db_path)
+    assert _post(s, f"/admin/rpower/credentials/{cred}/rotate", {"token": "x"}).status_code == 403
+    assert _post(c, "/admin/rpower/credentials/99999/rotate", {"token": "x"}).status_code == 404
+    assert _post(c, f"/admin/rpower/credentials/{cred}/rotate", {}).status_code == 400
+    # A token that cannot see the bound store: 409 naming it, unless forced.
+    monkeypatch.setattr(rpower, "test_token", lambda t: {"ok": True, "stores": [{"cg": "CG9", "store_mid": "S9"}]})
+    r = _post(c, f"/admin/rpower/credentials/{cred}/rotate", {"token": "new-token-5678"})
+    assert r.status_code == 409 and r.get_json()["unseen"] == [{"restaurant_id": rid, "name": "Bound Grill"}]
+    assert credentials.get_credential(cred)["version"] == 1
+    monkeypatch.setattr(rpower, "test_token", lambda t: {"ok": True, "stores": [{"cg": "CG1", "store_mid": "S1"}]})
+    r = _post(c, f"/admin/rpower/credentials/{cred}/rotate", {"token": "new-token-5678"})
+    assert r.status_code == 200 and r.get_json()["version"] == 2 and r.get_json()["stores"] == 1
+    assert credentials.credential_token(cred) == "new-token-5678"
+    rot = _events(db_path, "rpower.credential_rotated")[-1]
+    assert rot["actor_id"] == uid and "new-token-5678" not in json.dumps(rot), "never the token"
+    # Revoke: once, then 409 — never a second "Revoked."
+    assert _post(s, f"/admin/rpower/credentials/{cred}/revoke").status_code == 403
+    r = _post(c, f"/admin/rpower/credentials/{cred}/revoke")
+    assert r.status_code == 200 and r.get_json()["ok"] and r.get_json()["stores"] == 1
+    assert credentials.get_credential(cred)["revoked_at"]
+    again = _post(c, f"/admin/rpower/credentials/{cred}/revoke")
+    assert again.status_code == 409 and again.get_json()["ok"] is False and "already" in again.get_json()["error"]
+    assert [e["result"] for e in _events(db_path, "rpower.credential_revoked")] == ["ok", "refused"]
+    assert _post(c, "/admin/rpower/credentials/99999/revoke").status_code == 404
