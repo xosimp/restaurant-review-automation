@@ -333,3 +333,44 @@ def test_k12_customer_cost_and_ever_paid_are_served(db_path):
     assert t["cost"] == 10.0 and t["customer_cost"] == 2.0 and t["customer_accounts_with_cost"] == 1
     rows = {r["id"]: r for r in admin_ops.clients_page(per_page=200)["items"]}
     assert rows[rid]["ever_paid"] is True and rows[trial]["ever_paid"] is False
+
+
+# ── K-13 / K-14 / K-16 (P3) ─────────────────────────────────────────────────
+
+def test_k13_instagram_has_no_sync_so_it_is_never_never_synced(db_path):
+    rid = _rest(db_path, "Insta Cafe", billing_status="active")
+    future = (datetime.now(timezone.utc) + timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
+    _sql(db_path, "UPDATE restaurants SET ig_token='tok', ig_token_expires=? WHERE id=?", (future, rid))
+    rows = [r for r in admin_ops.integrations()["rows"] if r["restaurant_id"] == rid and r["integration"] == "instagram"]
+    assert rows and rows[0]["state"] == "connected" and rows[0]["freshness"] == "—"
+    assert admin_ops.integrations(page=1)["counts"]["never"] == 0
+
+
+def test_k14_the_clients_daily_ai_bars_leave_blocked_calls_out(db_path):
+    rid = _rest(db_path, "Bars Bistro", billing_status="active")
+    ai_utils.log_ai_usage(rid, "insights", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=1.0)
+    ai_utils.log_blocked(rid, "insights", "claude-sonnet-4-5", "budget", detail="daily budget")
+    d = admin_ops.client_detail(rid)
+    assert sum(x["calls"] for x in d["ai"]["daily"]) == d["client"]["ai"]["calls_30d"] == 1
+
+
+def test_k16_a_support_only_account_is_internal_and_learning_exclusion_is_named(db_path):
+    sup = _rest(db_path, "Support Desk", billing_status="trial")
+    _sql(db_path, "INSERT INTO users (restaurant_id, username, email, password_hash, role, is_admin, is_active) "
+                  "VALUES (?,?,?,?,?,?,?)", (sup, "help", "help@ex.com", "x", "support", 0, 1))
+    named = _rest(db_path, "Preview Test", billing_status="trial")
+    recs = {r["id"]: r for r in admin_ops.clients()["clients"]}
+    assert recs[sup]["segment"] == "internal"
+    assert recs[named]["segment"] == "customer" and recs[named]["learning_exclusion"] == "test_name"
+
+
+def test_k15_a_store_with_unstaged_steps_open_is_finishing_not_live():
+    import onboarding
+    steps = [{"key": "contract", "done": True}, {"key": "login", "done": True},
+             {"key": "voice", "done": False}, {"key": "billing", "done": True}]
+    assert onboarding.stage_of(steps) == "finishing"
+    assert onboarding.stage_of([dict(s, done=True) for s in steps]) == "live"
+    b = onboarding.board([{"id": 1, "name": "Slow Setup", "steps": steps,
+                           "days_since_signup": onboarding.ONBOARDING_STUCK_DAYS + 5}])
+    assert [x["stage"] for x in b["stuck"]] == ["finishing"]
+    assert next(s for s in b["stages"] if s["key"] == "live")["count"] == 0

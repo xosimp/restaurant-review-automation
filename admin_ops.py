@@ -703,7 +703,12 @@ def _payload_meta(meta, *buckets):
 # ── raw loads ────────────────────────────────────────────────────────────────
 
 def _is_admin_home(users):
-    return bool(users) and all(u.get("is_admin") for u in users)
+    """Every login is an internal one — an admin or a support login — the
+    rule models.INTERNAL_LOGIN_SQL (the learning predicate's admin_home)
+    states too (admin audit 10/27/26 K-16: a support-only account counted as
+    a customer here and as internal there)."""
+    return bool(users) and all(u.get("is_admin") or (u.get("role") or "").strip().lower() == "support"
+                               for u in users)
 
 
 def _segment(r, users):
@@ -1954,6 +1959,16 @@ def _group_owner(rid, d):
     return None, None
 
 
+def _learning_exclusion_for(r, users):
+    """models.learning_exclusion for a fleet row, from the logins in hand —
+    no lookup per restaurant. None when it may teach."""
+    try:
+        homes = {r["id"]} if _is_admin_home(users) else set()
+        return _models_mod.learning_exclusion(r, internal_homes=homes)
+    except Exception:
+        return None
+
+
 def location_record(r, d):
     """The one health record for a location. Everything else is a view of it."""
     rid = r["id"]
@@ -1998,6 +2013,10 @@ def location_record(r, d):
         "is_admin_home": _is_admin_home(users),
         "segment": segment,
         "exclude_from_learning": bool(r.get("exclude_from_learning")),
+        # Why it teaches no learner, beside the business segment (K-16): the
+        # learning predicate also leaves out accounts NAMED like a test and
+        # an admin's learning_override, which are still customers here.
+        "learning_exclusion": _learning_exclusion_for(r, users),
         "brand": r.get("location_group") or r.get("name"),
         "location_name": r.get("location_name"),
         "city": r.get("neighborhood"),
@@ -3444,8 +3463,11 @@ def client_detail(rid):
             # would bury this client's own events (#53) — /admin/api/client/<id>/audit
             # is their view.
             events = _rows_dict(conn, "SELECT id, source, event_type, amount, summary, created_at FROM admin_events WHERE restaurant_id=? AND source <> 'audit' ORDER BY id DESC LIMIT 40", (rid,))
+            # Calls that reached a provider, as the strip above counts them
+            # (calls_30d): a blocked row is no call (admin audit 10/27/26 K-14).
             ai_daily = _fill_days(_rows_dict(conn, "SELECT created_at, cost_usd FROM ai_usage WHERE restaurant_id=? "
-                                                   "AND created_at >= ?", (rid, month), optional=True),
+                                                   f"AND created_at >= ? AND {_OUTCOME_SQL} <> 'blocked'", (rid, month),
+                                             optional=True),
                                   "created_at", 30, value_key="cost_usd", count_key="calls", sum_key="cost")
             emails = _rows_dict(conn, "SELECT email_type, to_email, subject, sent_at, status, error FROM email_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
             pushes = _rows_dict(conn, "SELECT alert_type, status, ok, attempts, error, created_at FROM push_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
@@ -3684,6 +3706,9 @@ INTEGRATION_FILTERS = {
     "off": lambda r: r["state"] == "off", "stale": lambda r: r.get("freshness") == "stale",
     "never": lambda r: r.get("freshness") == "never", "connected": lambda r: r["state"] == "connected"}
 _INT_STATE_RANK = {"error": 0, "connected": 1, "off": 2}
+# Connections with no sync the platform records a success for (admin audit
+# 10/27/26 K-13): a token's expiry is their health, not a last sync.
+_NO_SYNC_INTEGRATIONS = ("instagram",)
 
 
 def integrations(f="all", q=None, page=None, per_page=None, include_internal=None):
@@ -3715,10 +3740,12 @@ def integrations(f="all", q=None, page=None, per_page=None, include_internal=Non
                              "sync_state": i.get("sync_state"), "age_days": i.get("age_days"),
                              # A POS row reads pos_health's state — the registry's one
                              # POS rule (re-audit B6#5) — not its own 3-day cut.
-                             "freshness": (("never" if i["state"] == "connected" and age is None else
-                                            ("stale" if (i.get("sync_state") == "stale" if i.get("sync_state")
-                                                         else (age is not None and age > 3)) else "fresh"))
-                                           if i["state"] != "off" else "—"),
+                             # A connection with no sync of its own (Instagram — a token, not a
+                             # feed) has no freshness: it read "never synced" (K-13).
+                             "freshness": ("—" if i["key"] in _NO_SYNC_INTEGRATIONS or i["state"] == "off" else
+                                           "never" if i["state"] == "connected" and age is None else
+                                           "stale" if (i.get("sync_state") == "stale" if i.get("sync_state")
+                                                       else (age is not None and age > 3)) else "fresh"),
                              "health": r["health"]})
         systemic = {}
         for row in rows:
