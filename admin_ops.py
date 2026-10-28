@@ -3292,9 +3292,35 @@ def _issue_counts(issues):
     return out
 
 
+# The platform issues' own reads (heartbeat, jobs past SLA, the backup,
+# webhooks, email rates…) on a request thread, kept with the fleet memo they
+# were computed against for this long (admin audit 10/27/26 P-01): the rail
+# poll every two minutes per tab and every Support-queue keystroke recomputed
+# them — 4.9 s at 1,500 restaurants. Single-flight per process. Off a request
+# thread (the scheduler, tests) every call computes fresh.
+PLATFORM_ISSUES_TTL_SECONDS = float(os.getenv("ADMIN_PLATFORM_ISSUES_TTL_SECONDS", "60"))
+_platform_lock = threading.Lock()
+
+
+def _platform_issues_cached(recs, d):
+    if not _in_request() or PLATFORM_ISSUES_TTL_SECONDS <= 0:
+        return _platform_issues(recs, d)
+    with _platform_lock:
+        hit = d.get("_platform_cache")
+        if hit and time.monotonic() - hit[0] <= PLATFORM_ISSUES_TTL_SECONDS:
+            return hit[1], hit[2]
+        with _collecting() as own:
+            out, facts = _platform_issues(recs, d)
+        if not own["errors"]:
+            # A pass with a failed read is not kept: the next request
+            # retries it, and reports it.
+            d["_platform_cache"] = (time.monotonic(), out, facts)
+        return out, facts
+
+
 def _all_issues(recs, d):
     """(every open issue sorted, platform facts)."""
-    platform, facts = _platform_issues(recs, d)
+    platform, facts = _platform_issues_cached(recs, d)
     # A POS outage across the fleet is one platform issue (OPS-6): the
     # stores' own rows for that provider are folded into it, not listed N times.
     # A store's issue key is "<rid>:int:<provider>" — the fold compares the
@@ -6722,6 +6748,9 @@ _WEBHOOK_LEDGERS = (
 # Stale after this long with no verified event while sends went out — only
 # judged from a recorded ledger (a derived "last event" is too sparse).
 WEBHOOK_STALE_HOURS = int(os.getenv("ADMIN_WEBHOOK_STALE_HOURS", "24"))
+# How far back a provider with no ledger row has its last event derived from
+# what it wrote (opens and clicks, text status updates) — on indexed windows.
+WEBHOOK_DERIVED_DAYS = 2
 _SIGNATURE_WORDS = ("signature", "unauthori", "verif", "hmac", "svix", "bad secret", "403", "401")
 
 
@@ -6743,7 +6772,14 @@ def _webhook_ledger(conn):
 def _webhook_health(conn):
     ledger, ledger_names = _webhook_ledger(conn)
     day = _utc_stamp(_utcnow() - timedelta(days=1))
-    eng = _one_dict(conn, "SELECT MAX(opened_at) AS o, MAX(clicked_at) AS c FROM email_log", label="email_log") or {}
+    # Windowed on the indexed sent_at (P-01): a MAX over every email_log row
+    # — a year of operational mail plus every newsletter — scanned the whole
+    # table on every rail poll. A delivery event older than the window reads
+    # as none, which judges the same (a failure with no verified event in
+    # 24 hours is the problem either way).
+    recent = _utc_stamp(_utcnow() - timedelta(days=WEBHOOK_DERIVED_DAYS))
+    eng = _one_dict(conn, "SELECT MAX(opened_at) AS o, MAX(clicked_at) AS c FROM email_log WHERE sent_at >= ?",
+                    (recent,), label="email_log") or {}
     derived = {
         "stripe": _newest((_one_dict(conn, "SELECT MAX(created_at) AS at FROM admin_events WHERE source='stripe'",
                                      label="admin_events") or {}).get("at"),
@@ -6757,8 +6793,8 @@ def _webhook_health(conn):
                           (_one_dict(conn, "SELECT MAX(created_at) AS at FROM email_suppressions WHERE reason IN "
                                            "('bounced','complained','bounce','complaint','hard_bounce')",
                                      label="email_suppressions") or {}).get("at")),
-        "twilio": (_one_dict(conn, "SELECT MAX(updated_at) AS at FROM sms_log", label="sms_log",
-                             optional=True) or {}).get("at"),
+        "twilio": (_one_dict(conn, "SELECT MAX(updated_at) AS at FROM sms_log WHERE created_at >= ?", (recent,),
+                             label="sms_log", optional=True) or {}).get("at"),
     }
     sends = {"resend": (_one_dict(conn, "SELECT COUNT(*) AS n FROM email_log WHERE sent_at >= ? AND status != 'failed'",
                                   (day,), label="email_log") or {}).get("n") or 0}

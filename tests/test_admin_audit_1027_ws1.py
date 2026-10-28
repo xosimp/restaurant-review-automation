@@ -485,3 +485,37 @@ def test_f6_rpower_refusal_tells_the_admin_to_rotate_and_the_owner_nothing(db_pa
     assert "Reconnect" not in hint and "Nothing to do on your side" in hint
     # Any other POS's refused token is still the owner's to reconnect.
     assert data_health.fix_hint("pos", {"provider": "toast", "error_class": "auth"}).startswith("Reconnect Toast")
+
+
+# ── P-01: the platform issues are kept with the memo; MAX reads windowed ───
+
+def test_p01_the_rail_poll_reuses_the_platform_issues_of_its_memo(db_path, monkeypatch):
+    from flask import Flask
+    _rest(db_path, "Poll Place", billing_status="active")
+    admin_ops.invalidate_fleet_cache()
+    calls = []
+    real = admin_ops._platform_issues
+    monkeypatch.setattr(admin_ops, "_platform_issues", lambda recs, d: (calls.append(1), real(recs, d))[1])
+    app = Flask(__name__)
+    with app.test_request_context("/admin/api/badges"):
+        a = admin_ops.badges()
+        b = admin_ops.badges()
+        admin_ops.issues_page()
+    assert len(calls) == 1 and a["counts"] == b["counts"]
+    # Off a request thread every call computes fresh.
+    admin_ops.badges()
+    assert len(calls) == 2
+    admin_ops.invalidate_fleet_cache()
+
+
+def test_p01_derived_resend_events_are_read_on_a_window(db_path):
+    old = _ago_utc(days=10)
+    _sql(db_path, "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at, status, opened_at) "
+                  "VALUES (NULL, 'digest', 'a@ex.com', 's', ?, 'delivered', ?)", (old, old))
+    conn = get_conn(db_path)
+    try:
+        wh = admin_ops._webhook_health(conn)
+    finally:
+        conn.close()
+    resend = next(p for p in wh["providers"] if p["provider"] == "resend")
+    assert resend["source"] != "derived" or resend["last_verified_at"] is None
