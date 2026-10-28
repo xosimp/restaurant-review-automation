@@ -1018,18 +1018,20 @@ function issueActBtn(i, cls){
   if(!href) return '';
   return `<a class="btn s ${cls||''}" href="${esc(href)}" onclick="event.stopPropagation()"${kind === 'mailto' ? ' title="Opens a templated email to the owner"' : ''}>${esc(i.action)}</a>`;
 }
-function needRow(i){
-  const plat = !i.restaurant_id;
+// opts.here: drawn on the client's own page — no Open / Open client / View
+// as client back to the page already open (admin audit 10/27/26 V09).
+function needRow(i, opts){
+  const plat = !i.restaurant_id, here = !!(opts && opts.here);
   const where = plat ? 'Platform' : `${esc(i.restaurant||'')}${i.location_name?' · '+esc(i.location_name):''}`;
   const tags = (i.reopened ? ` <span class="chip warn" title="${esc(i.reopened.label||'')}">reopened</span>` : '') + (i.segment === 'internal' ? ' <span class="chip">internal</span>' : '');
-  const act = issueActBtn(i) || (plat ? '' : `<a class="btn s" href="#client/${i.restaurant_id}" onclick="event.stopPropagation()">Open</a>`);
+  const act = issueActBtn(i) || (plat || here ? '' : `<a class="btn s" href="#client/${i.restaurant_id}" onclick="event.stopPropagation()">Open</a>`);
   const resolve = i.resolvable === false
     ? '<span class="dim" title="It clears itself, or closes another way (withdraw the request, finish the offboarding)">clears itself</span>'
     : `<button class="btn s g w" onclick="resolveOpen('${jsq(i.key)}','${jsq(i.title)}','${jsq(i.occurrence_at||'')}')">Resolve</button>`;
   const reo = i.reopened ? `<span class="ink2" style="font-size:12.5px">Reopened — ${esc(i.reopened.label || 'it happened again')} ${esc(i.reopened.resolved_by || 'Someone')} resolved it on ${fmtD(i.reopened.resolved_at)}${i.reopened.note ? ' (“' + esc(i.reopened.note) + '”)' : ''}.</span>` : '';
   return `<div class="li click" onclick="toggleRow(this)"><span style="width:78px;flex-shrink:0">${pill(TONE[i.severity]||'warn', i.severity==='critical'?'Critical':'Warning')}</span>
     <div class="tt"><b>${esc(i.title)}${tags}</b><span>${where} · ${esc(issueCat(i))}</span></div><span class="age">${esc(i.since||'')}</span>${act}<span class="chev">${ico('chev','s')}</span></div>
-    <div class="lx"><div class="box">${i.detail?`<span class="ink2" style="font-size:13px">${esc(i.detail)}</span>`:''}${reo}<span style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${plat?'':`<a class="btn s" href="#client/${i.restaurant_id}">Open client</a><a class="btn s g" href="/admin/view-as/${i.restaurant_id}">View as client</a>`}${resolve}${i.occurrence_at?`<span class="dim">occurred ${fmtDT(i.occurrence_at)}</span>`:''}</span></div></div>`;
+    <div class="lx"><div class="box">${i.detail?`<span class="ink2" style="font-size:13px">${esc(i.detail)}</span>`:''}${reo}<span style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${plat||here?'':`<a class="btn s" href="#client/${i.restaurant_id}">Open client</a><a class="btn s g" href="/admin/view-as/${i.restaurant_id}">View as client</a>`}${resolve}${i.occurrence_at?`<span class="dim">occurred ${fmtDT(i.occurrence_at)}</span>`:''}</span></div></div>`;
 }
 function needsList(){
   const d = _ov, ic = d.issue_counts || {}, all = d.issues || [], internal = d.internal_issues || [];
@@ -1274,7 +1276,9 @@ function tzOptions(sel, first){ return (first ? `<option value="">${esc(first)}<
 const ROLE_LABEL = {client:'Co-owner', owner:'Owner', manager:'Manager', member:'Teammate'};
 // Contract states, including the ones DocuSign now reports (#144).
 const CONTRACT = {signed:['ok','signed'], completed:['ok','signed'], sent:['warn','sent, not signed'], delivered:['info','opened, not signed'], declined:['bad','declined'], voided:['bad','voided'], pending:['off','not sent']};
-function contractPill(st){ const x = CONTRACT[st || 'pending'] || ['off', st]; return `<span class="b ${x[0]} nodot">contract ${esc(x[1])}</span>`; }
+// `bare` in a column already headed Contract: "sent", "opened", "signed" —
+// the full words on hover (admin audit 10/27/26 V25).
+function contractPill(st, bare){ const x = CONTRACT[st || 'pending'] || ['off', st]; return bare ? `<span class="b ${x[0]} nodot" title="contract ${esc(x[1])}">${esc(String(x[1]).replace(', not signed', ''))}</span>` : `<span class="b ${x[0]} nodot">contract ${esc(x[1])}</span>`; }
 const PAUSE_LABEL = {self:'paused by the owner', dispute:'chargeback hold', refund:'refund hold', admin:'admin hold'};
 const MODULE_KEYS = [['reviews','Reviews'],['labor','Labor'],['inventory','Food Cost'],['marketing','Marketing']];
 // Sales audits for a picker (#66): non-archived, newest first.
@@ -1356,7 +1360,7 @@ function custDetail(r){
   return `<div class="lx" style="padding-left:68px"><div style="display:flex;flex-direction:column;gap:12px">
     <div style="display:flex;gap:12px;flex-wrap:wrap">${miniStat('Open issues', fmtN(r.issues), r.critical ? r.critical + ' critical' : 'none critical', r.critical?'color:var(--red-t)':'')}${miniStat('Onboarding', esc(r.onboarding || '—'), 'steps done')}${miniStat('Churn risk', esc(r.churn || '—'), r.churn ? 'scored while paying' : 'scored for paying accounts only')}${miniStat('Joined', fmtD(r.created_at), esc(r.owner_email || ''))}</div>
     ${r.deletion_due ? `<div class="warnline">${ico('alert','xs')} Asked to close their account — due ${fmtD(r.deletion_due)}. <a href="#client/${r.id}?tab=access" onclick="event.stopPropagation()">Open offboarding</a></div>` : ''}
-    <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap"><a class="btn s" href="/admin/view-as/${r.id}" onclick="event.stopPropagation()">${ico('eye','xs')}View as client</a><a class="btn s w" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()">Settings</a><a class="btn s p" href="#client/${r.id}" onclick="event.stopPropagation()">Open client ${ico('chev','xs')}</a></div>
+    <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap"><a class="btn s" href="/admin/view-as/${r.id}" onclick="event.stopPropagation()">${ico('eye','xs')}View as client</a><a class="btn s w" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()">Settings</a><a class="btn s" href="#client/${r.id}" onclick="event.stopPropagation()">Open client ${ico('chev','xs')}</a></div>
   </div></div>`;
 }
 function custRow(r, indent){
@@ -1439,11 +1443,11 @@ async function clientForms(){
     ((c && c.items) || []).forEach(r=>{ opts += `<option value="${r.id}">${esc(r.name)}</option>`; });
   } catch(e) {}
   return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Client forms</h2><span class="sub">Letter size, one page, in the Cavnar AI brand</span></div>
+    <h2 title="Letter size, one page, in the Cavnar AI brand. The boxes match Team → staff settings (any time, mornings, nights, off or a window; hours; under 18; closing; certificates), so a filled sheet types straight in.">Client forms</h2>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="font-weight:600;min-width:170px">Employee availability sheet</span>
       <select id="form-avail-rid" aria-label="Restaurant printed on the sheet">${opts}</select>
-      <button class="btn s w" onclick="formAvail(false)">Open to print</button><button class="btn s p w" onclick="formAvail(true)">Download PDF</button></div>
-    <div class="dim">The boxes match Team &rarr; staff settings (any time, mornings, nights, off or a window; hours; under 18; closing; certificates), so a filled sheet types straight in.</div></div>`;
+      <button class="btn s w" onclick="formAvail(false)">Open to print</button><button class="btn s w" onclick="formAvail(true)">Download PDF</button></div>
+    </div>`;
 }
 function formAvail(download){
   const rid = $('form-avail-rid').value, q = [];
@@ -1471,13 +1475,13 @@ function onbBoard(b){
 }
 function bulkCard(){
   return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Add restaurants from a list</h2><span class="sub">One row per store · dry run first · a store already here is left alone</span></div>
+    <h2 title="One row per store · dry run first · a store already here is left alone">Add restaurants from a list</h2>
     <textarea id="bulk-csv" rows="5" placeholder="restaurant_name,owner_email,owner_name,timezone,modules,rpower_cg,rpower_store_mid"></textarea>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <input id="bulk-token" type="password" autocomplete="off" placeholder="RPOWER partner token (optional)" style="min-width:240px">
       <select id="bulk-partner" aria-label="Partner"><option value="">No partner</option></select>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="bulk-welcome" checked> Send each owner the welcome</label>
-      <button class="btn s w" onclick="bulkDry()">Dry run</button><button class="btn s p w" id="bulk-apply" onclick="bulkApply()" disabled>Create</button></div>
+      <button class="btn s w" onclick="bulkDry()">Dry run</button><button class="btn s w" id="bulk-apply" onclick="bulkApply()" disabled>Create</button></div>
     <div id="bulk-out"></div></div>`;
 }
 async function bulkPartners(){
@@ -1607,7 +1611,7 @@ async function billing(){
     </section>
     <details class="card"><summary>Payment &amp; contract history · <span class="n">${(d.events||[]).length}</span></summary><div class="cb">
     ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Client',key:'restaurant',cell:r=>r.restaurant_id?clientLink(r.restaurant_id,r.restaurant||('#'+r.restaurant_id)):`<span class="dim">unmatched${r.email?' · '+esc(r.email):''}${r.customer_id?' · '+esc(r.customer_id):''}</span>`},{h:'Source',key:'source',cell:r=>`<span class="chip">${esc(r.source)}</span>`},{h:'Event',key:'event_type',cell:r=>evBadge(r)},{h:'Amount',key:'amount',r:true,cell:r=>r.amount!=null&&r.source!=='admin'?`<span class="num">${fmtUSD(r.amount,2)}</span>`:''},{h:'Detail',key:'summary',wrap:true,cell:r=>`<span class="dim">${esc(r.summary||'')}</span>`}], d.events||[], {id:'ev-t', sort:'created_at', limit:25, empty:'No Stripe or DocuSign events yet — they land here as the webhooks fire.'})}</div></details>
-    <div class="dim">Plan changes, holds, marking a contract signed and attaching a Stripe customer are on each client's Billing tab. ${asOf(d)}</div>`;
+    <div style="display:flex;justify-content:flex-end">${asOf(d)}</div>`;
   lazy('bh-card', billingHealth);
   lazy('vc-card', vendorCosts);
 }
@@ -1627,20 +1631,29 @@ function billRow(r){
     <span style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${bill(r.status, r.is_demo)}${pause}</span>
     <span style="font-size:12.5px">${who}${lm}</span>
     <span style="font-size:12.5px">${live}${sm}</span>
-    <span style="font-size:12.5px">${contractPill(r.contract_status)}${r.signed_at?`<div class="dim">signed ${fmtD(r.signed_at)}${r.days_since_signed!=null&&!r.converted_at&&r.status==='trial'?' · '+r.days_since_signed+'d unpaid':''}</div>`:(r.days_in_trial!=null?`<div class="dim">trial day ${r.days_in_trial}</div>`:'')}</span>
+    <span style="font-size:12.5px">${contractPill(r.contract_status, true)}${r.signed_at?`<div class="dim">signed ${fmtD(r.signed_at)}${r.days_since_signed!=null&&!r.converted_at&&r.status==='trial'?' · '+r.days_since_signed+'d unpaid':''}</div>`:(r.days_in_trial!=null?`<div class="dim">trial day ${r.days_in_trial}</div>`:'')}</span>
     <span style="font-size:12.5px" class="n" title="${esc('Margin: pays ' + fmtUSD(mg.revenue_monthly||0) + '/mo; AI + SMS ' + fmtUSD(mg.variable_cost_30d||0, 2) + ' in 30 days')}">${mg.revenue_monthly ? fmtUSD(mg.margin) + (mg.margin_pct!=null?'<div class="dim">'+mg.margin_pct+'% margin</div>':'') : '<span class="dim">—</span>'}</span>
     <span style="display:flex;justify-content:flex-end">${act}</span></div>`;
 }
+// Billing health (admin audit 10/27/26 V34): what is clean is one checked
+// line; only a section with something in it is drawn in full.
 async function billingHealth(){
   const d = await need('/admin/api/billing/health');
   const hooks = d.webhooks || [], rec = d.reconcile || [], failed = d.failed_sends || [], pend = d.owed_pending || {}, pipe = d.pipeline || [];
   const hookRow = h => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span><b>${esc(h.provider)}</b> <span class="dim">${h.last_verified_at?'verified '+ago(h.last_verified_at)+' ago':'never verified'}</span></span><span>${h.failures_since_verified?`<span class="chip bad" title="${esc(h.last_failure_error||'')}">${h.failures_since_verified} failed since</span>`:'<span class="chip ok">ok</span>'}</span></div>`;
-  return `<h2>Billing health</h2>
-    <div class="lbl">Inbound webhooks</div>${hooks.length ? hooks.map(hookRow).join('') : '<span class="dim">No Stripe or DocuSign webhook has been verified yet.</span>'}
-    <div class="lbl">Nightly reconcile</div>${rec.length ? rec.map(r=>`<div style="font-size:12.5px">${clientLink(r.restaurant_id, r.name||('#'+r.restaurant_id))} <span class="dim">· since ${fmtD(r.first_seen_at)}</span><div class="dim">${esc((r.mismatches||[]).map(x=>x.detail||x.kind).join('; '))}</div></div>`).join('') : '<span class="dim">No mismatches between Stripe and the accounts.</span>'}
-    <div class="lbl">Billing email</div><span style="font-size:12.5px">${pend.count ? `<span class="n">${pend.count}</span> waiting to send, oldest ${ago(pend.oldest)} ago` : 'Nothing waiting to send.'}</span>
-    ${failed.length ? failed.slice(0,8).map(f=>`<div style="font-size:12.5px"><span class="chip bad">failed</span> ${esc(f.kind)} → ${f.restaurant_id?clientLink(f.restaurant_id, f.name||('#'+f.restaurant_id)):''} <span class="dim">${f.attempts} tries · ${esc(f.last_error||'')}</span></div>`).join('') + (failed.length>8?`<span class="dim">+${failed.length-8} more in 30 days</span>`:'') : '<span class="dim">No billing email failed for good in 30 days.</span>'}
-    <div class="lbl">Signed, not paid</div>${pipe.length ? pipe.map(p=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px"><span>${clientLink(p.restaurant_id, p.name)} <span class="dim">signed ${fmtD(p.signed_at)} · ${p.days_since_signed}d · ${Object.keys(p.reminders||{}).length} reminder${Object.keys(p.reminders||{}).length===1?'':'s'}</span></span>${p.overdue?'<span class="chip bad">overdue</span>':''}</div>`).join('') : '<span class="dim">Nobody signed and unpaid.</span>'}`;
+  const hooksOk = hooks.length && hooks.every(h => h.last_verified_at && !h.failures_since_verified);
+  const clean = [], parts = [];
+  if(hooksOk) clean.push(`<span title="${esc(hooks.map(h => h.provider + ' verified ' + ago(h.last_verified_at) + ' ago').join(' · '))}">webhooks verified</span>`);
+  else parts.push(`<div class="lbl">Inbound webhooks</div>${hooks.length ? hooks.map(hookRow).join('') : '<span class="dim">No Stripe or DocuSign webhook has been verified yet.</span>'}`);
+  if(!rec.length) clean.push('Stripe reconciled');
+  else parts.push(`<div class="lbl">Nightly reconcile</div>${rec.map(r=>`<div style="font-size:12.5px">${clientLink(r.restaurant_id, r.name||('#'+r.restaurant_id))} <span class="dim">· since ${fmtD(r.first_seen_at)}</span><div class="dim">${esc((r.mismatches||[]).map(x=>x.detail||x.kind).join('; '))}</div></div>`).join('')}`);
+  if(!pend.count && !failed.length) clean.push('no billing mail owed or failed');
+  else parts.push(`<div class="lbl">Billing email</div><span style="font-size:12.5px">${pend.count ? `<span class="n">${pend.count}</span> waiting to send, oldest ${ago(pend.oldest)} ago` : 'Nothing waiting to send.'}</span>
+    ${failed.length ? failed.slice(0,8).map(f=>`<div style="font-size:12.5px"><span class="chip bad">failed</span> ${esc(f.kind)} → ${f.restaurant_id?clientLink(f.restaurant_id, f.name||('#'+f.restaurant_id)):''} <span class="dim">${f.attempts} tries · ${esc(f.last_error||'')}</span></div>`).join('') + (failed.length>8?`<span class="dim">+${failed.length-8} more in 30 days</span>`:'') : '<span class="dim">No billing email failed for good in 30 days.</span>'}`);
+  if(!pipe.length) clean.push('nobody signed and unpaid');
+  else parts.push(`<div class="lbl">Signed, not paid</div>${pipe.map(p=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px"><span>${clientLink(p.restaurant_id, p.name)} <span class="dim">signed ${fmtD(p.signed_at)} · ${p.days_since_signed}d · ${Object.keys(p.reminders||{}).length} reminder${Object.keys(p.reminders||{}).length===1?'':'s'}</span></span>${p.overdue?'<span class="chip bad">overdue</span>':''}</div>`).join('')}`);
+  const ok = clean.length ? `<div class="steps"><div><span class="ok">✓</span><span>${clean.join(', ').replace(/^(<[^>]+>)?(.)/, (m, tag, ch) => (tag || '') + ch.toUpperCase())}.</span></div></div>` : '';
+  return `<h2>Billing health</h2>${ok}${parts.join('')}`;
 }
 async function vendorCosts(){
   const d = await need('/admin/api/vendor-costs?months=6');
@@ -1674,7 +1687,9 @@ async function issues(qs){
   if(p0.get('view')) _sview = p0.get('view');
   if(p0.get('segment')){ _sf = p0.get('segment'); _sview = 'issues'; }
   const k = _ovk || {};
-  const views = [['issues','Issues', k.attention || ''],['bugs','Bug reports',''],['deletions','Deletion requests', k.deletion_requests || ''],['resolved','Resolved','']];
+  // The attention count is on the tab and the segment below; the view button
+  // doesn't say it a third time (admin audit 10/27/26 V11).
+  const views = [['issues','Issues',''],['bugs','Bug reports',''],['deletions','Deletion requests', k.deletion_requests || ''],['resolved','Resolved','']];
   const nav = `<div class="seg">${views.map(v=>`<button class="${_sview===v[0]?'on':''}" onclick="_sview='${v[0]}';issues()">${v[1]}${v[2]!==''?' <b>'+v[2]+'</b>':''}</button>`).join('')}</div>`;
   if(_sview === 'bugs') return bugReports(nav);
   if(_sview === 'deletions') return deletionRequests(nav);
@@ -1688,8 +1703,8 @@ async function issues(qs){
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">${nav}
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <div class="seg">${segs.map(x=>`<button class="${_sf===x[0]?'on':''}" onclick="_sf='${x[0]}';_spage=1;issues()"${x[0]==='internal'?' title="Demo, test and internal accounts — never counted in attention"':''}>${x[1]} <b>${x[2]}</b></button>`).join('')}</div>
-        <div class="seg">${[['','All'],['critical','Critical'],['warning','Warning']].map(x=>`<button class="${_ssev===x[0]?'on':''}" onclick="_ssev='${x[0]}';_spage=1;issues()">${x[1]}</button>`).join('')}</div>
-        <select aria-label="Sort" onchange="_ssort=this.value;_spage=1;issues()" style="height:32px;padding:0 10px">${[['severity','Most severe first'],['age','Oldest first'],['restaurant','By restaurant']].map(x=>`<option value="${x[0]}" ${_ssort===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
+        <select aria-label="Severity" onchange="_ssev=this.value;_spage=1;issues()">${[['','Every severity'],['critical','Critical only'],['warning','Warnings only']].map(x=>`<option value="${x[0]}" ${_ssev===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
+        <select aria-label="Sort" onchange="_ssort=this.value;_spage=1;issues()">${[['severity','Most severe first'],['age','Oldest first'],['restaurant','By restaurant']].map(x=>`<option value="${x[0]}" ${_ssort===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
         <label class="search-in" style="width:220px">${ico('search','s')}<input placeholder="Find an issue or client" value="${esc(_sq)}" oninput="_sq=this.value;_spage=1;clearTimeout(window._sqt);window._sqt=setTimeout(()=>{issues().then(()=>{const i=V().querySelector('.search-in input');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}});},250)"></label>
       </div></div>
     <section class="card" style="overflow:hidden"><div class="lst">${(d.items||[]).map(needRow).join('') || `<div class="empty">${readFailed(d,['restaurants'])?'Unknown — the fleet couldn\'t be read.':'Nothing needs attention here.'}</div>`}</div>${pager(d.page, d.pages, d.total, 'issuesPage', 'issues')}</section>
@@ -1716,7 +1731,7 @@ async function deletionRequests(nav){
   V().innerHTML = `${nav}<section class="card" style="overflow:hidden"><div class="lst">${rows.map(r=>`<div class="li"><span style="width:96px;flex-shrink:0">${pill(r.overdue?'bad':(r.days_left!=null&&r.days_left<=7?'warn':'neu'), r.overdue?'Overdue':'Due '+esc(r.due_on), false)}</span>
       <div class="tt"><a href="#client/${r.restaurant_id}?tab=access" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.name)}</a><span>asked ${esc(r.requested_on||'')} · ${r.overdue?'overdue by '+(-r.days_left)+' day'+(r.days_left===-1?'':'s'):r.days_left+' day'+(r.days_left===1?'':'s')+' left'} · ${esc((r.billing_status||'').replace('_',' '))}</span></div>
       <span class="dim" style="font-size:12.5px">${(r.outstanding||[]).length ? (r.outstanding||[]).length + ' step' + ((r.outstanding||[]).length===1?'':'s') + ' left' : 'ready to delete'}</span><a class="btn s" href="#client/${r.restaurant_id}?tab=access">Offboarding</a></div>`).join('') || '<div class="empty">No account is waiting to be closed.</div>'}</div></section>
-    <div class="dim">Soonest due first. Apple's guideline 5.1.1(v): an account-deletion request is finished within 30 days, or withdrawn with the owner.</div>`;
+    <div class="dim" title="Apple's guideline 5.1.1(v): an account-deletion request is finished within 30 days, or withdrawn with the owner.">Soonest due first · each is finished within 30 days.</div>`;
 }
 async function resolvedIssues(nav){
   const d = await api('/admin/api/issues/resolutions'); if(!okRes(d)) throw new Error(errText(d, 'Resolutions couldn\'t be read'));
@@ -1733,7 +1748,9 @@ async function resolvedIssues(nav){
 // and where the owner uses it (#49). Each tab reads its own extra data after
 // the page is drawn (lazy), so the page itself is one read. Every action
 // still asks first, names the client or the recipient, and says what the
-// server really answered.
+// server really answered. Each figure has one home (admin audit 10/27/26
+// V09): churn in the strip and its card, setup in the Overview ring, modules
+// on Data & integrations, the billing status once on the Billing tab.
 const CLIENT_TAB = {overview:'overview', subscription:'billing', billing:'billing', integrations:'data', modules:'data', locations:'data', jobs:'data', data:'data',
   ai:'messages', emails:'messages', notifications:'messages', messages:'messages', sms:'messages', brief:'messages',
   activity:'access', errors:'access', access:'access', logins:'access', offboarding:'access', actions:'overview',
@@ -1762,8 +1779,7 @@ function actionsMenu(c, d){
     <span class="lbl">Access</span>${a('View dashboard as this client', '/admin/view-as/'+c.id)}${b('Send a password-reset link…', `sendResetLink(${login.id||0}, '${jsq(login.username||'')}', '${jsq(login.email||'')}')`)}
     ${b(c.full_control_until ? 'End full control' : 'Owner gave full control…', `setFullControl(${c.id},${c.full_control_until?0:1},'${n}')`)}
     ${b(c.is_demo ? 'Mark as real client…' : 'Mark as demo…', `setDemo(${c.id},${c.is_demo?0:1},'${n}')`)}
-    <hr><span class="lbl" style="color:var(--red-t)">Danger zone</span>${b('Freeze account (takeover response)…', `freezeAccount(${c.id},'${n}')`, 'dz')}${a('Close this account (offboarding)…', '#client/'+c.id+'?tab=offboarding')}${c.is_demo?`<button data-a class="dz w" data-name="${esc(c.name)}" onclick="menusClose();deleteDemo(${c.id},this.dataset.name)">Delete this demo account</button>`:''}
-    <span class="dim" style="padding:8px 10px 4px;white-space:normal;line-height:1.4">Plan, holds and contract changes are on the Billing tab. A real restaurant is deleted only through the offboarding checklist on Access. Each action confirms first.</span></div>`;
+    <hr><span class="lbl" style="color:var(--red-t)">Danger zone</span>${b('Freeze account (takeover response)…', `freezeAccount(${c.id},'${n}')`, 'dz')}${a('Close this account (offboarding)…', '#client/'+c.id+'?tab=offboarding')}${c.is_demo?`<button data-a class="dz w" data-name="${esc(c.name)}" onclick="menusClose();deleteDemo(${c.id},this.dataset.name)">Delete this demo account</button>`:''}</div>`;
 }
 function stripDiv(label, value, sub, tone){ return `<div><span class="lbl">${label}</span><span class="v" style="${tone||''}">${value}</span><span class="s">${sub}</span></div>`; }
 function setupRing(sc){
@@ -1777,7 +1793,7 @@ async function clientView(id, qs){
   if(CMSG_OF[raw]) _cmsg = CMSG_OF[raw];
   const d = await api('/admin/api/client/'+id); if(!okRes(d)) throw new Error(errText(d, 'This client couldn\'t be read')); const c = d.client; _cd = d;
   const b = c.billing || {}, login = c.owner, errs = (d.errors||[]).length, intErr = c.integrations.filter(i=>i.state==='error').length;
-  const churn = c.churn_risk || {}, sc = setupDone(c).score, del = c.deletion, crit = c.issues.some(i=>i.severity==='critical');
+  const churn = c.churn_risk || {}, del = c.deletion, crit = c.issues.some(i=>i.severity==='critical');
   const bits = [];
   if(b.billed_by) bits.push(`billed by <a href="#client/${b.billed_by.restaurant_id}?tab=billing">${esc(b.billed_by.name || ('#' + b.billed_by.restaurant_id))}</a>`);
   if((b.covers||[]).length) bits.push(`pays for ${b.covers.map(x=>`<a href="#client/${x}">${esc(locName(d, x))}</a>`).join(', ')}`);
@@ -1795,7 +1811,7 @@ async function clientView(id, qs){
       <span class="mono-tile" style="width:64px;height:64px;border-radius:18px;font-size:20px;${HEALTH_TILE[c.health]||HEALTH_TILE.inactive}">${esc(monoTile(c.name, c.health).replace(/<[^>]+>/g,''))}</span>
       <div style="flex:1;min-width:260px;display:flex;flex-direction:column;gap:10px">
         <h1>${esc(c.name)}${c.location_name?` <span style="font-family:var(--sans);font-size:16px;font-weight:400;color:var(--ink4)">${esc(c.location_name)}</span>`:''}</h1>
-        <span style="display:flex;gap:8px;flex-wrap:wrap">${hb(c.health)}${c.is_demo?pill('emb', 'demo', false):pill(BILL[b.status]==='bad'?'bad':(b.status==='paused'?'warn':'neu'), esc((b.status||'trial').replace('_',' '))+(b.monthly?' · <span class="n">'+fmtUSD(b.monthly)+'</span>/mo'+(b.mrr_source==='list'?' list':''):''), false)}${contractPill(b.contract_status)}${pill('neu', b.modules+' module'+(b.modules===1?'':'s'), false)}${c.segment==='internal'&&!c.is_demo?pill('neu', 'internal', false):''}${c.full_control_until?`<span title="${esc(c.full_control_note||'')}">${pill('emb', 'full control until '+fmtD(c.full_control_until), false)}</span>`:''}${churn.level==='high'||churn.level==='medium'?pill(churn.level==='high'?'bad':'warn', esc(churn.level)+' churn risk', false):''}</span>
+        <span style="display:flex;gap:8px;flex-wrap:wrap">${hb(c.health)}${c.is_demo?pill('emb', 'demo', false):pill(BILL[b.status]==='bad'?'bad':(b.status==='paused'?'warn':'neu'), esc((b.status||'trial').replace('_',' '))+(b.monthly?' · <span class="n">'+fmtUSD(b.monthly)+'</span>/mo'+(b.mrr_source==='list'?' list':''):''), false)}${contractPill(b.contract_status)}${c.segment==='internal'&&!c.is_demo?pill('neu', 'internal', false):''}${c.full_control_until?`<span title="${esc(c.full_control_note||'')}">${pill('emb', 'full control until '+fmtD(c.full_control_until), false)}</span>`:''}</span>
         <span class="muted" style="font-size:13px">${esc(login?login.username:'no login')}${c.owner_name?' ('+esc(c.owner_name)+')':''}${c.owner_email?' · '+esc(c.owner_email):''}${c.owner_phone?' · '+esc(fmtPhone(c.owner_phone)):''} · joined <span class="n">${fmtD(c.created_at)}</span> · <span title="${esc(actTitle || 'No owner activity on record')}">active <span class="n">${c.last_active?ago(c.last_active)+' ago':'never'}</span></span>${c.on_ios?' <span class="chip" title="The owner uses the iOS app">iOS</span>':''}${c.team_last_seen?' · team '+ago(c.team_last_seen)+' ago':''} · #${c.id}</span>
         ${bits.length ? `<span class="muted" style="font-size:13px">${bits.join(' · ')}</span>` : ''}
       </div>
@@ -1807,7 +1823,6 @@ async function clientView(id, qs){
     </section>
     <section class="card strip">
       ${stripDiv('Reviews awaiting', fmtN(c.reviews.awaiting), c.reviews.urgent_stale ? c.reviews.urgent_stale+' urgent · 48h+' : (c.reviews.stalled ? '<span style="color:var(--amber-t)">'+c.reviews.stalled+' stuck after AI failures</span>' : fmtN(c.reviews.draft_ready)+' drafted · '+fmtN(c.reviews.no_draft)+' not yet'), c.reviews.urgent_stale?'color:var(--red-t)':'')}
-      ${stripDiv('Setup', sc==null?'—':sc+'%', c.onboarding.complete ? 'onboarding done' : c.onboarding.done+' of '+c.onboarding.total+' steps')}
       ${stripDiv('Churn risk', churn.scored === false ? '—' : esc((churn.level||'—').replace(/^./,x=>x.toUpperCase())), churn.scored === false ? 'scored for paying accounts only' : esc((churn.reasons||[])[0]||'no risk signals') + (churn.days_at_level ? ' · ' + churn.days_at_level + 'd' : ''), churn.level==='high'?'color:var(--red-t)':churn.level==='medium'?'color:var(--amber-t)':'')}
       ${stripDiv('AI · 30 days', figOr(d, ['ai_usage'], fmtUSD(c.ai.cost_30d,2)), fmtN(c.ai.calls_30d)+' calls · '+fmtN(c.ai.failed_30d)+' failed')}
       ${stripDiv('Alerts · 7 days', fmtN(c.alerts_7d), c.alert_cap ? 'capped at '+c.alert_cap+'/day' : 'no daily cap')}
@@ -1824,9 +1839,9 @@ function cOverview(c, d){
   const churn = c.churn_risk || {}, act = c.activity || {};
   return {html: `<section class="split">
     <div class="stack">
-      <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Needs attention</h2>${c.issues.length?`<span class="cnt ${c.issues.some(i=>i.severity==='critical')?'bad':'warn'}">${c.issues.length}</span>`:''}</div><div class="lst" style="border-top:1px solid var(--line)">${c.issues.map(i=>needRow(Object.assign({}, i, {restaurant: c.name, restaurant_id: c.id}))).join('') || '<div class="empty">Nothing needs attention on this account.</div>'}</div>
+      <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Needs attention</h2>${c.issues.length?`<span class="cnt ${c.issues.some(i=>i.severity==='critical')?'bad':'warn'}">${c.issues.length}</span>`:''}</div><div class="lst" style="border-top:1px solid var(--line)">${c.issues.map(i=>needRow(Object.assign({}, i, {restaurant: c.name, restaurant_id: c.id}), {here: true})).join('') || '<div class="empty">Nothing needs attention on this account.</div>'}</div>
         ${(d.issues_resolved||[]).length ? `<details class="more-d"><summary>Resolved · <span class="n">${d.issues_resolved.length}</span></summary><div class="lst">${d.issues_resolved.map(i=>`<div class="li"><div class="tt"><b>${esc(i.title)}</b><span>resolved by ${esc((i.resolution||{}).resolved_by||'')} ${fmtD((i.resolution||{}).resolved_at)}${(i.resolution||{}).note?' — '+esc(i.resolution.note):''}</span></div><button class="btn s g w" onclick="unresolve('${jsq(i.key)}')">Reopen</button></div>`).join('')}</div></details>` : ''}</div>
-      <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px"><div style="display:flex;align-items:center;justify-content:space-between"><h2>Setup completeness</h2><span class="muted" style="font-size:12.5px">what is connected and configured</span></div>
+      <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px"><div title="What is connected and configured"><h2>Setup completeness</h2></div>
         <div style="display:flex;gap:22px;align-items:center">${setupRing(setupDone(c).score)}<div style="flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px">${(setupDone(c).checks||[]).filter(k=>!k.ok).map(k=>`<span style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink)" title="${esc(k.detail||'')}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1.5px solid rgba(240,235,224,.25)"></span>${esc(k.label)}</span>`).join('')}${(setupDone(c).checks||[]).some(k=>k.ok)?`<span class="muted" style="font-size:12.5px;display:flex;align-items:center;gap:9px" title="${esc((setupDone(c).checks||[]).filter(k=>k.ok).map(k=>k.label).join(' · '))}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--green-bg);color:var(--green-t)">${ico('check','xs')}</span>${(setupDone(c).checks||[]).filter(k=>k.ok).length} done</span>`:''}</div></div></div>
       ${!c.onboarding.complete ? `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Onboarding</h2><span class="n">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="steps">${c.onboarding.steps.filter(s=>!s.done).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px"><span class="ok">✓</span> ${c.onboarding.done} done${c.onboarding.dismissed?' · the owner hid their setup card':''}</div></div></div>` : ''}
       <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Churn risk</h2>${churn.scored===false?pill('neu','not scored',false):pill(churn.level==='high'?'bad':churn.level==='medium'?'warn':'neu', esc(churn.level||'—'), false)}</div>
@@ -1834,8 +1849,7 @@ function cOverview(c, d){
         ${churn.level==='high'?`<button class="btn s w" style="align-self:flex-start" onclick="valueRecap(${c.id},'${jsq(c.name)}','${jsq(c.owner_email||'')}')">Send value recap…</button>`:''}</div>
     </div>
     <div class="stack">
-      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><h2>Modules</h2><div class="grid g2" style="gap:10px">${c.modules.map(m=>`<div style="padding:14px;border-radius:12px;background:var(--strip);border:1px solid var(--line);display:flex;flex-direction:column;gap:8px"><span style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-weight:700">${esc(m.label)}</span>${m.enabled?`<span class="chip ${MOD[m.state]}">${MODL[m.state]}</span>`:'<span class="chip off">off</span>'}</span><span class="muted" style="font-size:12px">${m.enabled ? (m.last_data ? 'last data '+ago(m.last_data)+' ago' : (m.configured ? 'no data yet' : 'not configured')) : 'not on the plan'}</span></div>`).join('')}</div></div>
-      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Where the owner works</h2><span class="muted" style="font-size:12.5px">view-as and staff PINs never count</span></div>
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><h2 title="View-as and staff PINs never count">Where the owner works</h2>
         <div class="kv"><span class="k">Signed in</span><span class="n">${act.sign_in?fmtDT(act.sign_in):'—'}</span><span class="k">Console sign-in</span><span class="n">${act.console_login?fmtDT(act.console_login):'—'}</span><span class="k">Web or iOS use</span><span class="n">${act.session?fmtDT(act.session):'—'}${c.on_ios?' <span class="chip">iOS</span>':''}</span><span class="k">Web tab</span><span class="n">${act.web_tab?fmtDT(act.web_tab):'—'}</span><span class="k">Team</span><span class="n">${c.team_last_seen?fmtDT(c.team_last_seen):'—'}</span></div></div>
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Profile</h2><a class="w" href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Edit</a></div>
         <div class="kv"><span class="k">Logins</span><span>${c.logins.map(l=>`<span class="chip ${l.is_active?'':'off'}">${esc(l.username)} · ${esc(ROLE_LABEL[l.role]||l.role||'')}</span>`).join(' ')||'—'}</span>
@@ -1850,7 +1864,7 @@ function cOverview(c, d){
 function cBilling(c, d){
   return {html: `<section class="split">
       <div class="stack"><div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px" id="cb-main"><h2>Billing</h2>${skel(4)}</div></div>
-      <div class="stack"><div class="card" style="padding:18px;display:flex;flex-direction:column;gap:12px" id="cb-live"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Stripe, right now</h2><button class="btn s" onclick="billingLive(${c.id})">Check Stripe now</button></div><span class="muted" style="font-size:12.5px">Everything on this page is from the local mirror of Stripe. This asks Stripe directly, for this client only.</span></div>
+      <div class="stack"><div class="card" style="padding:18px;display:flex;flex-direction:column;gap:12px" id="cb-live"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Stripe, right now</h2><button class="btn s" onclick="billingLive(${c.id})" title="Everything on this page is from the local mirror of Stripe. This asks Stripe directly, for this client only.">Check Stripe now</button></div></div>
         <div id="cb-lists" class="stack">${skel(3)}</div>
         <div class="stack"><div class="lbl">Payment &amp; contract events</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Source',key:'source',cell:r=>`<span class="chip">${esc(r.source)}</span>`},{h:'Event',key:'event_type',cell:r=>evBadge(r)},{h:'Amount',key:'amount',r:true,cell:r=>r.amount!=null&&r.source!=='admin'?`<span class="num">${fmtUSD(r.amount,2)}</span>`:''},{h:'Detail',key:'summary',wrap:true,cell:r=>`<span class="dim">${esc(r.summary||'')}</span>`}], d.events||[], {id:'cev-t', sort:'created_at', limit:15, empty:'No Stripe or DocuSign events for this client yet.'})}</div></div>
     </section>`, after: () => lazy('cb-main', () => cBillingMain(c)) };
@@ -1862,7 +1876,7 @@ async function cBillingMain(c){
   const lists = $('cb-lists');
   if(lists) lists.innerHTML = cBillingLists(d);
   const envs = d.envelopes || [], env0 = envs[0] || null;
-  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Billing</h2>${bill(d.billing_status, c.is_demo)}</div>
+  return `<h2>Billing</h2>
     ${hold ? `<div class="warnline" style="background:var(--red-bg);color:var(--red-t)">${ico('alert','xs')} On hold: ${esc(PAUSE_LABEL[hold] || hold)}. The owner can't resume it — only you can lift it.</div>` : ''}
     <div class="kv">
       <span class="k">Status</span><span>${bill(d.billing_status, c.is_demo)}${d.pause_reason?` <span class="chip warn">${esc(PAUSE_LABEL[d.pause_reason]||d.pause_reason)}</span>`:''}${d.paused_until?` <span class="dim">until ${fmtD(d.paused_until)}</span>`:''}</span>
@@ -1896,7 +1910,7 @@ function cBillingLists(d){
     <div class="lbl">Invoices</div>${table([{h:'Created',key:'created',cell:r=>`<span class="num">${fmtD(r.created)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='paid'?'ok':r.status==='open'?'bad':'off'} nodot">${esc(r.status||'')}</span>`},{h:'Total',key:'total_cents',r:true,cell:r=>`<span class="num">${r.total_cents!=null?fmtUSD(r.total_cents/100,2):'—'}</span>`},{h:'Tries',key:'attempt_count',r:true,cell:r=>`<span class="num">${r.attempt_count||0}</span>`},{h:'',cell:r=>r.hosted_invoice_url?`<a href="${esc(r.hosted_invoice_url)}" target="_blank" rel="noopener">Open ↗</a>`:''}], inv, {id:'cinv-t', limit:6, empty:'No invoices mirrored yet.'})}
     <div class="lbl">Billing email owed</div>${table([{h:'Queued',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'What',key:'kind',cell:r=>esc((r.kind||'').replace(/_/g,' '))},{h:'To',key:'to_email',cell:r=>`<span class="dim">${esc(r.to_email||'')}</span>`},{h:'State',key:'status',cell:r=>`<span class="b ${/sent/.test(r.status)?'ok':r.status==='failed'?'bad':'warn'} nodot" title="${esc(r.last_error||'')}">${esc((r.status||'').replace('_',' '))}</span>${r.attempts?' <span class="dim">'+r.attempts+' tries</span>':''}`}], owed, {id:'cowed-t', limit:6, empty:'Nothing owed to this client.'})}
     <div class="lbl">Status and plan history</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Field',key:'field',cell:r=>esc((r.field||'').replace('module_','').replace(/_/g,' '))},{h:'Change',cell:r=>`<span class="dim">${esc(r.old_value==null?'—':r.old_value)}</span> → ${esc(r.new_value==null?'—':r.new_value)}`},{h:'By',key:'actor',cell:r=>`${esc(r.actor||r.source||'')}${r.reason?'<div class="dim">'+esc(r.reason)+'</div>':''}`}], hist, {id:'chist-t', sort:'created_at', limit:8, empty:'No status or plan changes recorded yet.'})}
-    ${envs.length ? `<div class="lbl">Contract envelopes</div>${table([{h:'Sent',key:'sent_at',cell:r=>`<span class="num">${fmtD(r.sent_at)}</span>`},{h:'State',key:'status',cell:r=>contractPill(r.status||'sent')},{h:'Terms',key:'modules_list',wrap:true,cell:r=>`<span class="dim">${esc(r.modules_list||'')}</span>`},{h:'Resent',key:'resend_count',r:true,cell:r=>`<span class="num">${r.resend_count||0}</span>`}], envs, {id:'cenv-t', limit:5})}` : ''}`;
+    ${envs.length ? `<div class="lbl">Contract envelopes</div>${table([{h:'Sent',key:'sent_at',cell:r=>`<span class="num">${fmtD(r.sent_at)}</span>`},{h:'State',key:'status',cell:r=>contractPill(r.status||'sent', true)},{h:'Terms',key:'modules_list',wrap:true,cell:r=>`<span class="dim">${esc(r.modules_list||'')}</span>`},{h:'Resent',key:'resend_count',r:true,cell:r=>`<span class="num">${r.resend_count||0}</span>`}], envs, {id:'cenv-t', limit:5})}` : ''}`;
 }
 async function billingLive(id){
   const el = $('cb-live'); if(!el) return;
@@ -1925,7 +1939,7 @@ function cData(c, d){
       <span style="display:flex;gap:6px">${r.key==='toast'?`<button class="btn s w" onclick="toastOpen(${c.id},'${jsq(c.name)}')">Credentials</button><button class="btn s w" onclick="act('/admin/toast/sync/${c.id}','Sync Toast now for ${jsq(c.name)}')">Sync now</button>`:r.key==='rpower'?`<button class="btn s w" onclick="rpowerOpen(${c.id},'${jsq(c.name)}')">Token &amp; sync</button>`:r.key==='instagram'?`<button class="btn s w" onclick="act('/admin/refresh-ig-token/${c.id}','Refresh the Instagram and Facebook tokens for ${jsq(c.name)}')">Refresh token</button>`:r.key==='google_business'?`<button class="btn s w" onclick="act('/admin/fetch-reviews/${c.id}','Fetch new reviews for ${jsq(c.name)} now')">Fetch reviews</button>`:`<a class="btn s g w" href="/admin/client-settings/${c.id}">Settings</a>`}</span></div>`).join('')}</div></section>
     <section class="card" style="padding:16px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span class="ico ${g.source==='none'?'warn':'good'}">${ico('refresh')}</span><div style="flex:1;min-width:240px;display:flex;flex-direction:column;gap:3px"><b>Review fetching</b><span class="muted" style="font-size:12.5px">${esc(fetching + why)}</span></div>
       ${canOn?`<button class="btn s p w" onclick="reviewsFetching(${c.id},'${jsq(c.name)}',true)">Turn on review fetching</button>`:''}${g.source==='places_sampled'?`<button class="btn s g w" onclick="reviewsFetching(${c.id},'${jsq(c.name)}',false)">Turn off</button>`:''}</section>
-    <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Data sources</h2><span class="muted" style="font-size:12.5px">each feed's own sync health</span></div>
+    <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2 title="Each feed's own sync health">Data sources</h2></div>
       ${srcs.length ? table([{h:'Source',key:'source',cell:r=>`<b>${esc(r.source)}</b>${r.provider?' <span class="dim">'+esc(r.provider)+'</span>':''}`},{h:'Last good',key:'last_ok_at',cell:r=>`<span class="num">${r.last_ok_at?fmtDT(r.last_ok_at):'never'}</span>`},{h:'Failing',key:'consecutive_failures',r:true,cell:r=>r.consecutive_failures?`<span class="chip ${r.error_class==='auth'?'bad':'warn'}">${r.consecutive_failures} in a row</span>${r.first_failed_at?' <span class="dim">since '+fmtD(r.first_failed_at)+'</span>':''}`:'<span class="chip ok">ok</span>'},{h:'Next try',key:'next_retry_at',cell:r=>`<span class="num">${r.next_retry_at?fmtDT(r.next_retry_at):'—'}</span>`},{h:'Data through',key:'data_through',cell:r=>`<span class="num">${r.data_through?fmtD(r.data_through):'—'}</span>`},{h:'Last error',key:'last_error',wrap:true,cell:r=>r.last_error?`<span style="color:var(--red-t)">${esc(String(r.last_error).slice(0,160))}</span>`:''}], srcs, {id:'csrc-t'}) : `<div class="cb">${readFailed(d,['source_health'])?unknownV(readFailed(d,['source_health'])):'<span class="muted">No data-source history yet.</span>'}</div>`}</section>
     <section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cd-intake"><h2>Invoice intake</h2>${skel(3)}</section>
     <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Modules</h2><a class="w" href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Turn modules on or off</a></div><div class="lst" style="border-top:1px solid var(--line)">${c.modules.map(m=>`<div class="li"><div class="tt"><b>${esc(m.label)}</b><span>${m.enabled?'on':'off'} · ${m.configured?'configured':'not configured'} · ${m.receiving?'receiving data':'no data coming in'}</span></div><span class="chip ${MOD[m.state]}">${MODL[m.state]}</span><span class="n muted" style="font-size:12.5px;width:140px;text-align:right">${m.last_data?fmtDT(m.last_data):'—'}</span></div>`).join('')}</div></section>
@@ -1974,15 +1988,15 @@ async function intakeHtml(c){
   const failing = sh && sh.consecutive_failures ? `<div class="warnline" role="status" style="background:var(--amber-bg);color:var(--amber-t)">${ico('alert','xs')} ${esc(sh.last_error || 'The invoice feed is failing')}${sh.first_failed_at ? ' · since ' + fmtD(sh.first_failed_at) : ''}</div>` : '';
   const stale = f.stale_days ? `<div class="warnline" role="status" style="background:var(--red-bg);color:var(--red-t)">${ico('alert','xs')} The newest invoice is ${f.stale_days} days old — the feed looks stopped.</div>` : '';
   const addr = r0 ? `<div class="kv"><span class="k">Address</span><span class="mono" style="user-select:all;word-break:break-all">${esc(r0.address)}</span><span class="k">Made</span><span class="n">${fmtD(r0.created_at)}${r0.created_by ? ' <span class="dim">by ' + esc(r0.created_by) + '</span>' : ''}</span></div>` : `<span class="muted" style="font-size:13px">No intake address yet. One is made on ${esc(d.domain || 'the receiving domain (set INTAKE_EMAIL_DOMAIN)')}; give it to Fintech's daily file and any forward.</span>`;
-  const sendersBox = `<label class="lbl" for="intake-senders">Senders it takes mail from — one per line; @domain for any address there. Anyone else is held.</label><textarea id="intake-senders" rows="4" style="width:100%" placeholder="processor@fintech.net">${esc(senders)}</textarea>`;
+  const sendersBox = `<label class="lbl" for="intake-senders" title="One per line; @domain for any address there. Mail from anyone else is held.">Senders it takes mail from</label><textarea id="intake-senders" rows="4" style="width:100%" placeholder="processor@fintech.net">${esc(senders)}</textarea>`;
   const buttons = r0 ? `<span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn s w" onclick="intakeSenders(${c.id},'${n}','${jsq(r0.address)}')">Save senders</button><button class="btn s g w" onclick="intakeRotate(${c.id},'${n}')">Rotate address…</button></span>` : `<button class="btn s p w" style="align-self:flex-start" onclick="intakeCreate(${c.id},'${n}')">Make an intake address</button>`;
   const emails = table([{h:'Received',key:'received_at',cell:r=>`<span class="num">${fmtDT(r.received_at)}</span>`},{h:'From',key:'sender',wrap:true,cell:r=>`<span class="dim">${esc(r.sender||'')}</span>`},{h:'Subject',key:'subject',wrap:true,cell:r=>esc(r.subject||'')},{h:'Status',key:'status',cell:r=>`<span class="chip ${INTAKE_ST[r.status]||''}">${esc((INTAKE_LABEL[r.status]||r.status) + (r.vouched ? ' · file vouched, mail unsigned' : ''))}</span>`},{h:'Verified',cell:r=>r.auth?`<span class="dim" title="SPF ${esc(r.auth.spf||'—')} · DKIM ${esc(r.auth.dkim||'—')} · DMARC ${esc(r.auth.dmarc||'—')}">${esc(r.auth.dmarc||'—')}</span>`:'<span class="dim">—</span>'},{h:'Detail',key:'detail',wrap:true,cell:r=>`<span class="dim">${esc(String(r.detail||'').slice(0,200))}</span>`},{h:'',cell:r=>r.releasable?`<button class="btn s w" onclick="intakeRelease(${c.id},'${n}','${jsq(r.email_id)}','${jsq(r.sender||'')}')">Release…</button>`:''}], d.emails || [], {id:'cint-e', sort:'received_at', limit:20, empty:'No email has reached this restaurant\'s address yet.'});
-  const files = table([{h:'Received',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'File',key:'filename',wrap:true,cell:r=>esc(r.filename||'')},{h:'Format',key:'format',cell:r=>`<span class="dim">${esc(r.format||'—')}</span>`},{h:'Invoices',key:'invoices',r:true,cell:r=>`<span class="num">${fmtN(r.invoices)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="chip ${FILE_ST[r.status]||''}">${esc(String(r.status||'').replace(/_/g,' '))}</span>`},{h:'Detail',wrap:true,cell:r=>`<span class="dim">${intakeFileDetail(r)}</span>`},{h:'',cell:r=>r.status==='purged'?'':`<span style="display:flex;gap:6px">${r.has_content?`<button class="btn s g w" onclick="intakeReread(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}')">Re-read</button>`:''}<button class="btn s g w dz" onclick="intakePurge(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}',${r.invoices||0})">Purge…</button></span>`}], d.files || [], {id:'cint-f', sort:'created_at', limit:20, empty:'No file stored yet.'});
-  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Invoice intake</h2><span class="muted" style="font-size:12.5px">Fintech's daily file, by email</span></div>
+  const files = table([{h:'Received',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'File',key:'filename',wrap:true,cell:r=>esc(r.filename||'')},{h:'Format',key:'format',cell:r=>`<span class="dim">${esc(r.format||'—')}</span>`},{h:'Invoices',key:'invoices',r:true,cell:r=>`<span class="num">${fmtN(r.invoices)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="chip ${FILE_ST[r.status]||''}">${esc(String(r.status||'').replace(/_/g,' '))}</span>`},{h:'Detail',wrap:true,cell:r=>`<span class="dim">${intakeFileDetail(r)}</span>`},{h:'',cell:r=>r.status==='purged'?'':`<span style="display:flex;gap:6px">${r.has_content?`<button class="btn s g w" onclick="intakeReread(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}')">Re-read</button>`:''}<button class="btn s d w" onclick="intakePurge(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}',${r.invoices||0})">Purge…</button></span>`}], d.files || [], {id:'cint-f', sort:'created_at', limit:20, empty:'No file stored yet.'});
+  return `<h2 title="Fintech's daily file, by email">Invoice intake</h2>
     ${stale}${failing}<span class="muted" style="font-size:12.5px">${feed}</span>${addr}${sendersBox}${buttons}
     <div class="lbl">Last 20 emails</div>${emails}<div class="lbl">Last 20 files</div>${files}
-    <div class="lbl">Fintech stores in this restaurant's files</div>
-    <span class="muted" style="font-size:12.5px">${(d.stores || []).length ? d.stores.map(x => `store <span class="mono">${esc(x.location_key)}</span> → ${x.restaurant_id === c.id ? 'this restaurant' : esc(locName(null, x.restaurant_id))}`).join(' · ') : 'No store mapped yet — the first file naming one store teaches it as this restaurant\'s.'} An invoice for a store with no mapping is skipped, never written here.</span>
+    <div class="lbl" title="An invoice for a store with no mapping is skipped, never written here.">Fintech stores in this restaurant's files</div>
+    <span class="muted" style="font-size:12.5px">${(d.stores || []).length ? d.stores.map(x => `store <span class="mono">${esc(x.location_key)}</span> → ${x.restaurant_id === c.id ? 'this restaurant' : esc(locName(null, x.restaurant_id))}`).join(' · ') : 'No store mapped yet — the first file naming one store teaches it as this restaurant\'s.'}</span>
     <span style="display:flex;gap:6px;flex-wrap:wrap"><input id="intake-store" placeholder="Store number, e.g. 000001" style="width:200px"><button class="btn s g w" onclick="intakeStore(${c.id},'${n}')">Map to this restaurant</button></span>
     ${old.length ? `<details class="more-d" style="margin:0 -18px -16px"><summary>Retired addresses · <span class="n">${old.length}</span></summary><div style="padding:0 18px 16px" class="kv">${old.map(r=>`<span class="k">${fmtD(r.retired_at || r.created_at)}</span><span class="mono dim" style="word-break:break-all">${esc(r.address)}</span>`).join('')}</div></details>` : ''}`;
 }
@@ -2073,10 +2087,9 @@ async function templateDelete(id, tid, title, name){
 // Staff scheduling notes (#142): a new note is added to the person's notes,
 // never written over them; a removal offers Undo.
 function staffNotesHtml(c, notes){
-  return `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Scheduling notes</h2><span class="muted" style="font-size:12px">what the schedule must respect</span></div>
+  return `<h2 title="What the schedule must respect">Scheduling notes</h2>
     ${notes.map(x=>`<div style="display:flex;gap:10px;font-size:13px;align-items:flex-start"><span style="flex:1;min-width:0"><b>${esc(x.employee_name)}</b> <span class="ink2 pre">${esc(x.notes||'')}</span></span><button class="btn s g w" onclick="staffNoteDelete(${c.id},${x.id},'${jsq(x.employee_name)}','${jsq(c.name)}')">Remove</button></div>`).join('') || '<span class="muted" style="font-size:13px">No scheduling notes.</span>'}
-    <div style="display:flex;gap:6px;flex-wrap:wrap"><input id="sn-name" placeholder="Employee name" style="flex:1;min-width:110px"><input id="sn-notes" placeholder="e.g. no Sundays; off by 4pm" style="flex:2;min-width:150px"><button class="btn s w" onclick="staffNoteAdd(${c.id},'${jsq(c.name)}')">Add</button></div>
-    <span class="dim">A note for someone who already has one is added to theirs, never written over it.</span>`;
+    <div style="display:flex;gap:6px;flex-wrap:wrap"><input id="sn-name" placeholder="Employee name" style="flex:1;min-width:110px"><input id="sn-notes" placeholder="e.g. no Sundays; off by 4pm" style="flex:2;min-width:150px"><button class="btn s w" onclick="staffNoteAdd(${c.id},'${jsq(c.name)}')" title="A note for someone who already has one is added to theirs, never written over it.">Add</button></div>`;
 }
 async function staffNoteAdd(id, name, who, text){
   const nm = who || $('sn-name').value.trim(), nt = text || $('sn-notes').value.trim();
@@ -2105,7 +2118,7 @@ async function staffNoteDelete(id, nid, who, name){
 function menuHtml(c, p){
   return `<h2>Menu</h2>
     <div class="w" id="cd-menunotes" style="display:flex;flex-direction:column;gap:8px">${skel(2)}</div>
-    <span class="muted" style="font-size:12.5px">Pull the dishes from Google, a menu page or a PDF. The text comes back here to review — nothing is saved until you save the menu notes.</span>
+    <span class="lbl" title="Pull the dishes from Google, a menu page or a PDF. The text comes back here to review — nothing is saved until you save the menu notes.">Pull the dishes</span>
     <div style="display:flex;gap:6px;flex-wrap:wrap">${p.google_place_id?`<button class="btn s w" onclick="menuExtract(${c.id},'places')">From Google</button>`:''}<input id="mx-url" placeholder="https://… menu page" style="flex:1;min-width:150px"><button class="btn s w" onclick="menuExtract(${c.id},'url')">From the page</button><label class="btn s w" style="cursor:pointer">From a PDF<input type="file" id="mx-pdf" accept="application/pdf" hidden onchange="menuExtract(${c.id},'pdf')"></label></div>
     <div id="mx-out"></div>`;
 }
@@ -2196,7 +2209,7 @@ function cMessages(c, d){
   const seg = `<div class="seg">${segs.map(s=>`<button class="${_cmsg===s[0]?'on':''}" onclick="_cmsg='${s[0]}';route()">${s[1]}</button>`).join('')}</div>`;
   const n = jsq(c.name), em = jsq(c.owner_email||'');
   if(_cmsg === 'email') return {html: seg + `<section class="split"><div class="stack">${table([{h:'When',key:'sent_at',cell:r=>`<span class="num">${fmtDT(r.sent_at)}</span>`},{h:'Type',key:'email_type'},{h:'To',key:'to_email',cell:r=>`<span class="dim">${esc(r.to_email)}</span>`},{h:'Subject',key:'subject',wrap:true},{h:'Status',key:'status',cell:r=>`<span class="b ${['failed','bounced','complained'].indexOf(r.status)>=0?'bad':(r.status==='delivered'?'ok':'off')} nodot">${esc(r.status||'sent')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:''}], d.emails, {id:'cem-t', sort:'sent_at', limit:20, empty:'No emails logged for this client.'})}</div>
-      <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Send</h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn s w" onclick="testSend('digest',${c.id},'${n}','${em}')">Test digest…</button><button class="btn s w" onclick="testSend('urgent',${c.id},'${n}','${em}')">Test urgent alert…</button><button class="btn s w" onclick="resendWelcome(${c.id},'${n}','${jsq((c.owner||{}).email||c.owner_email||'')}')">Resend welcome…</button><button class="btn s w" onclick="valueRecap(${c.id},'${n}','${em}')">Value recap…</button></div><span class="dim">A test goes to the owner, or to you — you choose each time.</span></div>
+      <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Send</h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn s w" onclick="testSend('digest',${c.id},'${n}','${em}')">Test digest…</button><button class="btn s w" onclick="testSend('urgent',${c.id},'${n}','${em}')">Test urgent alert…</button><button class="btn s w" onclick="resendWelcome(${c.id},'${n}','${jsq((c.owner||{}).email||c.owner_email||'')}')">Resend welcome…</button><button class="btn s w" onclick="valueRecap(${c.id},'${n}','${em}')">Value recap…</button></div></div>
         <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px" id="cm-sup"><h2>Suppressed addresses</h2>${skel(2)}</div></div></section>`,
     after: () => lazy('cm-sup', () => suppressionsHtml(c))};
   if(_cmsg === 'sms') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Texts</h2><button class="btn s w" onclick="testText(${c.id},'${n}')">Send a test text to the alert contacts…</button></div><div id="cm-test"></div><div id="cm-sms">${skel(3)}</div></div>
@@ -2310,15 +2323,15 @@ function learningCurveHtml(rows, meta){
     const f = flags[name], tone = f ? CURVE_TONE[f.state] : null;
     const why = f ? `<span style="color:${tone ? tone[1] : 'var(--ink3)'};font-size:12px">${esc(curveFig(f.latest, spec.unit))} against ${esc(curveFig(f.before, spec.unit))} the two months before</span>` : '';
     return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 150px 96px 92px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
-      <span style="display:flex;flex-direction:column;gap:2px"><b style="font-size:13px">${esc(spec.label)}</b><span class="dim" style="font-size:11.5px">${spec.better === 'down' ? 'lower is better' : 'higher is better'} · read at <span class="n">${fmtN(floor)}</span>+ a month</span>${why}</span>
+      <span style="display:flex;flex-direction:column;gap:2px"><b style="font-size:13px">${esc(spec.label)}</b><span class="dim" style="font-size:12px">${spec.better === 'down' ? 'lower is better' : 'higher is better'} · read at <span class="n">${fmtN(floor)}</span>+ a month</span>${why}</span>
       ${curveSpark(pts, tone ? tone[1] : 'var(--ember2)', 'lc-' + name)}
-      <span style="text-align:right;display:flex;flex-direction:column"><span class="n" style="font-size:17px;font-weight:600">${read ? esc(curveFig(lm.value, spec.unit)) : '—'}</span><span class="dim" style="font-size:11.5px">${lm.n != null ? 'n=' + fmtN(lm.n) : 'not measured'}${!read && lm.n != null ? ' · under ' + fmtN(floor) : ''}</span></span>
+      <span style="text-align:right;display:flex;flex-direction:column"><span class="n" style="font-size:17px;font-weight:600">${read ? esc(curveFig(lm.value, spec.unit)) : '—'}</span><span class="dim" style="font-size:12px">${lm.n != null ? 'n=' + fmtN(lm.n) : 'not measured'}${!read && lm.n != null ? ' · under ' + fmtN(floor) : ''}</span></span>
       <span style="text-align:right">${tone ? pill(tone[0], tone[2]) : (read ? pill('neu', 'Holding', false) : '<span class="dim" style="font-size:12px">too few</span>')}</span></div>`;
   };
   const fat = last.fatigue || null;
   const fatLine = !fat || fat.share == null ? '<span class="muted" style="font-size:12.5px">Fatigue: nothing settled this month yet.</span>'
     : `<span style="font-size:12.5px;${fat.fatigued ? 'color:var(--amber-t)' : ''}">${fat.fatigued ? '<b>Fatigued</b> — ' : 'Fatigue: '}<span class="n">${Math.round(fat.share * 100)}%</span> of <span class="n">${fmtN(fat.n)}</span> settled this month went dismissed or ignored${fat.fatigued ? '. Home, the nightly report and the feed show fewer until it recovers.' : ` <span class="dim">(fatigued at ${Math.round(((meta && meta.fatigue_share) || .75) * 100)}% of ${fmtN((meta && meta.fatigue_min_n) || 20)}+)</span>`}</span>`;
-  return `<div style="display:flex;justify-content:space-between;gap:10px;font-size:11.5px" class="dim"><span>${esc(monLabel(rows[0].month))}</span><span>${rows.length} month${rows.length === 1 ? '' : 's'} · the newest refreshed nightly</span><span>${esc(monLabel(last.month))}</span></div>
+  return `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12px" class="dim"><span>${esc(monLabel(rows[0].month))}</span><span>${rows.length} month${rows.length === 1 ? '' : 's'} · the newest refreshed nightly</span><span>${esc(monLabel(last.month))}</span></div>
     <div style="border-top:1px solid var(--line)">${names.map(line).join('')}</div>${fatLine}`;
 }
 // The model's own confidence against what was measured (memory audit
@@ -2342,9 +2355,8 @@ async function aiClientHtml(c){
   const bud = d.budget || {}, ai = bud.ai || {}, pl = bud.places || {}, q = d.quality || {}, st = d.stalled_reviews || {};
   const outc = o => ['ok','error','refused','truncated','unparseable','blocked'].filter(k=>o && o[k]).map(k=>`<span class="chip ${k==='ok'?'ok':(k==='blocked'?'':'bad')}">${k} ${o[k]}</span>`).join('');
   const dr = q.drafts || {}, ask = q.ask || {}, saf = q.safety || {};
-  return `<section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Spend against its ceilings</h2>${bud.tier?pill('neu', esc(TIER_LABEL[bud.tier]||bud.tier), false):''}</div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap">${meter('AI · today', ai.day)}${meter('AI · this month', ai.month)}${meter('Google Places · today', pl.day)}${meter('Google Places · this month', pl.month)}</div>
-      <span class="dim">Days and months are UTC. Admin-started calls count only toward the platform's own pool.</span></section>
+  return `<section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2 title="Days and months are UTC. Admin-started calls count only toward the platform's own pool.">Spend against its ceilings</h2>${bud.tier?pill('neu', esc(TIER_LABEL[bud.tier]||bud.tier), false):''}</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">${meter('AI · today', ai.day)}${meter('AI · this month', ai.month)}${meter('Google Places · today', pl.day)}${meter('Google Places · this month', pl.month)}</div></section>
     <section class="card" style="padding:16px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span class="ico ${d.stalled_total?'warn':'good'}">${ico('spark')}</span><div style="flex:1;min-width:240px;display:flex;flex-direction:column;gap:3px"><b>${d.stalled_total ? d.stalled_total + ' review' + (d.stalled_total===1?'':'s') + ' the AI gave up on' : 'No stalled reviews'}</b><span class="muted" style="font-size:12.5px">${d.stalled_total ? (st.unanalysed||0) + ' never analysed · ' + (st.undrafted||0) + ' never drafted. Nothing retries them on its own.' : 'Every review was analysed and drafted, or is still within its retries.'}</span></div>${d.stalled_total?`<button class="btn s p w" onclick="retryAi(${c.id},'${jsq(c.name)}',${d.stalled_total})">Retry AI</button>`:''}</section>
     ${(d.blocked||[]).length ? `<section class="stack"><div class="lbl">Blocked before sending · 30 days</div>${table([{h:'Why',key:'reason',cell:r=>`<b>${esc((r.reason||'').replace(/_/g,' '))}</b>`},{h:'Vendor',key:'vendor'},{h:'Times',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>`},{h:'Last',key:'last_at',cell:r=>`<span class="num">${fmtDT(r.last_at)}</span>`},{h:'Detail',key:'detail',wrap:true,cell:r=>`<span class="dim">${esc(r.detail||'')}</span>`}], d.blocked, {id:'caib-t'})}</section>` : ''}
     <section class="stack"><div class="lbl">By workflow · 30 days</div>${table([{h:'Workflow',key:'action'},{h:'Model',key:'model',cell:r=>`<span class="dim">${esc((r.model||'').replace('claude-',''))}</span>`},{h:'Calls',key:'calls',r:true,cell:r=>`<span class="num">${fmtN(r.calls)}</span>`},{h:'Outcomes',cell:r=>outc(r.outcomes)},{h:'p50 / p95',key:'p95_ms',r:true,cell:r=>`<span class="num">${r.p50_ms!=null?fmtN(Math.round(r.p50_ms)):'—'} / ${r.p95_ms!=null?fmtN(Math.round(r.p95_ms)):'—'} ms</span>`},{h:'Cost',key:'cost',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost,3)}</span>`}], d.by_action||[], {id:'caia-t', sort:'cost', limit:10, empty:'No AI calls in 30 days.'})}</section>
@@ -2355,7 +2367,7 @@ async function aiClientHtml(c){
       <span class="k">Safety checks</span><span>${saf.rate_pct!=null?saf.rate_pct+'% of '+saf.reviews_analysed+' reviews disagreed':'nothing analysed yet'}</span></div>
       ${(q.events||[]).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${q.events.map(e=>`<span class="chip" title="${e.per_100_calls!=null?e.per_100_calls+' per 100 calls':''}">${esc(e.surface)} · ${esc((e.kind||'').replace(/_/g,' '))} · ${e.n}</span>`).join('')}</div>` : '<span class="muted" style="font-size:13px">No guard or validation findings.</span>'}
       <div class="lbl" style="margin-top:6px">The model's own confidence · a year of scored claims</div>${modelConfHtml(q.model_confidence)}</section>
-    <section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap"><h2>Learning curve</h2><span class="muted" style="font-size:12.5px">is Cavnar AI getting better here · month by month</span></div>
+    <section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2 title="Is Cavnar AI getting better here · month by month">Learning curve</h2>
       ${learningCurveHtml(d.learning, d.learning_curves)}</section>`;
 }
 async function retryAi(id, name, n){
@@ -2373,7 +2385,7 @@ function cAccess(c, d){
   return {html: `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:12px" id="off-card">${c.deletion?'<h2>Close this account</h2>':'<h2>Offboarding</h2>'}${skel(2)}</div>
     <section class="split">
     <div class="stack">
-      <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Logins</h2><span class="muted" style="font-size:12.5px">open one for its sign-in security</span></div><div class="lst" style="border-top:1px solid var(--line)">${c.logins.map(l=>`<div class="li click" onclick="toggleRow(this);secLoad(${l.id})"><div class="tt"><b>${esc(l.username)}${l.is_active?'':' <span class="chip">inactive</span>'}</b><span>${esc(ROLE_LABEL[l.role]||l.role||'')} · ${esc(l.email||'')} · ${l.last_login?'signed in '+ago(l.last_login)+' ago':'never signed in'}</span></div>
+      <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2 title="Open one for its sign-in security">Logins</h2></div><div class="lst" style="border-top:1px solid var(--line)">${c.logins.map(l=>`<div class="li click" onclick="toggleRow(this);secLoad(${l.id})"><div class="tt"><b>${esc(l.username)}${l.is_active?'':' <span class="chip">inactive</span>'}</b><span>${esc(ROLE_LABEL[l.role]||l.role||'')} · ${esc(l.email||'')} · ${l.last_login?'signed in '+ago(l.last_login)+' ago':'never signed in'}</span></div>
           ${ROLE_LABEL[l.role]||!l.role?`<select class="w" onclick="event.stopPropagation()" onchange="setRole(${l.id},this.value,'${jsq(l.username)}',this)" style="height:28px;padding:0 8px;font-size:12px" aria-label="Role for ${esc(l.username)}"><option value="" selected disabled>role…</option>${Object.keys(ROLE_LABEL).filter(r=>r!==l.role).map(r=>`<option value="${r}">${ROLE_LABEL[r]}</option>`).join('')}</select>`:''}
           ${l.is_active?`<button class="btn s d w" onclick="event.stopPropagation();deactivateLogin(${l.id},'${jsq(l.username)}','${n}')">Deactivate</button>`:`<button class="btn s w" onclick="event.stopPropagation();reactivateLogin(${l.id},'${jsq(l.username)}','${n}')">Reactivate</button>`}<span class="chev">${ico('chev','s')}</span></div>
           <div class="lx"><div class="box" id="sec-${l.id}">${skel(2)}</div></div>`).join('') || '<div class="empty">No logins.</div>'}</div>
@@ -2399,7 +2411,7 @@ async function secLoad(uid, force){
       ${u.must_reset_password?'<span class="k">Password</span><span><span class="chip warn">must reset before signing in</span></span>':''}
     </div>
     ${ss.length ? table([{h:'Session',key:'device_type',cell:r=>r.is_view_as?'<span class="chip warn">admin view-as</span>':esc(r.device_type||'web')},{h:'Started',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last active',key:'last_active',cell:r=>`<span class="num">${ago(r.last_active)}</span>`},{h:'Ends',key:'expires_at',cell:r=>`<span class="num">${fmtD(r.expires_at)}</span>`},{h:'IP',key:'ip_address',cell:r=>`<span class="mono">${esc(r.ip_address||'')}</span>`},{h:'',cell:r=>`<button class="btn s g w" onclick="revokeSession(${uid},'${jsq(r.session_id)}','${un}')">Sign out</button>`}], ss, {id:'sess-'+uid}) : '<span class="muted" style="font-size:13px">No live sessions.</span>'}
-    <span style="display:flex;gap:8px;flex-wrap:wrap">${t.enabled?`<button class="btn s w" onclick="reset2fa(${uid},'${un}','${jsq(t.scope||'')}','${rn}')">Reset two-factor…</button>`:''}${lk.locked||lk.failures_15m?`<button class="btn s w" onclick="clearLockout(${uid},'${un}')">Clear the lock</button>`:''}${ss.length||d.trusted_devices?`<button class="btn s w" onclick="revokeAll(${uid},'${un}')">Sign out everywhere</button>`:''}${u.email||u.username?`<button class="btn s g w" onclick="sendResetLink(${uid},'${un}','')">Send a reset link…</button>`:''}</span>`;
+    <span style="display:flex;gap:8px;flex-wrap:wrap">${t.enabled?`<button class="btn s d w" onclick="reset2fa(${uid},'${un}','${jsq(t.scope||'')}','${rn}')">Reset two-factor…</button>`:''}${lk.locked||lk.failures_15m?`<button class="btn s w" onclick="clearLockout(${uid},'${un}')">Clear the lock</button>`:''}${ss.length||d.trusted_devices?`<button class="btn s w" onclick="revokeAll(${uid},'${un}')">Sign out everywhere</button>`:''}${u.email||u.username?`<button class="btn s g w" onclick="sendResetLink(${uid},'${un}','')">Send a reset link…</button>`:''}</span>`;
 }
 async function reset2fa(uid, username, scope, rname){
   const msg = scope === 'restaurant'
@@ -2544,8 +2556,8 @@ async function tlMore(id, name, before){
 async function auditHtml(c, before){
   const d = await need('/admin/api/client/' + c.id + '/audit' + (before ? '?before_id=' + before : ''));
   const ev = d.events || [];
-  return `<h2>Admin actions</h2><span class="muted" style="font-size:12.5px">Every admin write on this client, with who, what and the before and after.</span>
-    <div class="list">${ev.map(e=>`<div class="it" style="grid-template-columns:120px minmax(0,1fr) auto"><span class="when">${esc(fmtDT(e.created_at))}</span><span><b>${esc(e.action||'')}</b> <span class="dim">${esc(e.actor||'')}</span>${e.summary?'<div class="dim">'+esc(e.summary)+'</div>':''}${e.before!=null||e.after!=null?`<details><summary class="dim" style="cursor:pointer">before / after</summary><pre class="mono pre" style="margin:4px 0 0;font-size:11.5px">${esc(JSON.stringify({before:e.before, after:e.after}, null, 1))}</pre></details>`:''}</span><span>${e.result&&e.result!=='ok'?`<span class="chip ${e.result==='denied'||e.result==='refused'||e.result==='failed'||e.result==='error'?'bad':'warn'}">${esc(e.result)}</span>`:''}</span></div>`).join('') || '<div class="empty">No admin actions on record.</div>'}</div>
+  return `<h2 title="Every admin write on this client, with who, what and the before and after">Admin actions</h2>
+    <div class="list">${ev.map(e=>`<div class="it" style="grid-template-columns:120px minmax(0,1fr) auto"><span class="when">${esc(fmtDT(e.created_at))}</span><span><b>${esc(e.action||'')}</b> <span class="dim">${esc(e.actor||'')}</span>${e.summary?'<div class="dim">'+esc(e.summary)+'</div>':''}${e.before!=null||e.after!=null?`<details><summary class="dim" style="cursor:pointer">before / after</summary><pre class="mono pre" style="margin:4px 0 0;font-size:12px">${esc(JSON.stringify({before:e.before, after:e.after}, null, 1))}</pre></details>`:''}</span><span>${e.result&&e.result!=='ok'?`<span class="chip ${e.result==='denied'||e.result==='refused'||e.result==='failed'||e.result==='error'?'bad':'warn'}">${esc(e.result)}</span>`:''}</span></div>`).join('') || '<div class="empty">No admin actions on record.</div>'}</div>
     ${d.next_before_id ? `<button class="lnk" onclick="lazy('cs-audit', () => auditHtml({id:${c.id}, name:'${jsq(c.name)}'}, ${d.next_before_id}))">Older actions</button>` : ''}`;
 }
 async function salesAuditsHtml(c){
