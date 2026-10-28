@@ -711,7 +711,7 @@ def test_side_effect_sends_are_skipped_not_refused_on_a_local_backend(app, db_pa
     assert "does not send" in made.get_json()["note"]
     rid = _rid(db_path, billing_status="active")
     uid = _owner(db_path, rid)
-    _post(c, f"/admin/deactivate-client/{uid}")
+    _post(c, f"/admin/deactivate-client/{uid}", {"force": True})      # the only owner (F15)
     back = _post(c, f"/admin/reactivate-client/{uid}").get_json()
     assert back["ok"] is True and back["emailed"] is False and "local" in back["email_note"]
 

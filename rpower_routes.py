@@ -205,6 +205,7 @@ def _bootstrap_rpower(restaurant_id, current_user):
 
 @rpower_bp.route("/admin/rpower/sync/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events.audited("pos.rpower.sync_started")
 def sync_rpower(restaurant_id, current_user):
     """Kick a sync in the background so the admin screen doesn't hang on it —
     through pos.sync_restaurant on the bounded admin pool

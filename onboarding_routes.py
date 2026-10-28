@@ -143,7 +143,9 @@ def admin_provision_apply(current_user):
 @admin_required
 def admin_provision_status(job_id, current_user):
     import admin_routes
-    return admin_routes._admin_job_status(job_id)
+    # Only a provisioning batch's job, never another admin job's result (the
+    # review account's once-only password among them — admin audit 10/27/26 S1).
+    return admin_routes._admin_job_status(job_id, ("bulk_provision",))
 
 
 @onboarding_bp.route("/admin/api/onboarding/provision-batches")

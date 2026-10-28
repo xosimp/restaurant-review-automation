@@ -365,7 +365,7 @@ def test_reactivation_says_whether_the_email_really_went(db_path, monkeypatch):
     uid = _owner_login(db_path, rid)
     c = app.test_client()
     c.set_cookie("session_token", create_session(admin, password_verified_at=True, db_path=db_path))
-    c.post(f"/admin/deactivate-client/{uid}")
+    c.post(f"/admin/deactivate-client/{uid}", json={"force": True})      # the only owner (F15)
     out = c.post(f"/admin/reactivate-client/{uid}").get_json()
     assert out["emailed"] is False and "suppression list" in out["email_note"]
     assert got and got[0]["restaurant_id"] == rid

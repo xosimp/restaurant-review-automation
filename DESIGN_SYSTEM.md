@@ -2094,24 +2094,65 @@ never with text: the rebuild cut the visible text across its screens by 69%
   sheet, status page) at the foot of the rail. Every older hash (`#clients`,
   `#jobs`, `#emails`, `#recommendations/<id>`, …) lands in the area and tab it
   moved to (`ALIAS`); keep that map when a page moves again.
-- **Palette** — the web app's dark staircase (`--bg` canvas < `--rail` <
-  `--card` < `--raised`), Clash Display titles, Space Grotesk for every figure,
-  Apfel Grotezk for the rest; ember for the one primary action per screen and
-  the kickers; green / amber / red only for state.
+- **Palette** — the web app's dark staircase (`--rail`, the darkest, < `--bg`
+  canvas < `--card` < `--raised`), Clash Display titles, Space Grotesk for every
+  figure, Apfel Grotezk for the rest; ember for the one primary action per
+  screen and the kickers; green / amber / red only for state. Every colour in
+  the rules is a variable — the named literals are `--ember-t` (ember as text,
+  a link's hover), `--ember-press`, `--on-ember`, `--raised2` (a selected
+  control), the white fills `--fill-1` / `--fill` / `--fill-2` (and `--fill-3`,
+  the grey of an unknown or neutral health-ring arc) and the hairlines
+  `--line-red` / `--line-amber` (admin audit 10/27/26).
 - **Area header** — kicker, title, and one sentence written by rules from the
   page's own payload ("1 job is failing · 14 jobs are overdue.") — no model on
-  load.
-- **Rank, don't list** — hero figures (`.kc`, 40px) for the few that matter,
-  then a figure strip (`.strip`, one card split into cells, each a link), then
-  the lists.
+  load. The kicker shows only when it differs from the title (`head()`): never
+  "Operations / Operations".
+- **Rank, don't list** — hero figures (`.kc`) for the few that matter, then a
+  figure strip (`.strip`, one card split into cells), then the lists. Figures
+  sit on one scale: `--fig-xl` 40px (hero), `--fig-l` 28px (a subsystem card),
+  `--fig-m` 22px (a strip cell, a `.kpi`), `--fig-s` 16px (a `.meter`). A strip's
+  cells wrap by width (140px basis, the hairlines under the card's edge), so a
+  14-cell strip reads at a laptop; a cell links where its figure is acted on,
+  and with nowhere else to go (the page already open) it is a plain cell
+  (`stripCell('', …)`), never a link. A long strip keeps the figures a rule
+  pages on and puts the rest under a `<details class="card">` "More …"
+  (Operations → RPOWER: six, then eight more).
+- **Each figure once per screen** (admin audit 10/27/26). Overview: four hero
+  cards (MRR, paying, signups, platform health), then a three-cell strip of
+  what the ring doesn't carry (support queue, AI spend, API latency — neutral
+  icons, the ring holds the verdicts), then Needs you; the critical count is
+  its badge. The client page: churn in the strip and its card, setup in the
+  Overview ring, modules on Data & integrations, the billing status once on
+  the Billing tab; an issue row on the client's own page carries no link back
+  to it (`needRow(i, {here: true})`). Before adding a tile, look for the figure
+  already on the screen.
+- **The laptop band, 1201–1440px.** One `@media (max-width:1440px)` rule: the
+  Overview hero (`.ovhero`, never an inline grid) two by two, `.g6` three
+  across, `.g8` four, a wide split (`.split.wide`, Jobs) stacked with its side
+  cards in an auto-fill grid. Check a new screen at 1280×800 as well as wide.
 - **Operational list** (`.lst` / `.li` / `.lx`) in place of a dense table: one
   row per thing with its state pill, one action, and the rest on expand
-  (`toggleRow`). A secondary action shows on hover (`.reveal`); a failing
-  row's action is always shown.
+  (`toggleRow`). A row is one line: what a thing does or why goes in the open
+  row (a job's description). A secondary action shows on hover (`.reveal`),
+  on keyboard focus and on a touch screen; a failing row's action is always
+  shown — secondary, never ember, because the row is already red. Fixed
+  numeric columns get a `.lbl` header row (Operations → RPOWER's stores).
+- **One ember action per screen.** Rows carry secondary buttons under the
+  header's primary: a row list never repeats `btn p` (Open client, Apply,
+  Post update, Run now). An inline-edit row's Save is secondary until that
+  row is edited, then ember (the event calendar, `evDirty`).
+- **Destructive and fleet-wide actions look like it** — `.btn.d` for "Stop all
+  AI", Purge (cannot be undone) and Reset two-factor (a whole restaurant);
+  never a quiet ghost button. A menu's danger zone is `.dz`.
 - **Tables** stay for detail lists only, `limit` rows at a time with "Show
-  all", and raw logs sit behind a `<details class="card">`.
+  all", and raw logs sit behind a `<details class="card">`. A table inside a
+  card, an open row or a box is that surface — no border, radius or shadow of
+  its own (`.card .tw`), never a box in a box.
 - **Filters** are a segmented control (`.seg`) of the five or six that matter,
-  the rest under a More filters menu.
+  the rest under a More filters menu or a `<select>` (the support queue: one
+  segment, then severity and sort as selects; never three segs in one bar, and
+  a count said once). Every filter control is 32px; a control inside a `.seg`
+  or `.filters` bar is 26px.
 - **Actions menu** (`.menu`, `menuToggle`) — a client's 25 actions in one
   searchable menu, grouped, the danger zone red and last; every action still
   confirms.
@@ -2155,6 +2196,30 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **A form an action needs** opens in one modal (`formOpen(spec)`: fields,
   the go button, `submit` returning the server's answer); a refusal keeps it
   open with the server's sentence under the buttons.
+- **Loading and outcomes, the house way** (admin audit 10/27/26). A line still
+  reading is the sliding ember pulse — `pulse(label[, words])` draws
+  `.dr-pulse` with words worth keeping beside it ("up to two minutes") —
+  never "Loading…" or "Working…". A write in flight is a busy button
+  (`busyBtn(btn, on)`, `[aria-busy]`: the pulse slides along its foot; whether
+  it is disabled stays with the caller). A modal's status line says its outcome
+  in colour (`statusSay(id, ok, msg)`): green when it worked, red when it
+  didn't, amber for a working connection with a fault, plain while it only
+  informs — no ✓ / ✕ glyphs standing in for colour.
+- **Text.** Content text is 12px or more (a form label 12.5px, a timestamp
+  12px); kickers, `th`, pills and chips stay at 10.5–11.5px. A chart's axis
+  text is 11px and the chart is drawn at the width it is shown (`fitChart(id,
+  draw)` re-draws `growthChart` / `lineChart` at its container's width), so it
+  reads 11px at every width. A spark's end dot is HTML over the line
+  (`.spk-end`) — never a circle inside a stretched SVG. A time is "6:45pm"
+  ("6pm" on the hour, `fmtT`), never the locale's "6:45 PM".
+- **Explainers are behind disclosure** (§12e). A card's method sentence goes
+  in its heading's `title`, a longer one in `<details class="more-d">` "How
+  this is counted" / "How the ceilings work"; a caption that restated the
+  heading goes. An empty card says what would fill it ("No email opened in 30
+  days."), never a lone "—". A column already headed Contract says "sent" /
+  "opened" / "signed" (`contractPill(st, true)`). A health panel that is clean
+  is one checked line (Billing health); only a section with something in it
+  is drawn in full.
 - **A tab's extra reads load after first paint** (`lazy(id, fn)`): the card
   shows skeleton lines, then its content, or its own amber line if its read
   failed — one slow or broken panel never blanks the page.
@@ -2172,9 +2237,10 @@ never with text: the rebuild cut the visible text across its screens by 69%
   raised a critical, amber for its warnings, grey "Unknown" when the read
   behind it failed. The area's sentence names every system that is failing,
   degraded or unread, and says "Everything ran" only when all were read
-  (`opsSentence`). The subsystem cards (`subCard`, six to a row) carry the
-  state as the icon's tone, a red border when failing, and the first word of
-  the line under the trend.
+  (`opsSentence`). The subsystem cards (`subCard`, six to a row above 1440px,
+  three in the laptop band) carry the state as the icon's tone, a red border
+  when failing, and the first word of the line under the trend; the unit
+  wraps under the figure.
 - **A job's runs are squares in their own state** (`.sq`): ok green, partial
   amber (`.p`), failed red (`.x`), running ember (`.r`), no run yet empty
   (`.e`), newest on the right. Partial and running are never green; neither

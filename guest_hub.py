@@ -1052,6 +1052,7 @@ def followup_one(rid, now=None, db_path=DB_PATH, deadline=None) -> dict:
     guest_followups row is claimed before the send). Nothing before
     FOLLOWUP_HOUR or outside the guest sending hours."""
     import guest_marketing as gm
+    import models
     import notify
     settings = followup_settings(rid, db_path=db_path)
     if not settings["enabled"]:
@@ -1061,6 +1062,11 @@ def followup_one(rid, now=None, db_path=DB_PATH, deadline=None) -> dict:
         return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1}
     yday = (local.date() - timedelta(days=1)).isoformat()
     restaurant = _restaurant(rid, db_path)
+    # The one service rule (models.in_service): a paused, churned or
+    # cancelled restaurant texts nobody — its guests were thanked from
+    # Cavnar AI's number at its cost (admin audit 10/27/26 F4).
+    if not restaurant or not models.in_service(restaurant):
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1}
     body = followup_text(restaurant, settings["message"], settings["review_link"])
     conn = get_conn(db_path)
     try:
@@ -1110,10 +1116,13 @@ def run_followups(db_path=DB_PATH, now=None) -> dict:
     """The scheduled pass: every restaurant with the thank-you on. Bounded
     by FOLLOWUP_PASS_SECONDS; a restaurant cut short is finished by the next
     pass (its claimed rows are skipped, its unclaimed ones remain)."""
+    import models
     conn = get_conn(db_path)
     try:
-        rids = [r[0] for r in conn.execute("SELECT restaurant_id FROM guest_followup_settings WHERE enabled=1 "
-                                           "ORDER BY restaurant_id").fetchall()]
+        rids = [r[0] for r in conn.execute(
+            "SELECT s.restaurant_id FROM guest_followup_settings s JOIN restaurants r ON r.id = s.restaurant_id "
+            "WHERE s.enabled=1 AND " + models.in_service_sql("r.billing_status")
+            + " ORDER BY s.restaurant_id").fetchall()]
     finally:
         conn.close()
     deadline = time.monotonic() + FOLLOWUP_PASS_SECONDS
@@ -1411,6 +1420,7 @@ def run_pos_guest_match(db_path=DB_PATH, day=None, max_seconds=None) -> dict:
     Bounded and resumable (CLAUDE.md): a wall-clock bound
     (GUEST_POS_MATCH_MAX_SECONDS) and a cursor in job_cursors, so a pass cut
     short starts the next night where it stopped."""
+    import models
     out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
     deadline = time.monotonic() + float(GUEST_MATCH_MAX_SECONDS if max_seconds is None else max_seconds)
     conn = get_conn(db_path)
@@ -1419,7 +1429,10 @@ def run_pos_guest_match(db_path=DB_PATH, day=None, max_seconds=None) -> dict:
             "SELECT id FROM restaurants WHERE COALESCE(pos_guest_match,0)=1 "
             "AND (COALESCE(rpower_token,'') <> '' OR rpower_credential_id IS NOT NULL) "
             "AND COALESCE(rpower_store_mid,'') <> '' "
-            "AND COALESCE(billing_status,'') NOT IN ('cancelled','internal') ORDER BY id").fetchall()]
+            # The one service rule (F4): the literal list missed churned,
+            # paused and 'canceled'. 'internal' stays out as before.
+            "AND " + models.in_service_sql("billing_status") + " "
+            "AND LOWER(TRIM(COALESCE(billing_status,''))) <> 'internal' ORDER BY id").fetchall()]
     finally:
         conn.close()
     start = _match_cursor(db_path)

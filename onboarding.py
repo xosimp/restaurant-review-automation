@@ -733,6 +733,10 @@ STAGES = (("contract", "Contract", ("contract",)),
           ("pos", "POS connected", ("pos_bound", "pos_first_data")),
           ("history", "History loading", ("pos_history", "dsr_history")),
           ("setup", "Setup to confirm", None),
+          # Every staged step done, others still open — voice, first reply,
+          # billing (admin audit 10/27/26 K-15): such a store read "Live"
+          # beside the same tab listing it unfinished, and was never stuck.
+          ("finishing", "Finishing setup", "rest"),
           ("live", "Live", ()))
 
 
@@ -741,7 +745,9 @@ def stage_of(steps) -> str:
     for key, _label, keys in STAGES:
         if key == "live":
             return "live"
-        if keys is None:
+        if keys == "rest":
+            pending = [s for s in steps if not s.get("done")]
+        elif keys is None:
             pending = [s for s in steps if (s["key"].startswith("setup:") or s["key"] == "checklists") and not s["done"]]
         else:
             pending = [by[k] for k in keys if k in by and not by[k]["done"]]

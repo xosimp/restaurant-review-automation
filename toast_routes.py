@@ -86,6 +86,7 @@ def save_toast_credentials(restaurant_id, current_user):
 
 @toast_bp.route("/admin/toast/sync/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events.audited("pos.toast.sync_started")
 def sync_toast(restaurant_id, current_user):
     """
     Kick off a background sync so the admin doesn't have to wait ~30s.

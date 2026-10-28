@@ -158,19 +158,23 @@ def test_a_switch_to_another_owners_location_is_refused(real_app, world):
 # ── the rollout console (rollout.py) ─────────────────────────────────────────
 
 def test_an_admin_sets_a_rollout_and_it_is_audited(real_app, world):
+    # A feature rollout.FEATURES knows: an unknown name is refused since the
+    # admin audit (10/27/26 F8), so the probe flag this used is no longer
+    # accepted.
     admin = real_app.client("admin")
-    r = admin.post("/admin/api/rollout", json={"feature": "real_app_probe", "percent": 25, "allow": [world["rid"]]})
+    r = admin.post("/admin/api/rollout", json={"feature": "stale_tab_reload", "percent": 25,
+                                               "allow": [world["rid"]]})
     assert r.status == 200 and r.json["flag"]["percent"] == 25, r
-    assert real_app.call("rollout.enabled", "real_app_probe", world["rid"]) is True
+    assert real_app.call("rollout.enabled", "stale_tab_reload", world["rid"]) is True
     events = _events(real_app, "rollout.set")
-    assert events and events[-1]["target"] == "rollout:real_app_probe" and events[-1]["result"] == "ok"
+    assert events and events[-1]["target"] == "rollout:stale_tab_reload" and events[-1]["result"] == "ok"
     listed = admin.get("/admin/api/rollout").json["flags"]
-    assert [f["feature"] for f in listed] == ["real_app_probe"]
+    assert [f["feature"] for f in listed] == ["stale_tab_reload"]
 
 
 def test_support_cannot_set_a_rollout(real_app, world):
     support = real_app.client("support")
-    assert support.post("/admin/api/rollout", json={"feature": "real_app_probe", "percent": 100}).status == 403
+    assert support.post("/admin/api/rollout", json={"feature": "stale_tab_reload", "percent": 100}).status == 403
     assert support.get("/admin/api/rollout").status == 200
 
 
