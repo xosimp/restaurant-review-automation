@@ -7,7 +7,7 @@
   "https://sports.yahoo.com/articles/chicago-bulls-receive-three-national-221504308.html",
   "https://www.sportsmediawatch.com/tv-schedules/nba-tv-schedule/chicago-bulls/"
  ],
- "fetched": "2026-10-26",
+ "fetched": "2026-10-28",
  "series": {
   "slug": "nba-chicago-bulls",
   "name": "Chicago Bulls",
@@ -141,7 +141,8 @@
    "opponent": "Boston Celtics",
    "venue": "TD Garden",
    "broadcast": "CHSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 99-134"
   },
   {
    "external_id": "401909886",

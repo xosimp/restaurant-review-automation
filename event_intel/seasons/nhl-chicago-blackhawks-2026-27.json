@@ -4,7 +4,7 @@
   "https://www.nhl.com/blackhawks/schedule",
   "https://api-web.nhle.com/v1/club-schedule-season/CHI/20262027"
  ],
- "fetched": "2026-10-26",
+ "fetched": "2026-10-28",
  "series": {
   "slug": "nhl-chicago-blackhawks",
   "name": "Chicago Blackhawks",
@@ -229,7 +229,8 @@
    "opponent": "Los Angeles Kings",
    "venue": "United Center",
    "broadcast": "CHSN, ABTV",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 2-1"
   },
   {
    "external_id": "2026020203",
