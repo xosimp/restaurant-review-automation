@@ -683,6 +683,10 @@ def _records_cached():
         with _collecting() as bucket:
             recs, d = _records()
         meta = _build_meta(bucket)
+        # The raw rows are not kept with the memo (P-07): every payload reads
+        # the records, and the rows held every column of every restaurant
+        # alive for the memo's life — twice while a build replaced it.
+        d.pop("rests", None)
     except BaseException:
         with _fleet_cv:
             _fleet_state["building"] = False
@@ -758,10 +762,32 @@ def _load_everything():
         conn.close()
 
 
+# The fleet build's restaurants read leaves out what no part of it reads
+# and costs the most (admin audit 10/27/26 P-07): the cached forecast blobs
+# (23-30 KB a row — "SELECT *" de-TOASTs them on Postgres, and the memo kept
+# them alive). competitor_intel is read only for whether it is there, so it
+# comes back as that.
+_FLEET_SKIP_COLUMNS = ("weather_hourly_json", "weather_cache_json")
+_FLEET_PRESENCE_COLUMNS = ("competitor_intel",)
+
+
+def _fleet_restaurant_columns(conn):
+    """The select list for the fleet's restaurants read, or '*' when the
+    table's columns cannot be listed."""
+    cols = _columns(conn, "restaurants")
+    if not cols or "id" not in cols:
+        return "*"
+    keep = sorted(c for c in cols if c not in _FLEET_SKIP_COLUMNS and c not in _FLEET_PRESENCE_COLUMNS)
+    flags = [f'(CASE WHEN "{c}" IS NOT NULL AND "{c}" <> \'\' THEN 1 ELSE 0 END) AS "{c}"'
+             for c in _FLEET_PRESENCE_COLUMNS if c in cols]
+    return ", ".join([f'"{c}"' for c in keep] + flags)
+
+
 def _load_with(conn):
     w = _windows()
     ct_now = _now_ct()
-    rests = _rows_dict(conn, "SELECT * FROM restaurants ORDER BY id", label="restaurants")
+    rests = _rows_dict(conn, f"SELECT {_fleet_restaurant_columns(conn)} FROM restaurants ORDER BY id",
+                       label="restaurants")
     users = _rows_dict(conn, "SELECT id, restaurant_id, username, email, role, is_admin, is_active, created_at, "
                              "last_login FROM users", label="users")
     by_rid = {}

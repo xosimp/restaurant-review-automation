@@ -570,3 +570,23 @@ def test_p06_connected_provider_for_reads_the_row_in_hand(db_path):
     assert pos.connected_provider_for({"id": rid}) == (None, None)
     from dsr import pipeline
     assert "connected_provider_for(r)" in open(pipeline.__file__).read()
+
+
+# ── P-07: the fleet read leaves the forecast blobs out; the memo keeps no rows
+
+def test_p07_the_fleet_read_is_an_explicit_column_list(db_path):
+    from flask import Flask
+    rid = _rest(db_path, "Weather Grill", billing_status="active")
+    _sql(db_path, "UPDATE restaurants SET weather_hourly_json=?, weather_cache_json=?, competitor_intel=? WHERE id=?",
+         ("[" + "1," * 5000 + "1]", "{}", json.dumps({"rivals": ["x"]}), rid))
+    d = admin_ops._load_everything()
+    row = next(r for r in d["rests"] if r["id"] == rid)
+    assert "weather_hourly_json" not in row and "weather_cache_json" not in row
+    assert row["competitor_intel"] == 1 and "google_place_id" in row and "billing_status" in row
+    rec = next(r for r in admin_ops.clients()["clients"] if r["id"] == rid)
+    assert next(m for m in rec["modules"] if m["key"] == "intel")["receiving"] is True
+    admin_ops.invalidate_fleet_cache()
+    with Flask(__name__).test_request_context("/admin/api/clients"):
+        admin_ops.clients()
+        assert "rests" not in admin_ops._fleet_state["memo"]["d"]
+    admin_ops.invalidate_fleet_cache()
