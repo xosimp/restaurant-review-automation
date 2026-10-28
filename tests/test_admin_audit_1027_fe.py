@@ -151,7 +151,7 @@ def test_a_filter_reads_the_light_row_route_newest_answer_only_and_fails_honestl
     })();
     """
     out = _node(js)
-    assert "dr-pulse" in out["reading"] and "from the whole log" in out["reading"]   # the house pulse while it reads
+    assert "dr-pulse" in out["reading"] and "from the log" in out["reading"]   # the house pulse while it reads
     assert out["drawn"].startswith("<table 200>")                                    # the older, slower answer is dropped
     assert "The newest 200 that match" in out["drawn"] and out["n"] == "200+"
     assert "Couldn't read the undeliverable emails — Not found" in out["bad"] and "<table" not in out["bad"]
@@ -166,6 +166,21 @@ def test_email_and_push_filters_call_the_contract_routes():
     assert "d.rows.filter(" not in ops_em and "d.pushes.filter(" not in ops_push
     assert "if(_ef !== 'all') emRowsLoad();" in ops_em and "if(_nf === 'failed') pushRowsLoad();" in ops_push
     assert "(d.by_type || []).map(x => x.email_type)" in ops_em   # every type sent in 7 days is offered
+
+
+def test_an_empty_filter_names_the_routes_window_not_the_whole_log():
+    # The row routes read the last 30 days (`window`); an empty answer says
+    # so, never "in the log" — 9/22's failed sends sit outside it on 10/28.
+    js = _js(("filteredRows", "readErr", "pulse"), ("STALE", "_rowSeq")) + r"""
+    function api(){ return Promise.resolve({ok: true, rows: [], limit: 200, window: 'last 30 days'}); }
+    mk('em-rows'); mk('em-n');
+    filteredRows('em', 'em-rows', 'em-n', '/x', 'the undeliverable emails', function(x){ return x.rows; },
+                 function(rows, win){ return 'No undeliverable email in the ' + (win || 'log') + '.'; }).then(function(){
+      console.log(JSON.stringify(_els['em-rows'].innerHTML));
+    });
+    """
+    assert _node(js) == "No undeliverable email in the last 30 days."
+    assert "(win || 'log')" in _fn("emRowsLoad") and "(win || 'log')" in _fn("pushRowsLoad")
 
 
 # ── O9: stale data sources, and the fleet list's Data column ────────────────

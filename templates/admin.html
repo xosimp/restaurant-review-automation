@@ -3392,7 +3392,7 @@ var _rowSeq = {};
 function filteredRows(key, elId, countId, path, label, pick, draw, still){
   var mine = _rowSeq[key] = (_rowSeq[key] || 0) + 1, el = $(elId);
   if(!el) return Promise.resolve();
-  el.innerHTML = '<div style="padding:14px 18px">' + pulse('Reading ' + label, 'from the whole log') + '</div>';
+  el.innerHTML = '<div style="padding:14px 18px">' + pulse('Reading ' + label, 'from the log') + '</div>';
   return api(path).then(null, function(e){
     if(e && e.message === STALE) return null;
     return {ok: false, _status: 0, error: "Couldn't reach the server (" + ((e && e.message) || e) + ')'};
@@ -3403,13 +3403,13 @@ function filteredRows(key, elId, countId, path, label, pick, draw, still){
     if(err){ box.innerHTML = '<div class="warnline" role="status">' + ico('alert', 'xs') + " Couldn't read " + esc(label) + ' — ' + esc(err) + '. No sample is shown in its place; refresh to try again.</div>'; return; }
     rows = pick(x) || []; lim = +x.limit || 200; capped = rows.length >= lim;
     n = $(countId); if(n) n.textContent = fmtN(rows.length) + (capped ? '+' : '');
-    box.innerHTML = draw(rows) + (capped ? '<div class="dim" style="padding:8px 2px">The newest ' + fmtN(lim) + ' that match — the log holds more.</div>' : '');
+    box.innerHTML = draw(rows, x.window) + (capped ? '<div class="dim" style="padding:8px 2px">The newest ' + fmtN(lim) + ' that match — the log holds more.</div>' : '');
   });
 }
 function emRowsLoad(){
   var f = _ef, what = f === 'failed' ? 'undeliverable' : f;
   return filteredRows('em', 'em-rows', 'em-n', '/admin/api/emails/rows?' + (f === 'failed' ? 'status=undeliverable' : 'type=' + encodeURIComponent(f)) + '&limit=200',
-    'the ' + what + ' emails', function(x){ return x.rows; }, function(rows){ return emTable(rows, 'No ' + what + ' email in the log.'); },
+    'the ' + what + ' emails', function(x){ return x.rows; }, function(rows, win){ return emTable(rows, 'No ' + what + ' email in the ' + (win || 'log') + '.'); },
     function(){ return _ef === f; });
 }
 // Suppressions (#45, #101): scope, reason, and whether it is an operator
@@ -3518,7 +3518,7 @@ function pushTable(rows, empty){
 // Push "Failed" over the whole delivery log (P-11; filteredRows above).
 function pushRowsLoad(){
   return filteredRows('push', 'push-rows', 'push-n', '/admin/api/notifications/pushes?status=failed&limit=200', 'the failed pushes',
-    function(x){ return x.pushes; }, function(rows){ return pushTable(rows, 'No failed push in the log.'); }, function(){ return _nf === 'failed'; });
+    function(x){ return x.pushes; }, function(rows, win){ return pushTable(rows, 'No failed push in the ' + (win || 'log') + '.'); }, function(){ return _nf === 'failed'; });
 }
 
 // AI: every call in ai_usage — the vendors (Claude, Perplexity, Google
