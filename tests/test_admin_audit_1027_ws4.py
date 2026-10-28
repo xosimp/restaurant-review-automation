@@ -134,7 +134,8 @@ def test_the_overview_watch_tiles_that_repeated_figures_are_gone():
     strip = ov[ov.index('<section class="card strip">'):]
     strip = strip[:strip.index("</section>")]
     assert strip.count("stripCell(") == 3
-    for kept in ("'Support queue'", "'AI spend'", "'API latency'"):
+    # The AI cell counts every vendor, Places included: "AI & data APIs" (round 2, C10).
+    for kept in ("'Support queue'", "'AI &amp; data APIs'", "'API latency'"):
         assert kept in strip, kept
     # One critical count: the Needs you badge beside its list, not the sentence too.
     assert "' critical'" not in ov.split("const sentence")[1].split(";")[0]

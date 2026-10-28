@@ -1039,8 +1039,9 @@ function menuFilter(inp){ const q = inp.value.trim().toLowerCase(); inp.closest(
 
 // ── Overview ────────────────────────────────────────────────────────────────
 // What needs me, what changed, what is growing — ranked: four hero figures,
-// a three-cell strip of what the ring doesn't carry (the support queue, AI
-// spend, API latency), then the things to act on. Each figure is shown once:
+// a three-cell strip of what the ring doesn't carry (the support queue, AI &
+// data APIs — every vendor, Places included, C10 — and API latency), then the
+// things to act on. Each figure is shown once:
 // the watch row that repeated the ring, the legend and the issue list went
 // (admin audit 10/27/26 V03). The sentence at the top is written by rules
 // from the same payload (no model on load).
@@ -1247,7 +1248,7 @@ async function overview(){
     </section>
     <section class="card strip">
       ${stripCell('#customers/support', 'inbox', fleetErr?'neu':(cu.total?'warn':'good'), 'Support queue', fleetErr?unknownV(fleetErr):fmtN(cu.total||0), older48 ? older48 + (d.issues_truncated?'+':'') + ' older than 48h' : 'nothing aging')}
-      ${stripCell('#operations/ai', 'dollar', 'neu', 'AI spend', figOr(d, ['ai_usage'], fmtUSD(k.ai_cost_today,2)), `<span class="n">${fmtN(k.ai_calls_today)}</span> calls today`)}
+      ${stripCell('#operations/ai', 'dollar', 'neu', 'AI &amp; data APIs', figOr(d, ['ai_usage'], fmtUSD(k.ai_cost_today,2)), `<span class="n">${fmtN(k.ai_calls_today)}</span> calls · ${esc(k.ai_today_label || 'today')}`)}
       ${stripCell('#engineering', 'gauge', 'neu', 'API latency', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.p95_ms==null ? 'no traffic · ' + esc(k.api_window_label||'last 5 minutes') : 'p95 · ' + esc(k.api_window_label||'last 5 minutes'))}
     </section>
     <section class="split">
@@ -2041,6 +2042,9 @@ async function clientView(id, qs){
   if(b.signed_at) bits.push(`signed ${fmtD(b.signed_at)}`);
   if(b.converted_at) bits.push(`paying since ${fmtD(b.converted_at)}`);
   const act = c.activity || {}, actTitle = ['sign_in','console_login','session','web_tab'].filter(k=>act[k]).map(k=>k.replace('_',' ') + ' ' + fmtDT(act[k])).join(' · ');
+  // AI spend is said once on Messages & AI → AI (admin audit 10/27/26, V09):
+  // that tab's own strip (calls, cost, the week, failures) keeps the tab
+  // self-explanatory, so the header's "AI · 30 days" cell steps aside there.
   const tabs = [['overview','Overview',c.issues.length,crit?'bad':'warn'],['billing','Billing',(b.status==='past_due'||b.status==='paused')?'!':'', 'bad'],['data','Data &amp; integrations',intErr,'bad'],['messages','Messages &amp; AI'],['access','Access &amp; activity',del?'!':errs,'bad'],['support','Support']];
   const hdr = `
     <div style="display:flex;align-items:center;gap:8px;font-size:12.5px" class="muted"><a href="#customers/restaurants" style="color:var(--ink4)">Customers</a>${ico('chev','xs')}${c.brand!==c.name?`<a href="#locations?brand=${encodeURIComponent(c.brand)}" style="color:var(--ink4)">${esc(c.brand)}</a>${ico('chev','xs')}`:''}<span class="ink2">${esc(c.name)}</span><span style="margin-left:auto">${asOf(d)}</span></div>
@@ -2063,7 +2067,7 @@ async function clientView(id, qs){
     <section class="card strip">
       ${stripDiv('Reviews awaiting', fmtN(c.reviews.awaiting), c.reviews.urgent_stale ? c.reviews.urgent_stale+' urgent · 48h+' : (c.reviews.stalled ? '<span style="color:var(--amber-t)">'+c.reviews.stalled+' stuck after AI failures</span>' : fmtN(c.reviews.draft_ready)+' drafted · '+fmtN(c.reviews.no_draft)+' not yet'), c.reviews.urgent_stale?'color:var(--red-t)':'')}
       ${stripDiv('Churn risk', churn.scored === false ? '—' : esc((churn.level||'—').replace(/^./,x=>x.toUpperCase())), churn.scored === false ? 'scored for paying accounts only' : esc((churn.reasons||[])[0]||'no risk signals') + (churn.days_at_level ? ' · ' + churn.days_at_level + 'd' : ''), churn.level==='high'?'color:var(--red-t)':churn.level==='medium'?'color:var(--amber-t)':'')}
-      ${stripDiv('AI · 30 days', figOr(d, ['ai_usage'], fmtUSD(c.ai.cost_30d,2)), fmtN(c.ai.calls_30d)+' calls · '+fmtN(c.ai.failed_30d)+' failed')}
+      ${tab === 'messages' && _cmsg === 'ai' ? '' : stripDiv('AI · 30 days', figOr(d, ['ai_usage'], fmtUSD(c.ai.cost_30d,2)), fmtN(c.ai.calls_30d)+' calls · '+fmtN(c.ai.failed_30d)+' failed')}
       ${stripDiv('Alerts · 7 days', fmtN(c.alerts_7d), c.alert_cap ? 'capped at '+c.alert_cap+'/day' : 'no daily cap')}
     </section>
     ${tabsNav('client/'+c.id+'?tab=', tabs, tab).replace(/#client\/(\d+)\?tab=\//g, '#client/$1?tab=')}`;

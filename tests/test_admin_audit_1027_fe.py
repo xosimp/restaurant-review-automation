@@ -365,3 +365,25 @@ def test_the_duplicated_helpers_are_one_each():
     assert out["pct"] == ["12.3%", "—", "100%"]
     assert out["words"] == ["just now", "28d ago", "—", "3h ago"]
     assert out["key"] == "2026-09-05" and out["event"] == "10/28/26" and out["none"] == "—"
+
+
+# ── C10, V09: labels that say what they count, a figure said once ───────────
+
+def test_the_overview_ai_cell_says_every_vendor_and_the_client_ai_tab_says_spend_once():
+    ov = _fn("overview")
+    strip = ov[ov.index('<section class="card strip">'):]
+    strip = strip[:strip.index("</section>")]
+    assert "'AI &amp; data APIs'" in strip and "'AI spend'" not in strip
+    assert "k.ai_today_label" in strip                         # "since midnight Central", the server's window
+    cv = _fn("clientView")
+    assert "tab === 'messages' && _cmsg === 'ai' ? '' : stripDiv('AI · 30 days'" in cv
+    assert "stripDiv('Cost · 30 days'" in _fn("cMessages")     # the tab keeps its own strip
+
+
+def test_the_page_keeps_no_heartbeat_tiers_of_its_own():
+    # C10: the heartbeat's stale minutes come from the server (round 1, W2):
+    # the Jobs card shows heartbeat.stale_after_minutes and judges by its flags.
+    jobs = _fn("opsJobs")
+    assert "durMin(h.stale_after_minutes)" in jobs and "h.stale" in jobs
+    for literal in ("> 15", ">= 15", "> 60", ">= 60"):
+        assert literal not in jobs and literal not in _fn("railHealth") and literal not in _fn("engSched"), literal
