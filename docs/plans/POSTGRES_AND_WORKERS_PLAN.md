@@ -173,7 +173,10 @@ Tests: `tests/test_ws10_pool_sizing.py`.
 Per process BY DESIGN, unchanged (each guards that process's own request
 threads): `ASK_MAX_CONCURRENT`, `ai_utils._INTERACTIVE_SLOTS`
 (`INTERACTIVE_AI_SLOTS`), `admin_ops.heavy_slot` (`ADMIN_HEAVY_CONCURRENCY`
-— a heavy admin read on a request thread).
+— a heavy admin read on a request thread), and since 10/28/26 the admin
+console's read cap (`ADMIN_READ_CONCURRENCY`, default 2 — the console's
+heavy GET reads at once on this process's request threads, admin audit #26
+P-05).
 
 **Still blocking `--workers 2`** (not done this round): the PlatformSupervisor
 elects nothing (two SLA checks and two telemetry flushes every five minutes —
