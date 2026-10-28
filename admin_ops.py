@@ -5930,71 +5930,110 @@ def _digits_sql(col):
     return expr
 
 
+# What a restaurant can be found by exactly, strongest first (#63).
+_SEARCH_EXACT_FIELDS = (("google_place_id", "Google Place ID"), ("docusign_envelope_id", "DocuSign envelope"),
+                        ("stripe_customer_id", "Stripe customer"), ("toast_restaurant_guid", "Toast restaurant"),
+                        ("square_location_id", "Square location"), ("clover_merchant_id", "Clover merchant"),
+                        ("rpower_store_mid", "RPOWER store"), ("gmb_location_id", "Business Profile location"))
+SEARCH_MAX_RESULTS = 40
+# One scale for every way a restaurant matches: the exact ids, a Stripe
+# subscription, the phones, then a name — a row is listed once, by its best.
+_SEARCH_RANK = {"restaurant id": 0, **{label: i + 1 for i, (_c, label) in enumerate(_SEARCH_EXACT_FIELDS)},
+                "Stripe subscription": 20, "owner phone": 21, "alert contact phone": 22, "name or owner": 23}
+
+
 def search(q):
     """Restaurants and logins by name, email, phone (digits only, the last
     ten), Google Place ID, DocuSign envelope, Stripe customer or subscription,
     and POS identifiers — each result says what matched (#63). A number is
-    matched EXACTLY against restaurant and login ids, labelled apart."""
+    matched EXACTLY against restaurant and login ids, labelled apart.
+
+    One statement over restaurants (admin audit 10/27/26 P-17): it was about
+    fifteen per keystroke — eight `col = ? OR col LIKE ?` lookups, the phone
+    and the name scans each reading the whole restaurants heap — and now
+    every way a row can match is one CASE, the strongest labelled, best
+    first, over an explicit narrow column list. A prefix match on an
+    identifier needs six characters; the Stripe subscription is looked up
+    only for a `sub_` id; logins are one statement."""
     q = (q or "").strip()
     if len(q) < 2:
         return {"ok": True, "results": []}
     like = f"%{q}%"
     digits = _DIGITS.sub("", q)
-    res = []
+    is_id = bool(digits) and digits == q and digits.isdigit()
+    tail = digits[-10:] if len(digits) >= 7 else None
+    res, cands = [], []
     with _collecting() as bucket:
         conn = get_conn()
         try:
             rcols = _columns(conn, "restaurants")
-            exact_fields = [("google_place_id", "Google Place ID"), ("docusign_envelope_id", "DocuSign envelope"),
-                            ("stripe_customer_id", "Stripe customer"), ("toast_restaurant_guid", "Toast restaurant"),
-                            ("square_location_id", "Square location"), ("clover_merchant_id", "Clover merchant"),
-                            ("rpower_store_mid", "RPOWER store"), ("gmb_location_id", "Business Profile location")]
-            exact_fields = [(c, l) for c, l in exact_fields if c in rcols]
-            seen = set()
-
-            def add_loc(r, match, how):
-                if r["id"] in seen:         # one row per restaurant: its strongest match
-                    return
-                seen.add(r["id"])
-                res.append({"type": "location", "id": r["id"], "title": r["name"], "match": match, "match_how": how,
-                            "sub": " · ".join(x for x in [r.get("location_group"), r.get("location_name"), r.get("neighborhood")] if x) or r.get("owner_email")})
-
-            base = "SELECT id, name, location_group, location_name, neighborhood, owner_email FROM restaurants"
-            if digits and digits == q.strip() and digits.isdigit():
-                for r in _rows_dict(conn, f"{base} WHERE id = ?", (int(digits),)):
-                    add_loc(r, "restaurant id", "exact")
-            for c, label in exact_fields:
-                for r in _rows_dict(conn, f"{base} WHERE {c} = ? OR ({c} LIKE ? AND LENGTH(?) >= 6) LIMIT 10",
-                                    (q, f"{q}%", q)):
-                    add_loc(r, label, "exact")
-            if len(digits) >= 7:
-                tail = digits[-10:]
-                for r in _rows_dict(conn, f"{base} WHERE {_digits_sql('owner_phone')} LIKE ? LIMIT 10", (f"%{tail}",)):
-                    add_loc(r, "owner phone", "digits")
+            # (condition, args, match, how) — the CASE's order is the strength.
+            ways = []
+            if is_id:
+                ways.append(("id = ?", [int(digits)], "restaurant id", "exact"))
+            for c, label in _SEARCH_EXACT_FIELDS:
+                if c not in rcols:
+                    continue
+                if len(q) >= 6:
+                    ways.append((f"({c} = ? OR {c} LIKE ?)", [q, f"{q}%"], label, "exact"))
+                else:
+                    ways.append((f"{c} = ?", [q], label, "exact"))
+            if tail:
+                ways.append((f"{_digits_sql('owner_phone')} LIKE ?", [f"%{tail}"], "owner phone", "digits"))
+            ways.append(("(name LIKE ? OR location_group LIKE ? OR location_name LIKE ? OR neighborhood LIKE ? "
+                         "OR owner_email LIKE ? OR owner_name LIKE ?)", [like] * 6, "name or owner", "contains"))
+            case = "CASE " + " ".join(f"WHEN {cond} THEN {i}" for i, (cond, _a, _m, _h) in enumerate(ways)) + " END"
+            args = [a for _c, w_args, _m, _h in ways for a in w_args]
+            for r in _rows_dict(conn, "SELECT id, name, location_group, location_name, neighborhood, owner_email, rk "
+                                      "FROM (SELECT id, name, location_group, location_name, neighborhood, "
+                                      f"owner_email, {case} AS rk FROM restaurants) t WHERE rk IS NOT NULL "
+                                      "ORDER BY rk, name LIMIT ?", tuple(args) + (SEARCH_MAX_RESULTS,),
+                                label="restaurants"):
+                _m, how = ways[int(r["rk"])][2], ways[int(r["rk"])][3]
+                cands.append((_SEARCH_RANK[_m], r, _m, how))
+            if q.startswith("sub_"):
+                for r in _rows_dict(conn, "SELECT s.restaurant_id AS id, r.name, r.location_group, r.location_name, "
+                                          "r.neighborhood, r.owner_email FROM stripe_subscriptions s JOIN restaurants r "
+                                          "ON r.id=s.restaurant_id WHERE s.subscription_id = ? LIMIT 5", (q,),
+                                    optional=True):
+                    cands.append((_SEARCH_RANK["Stripe subscription"], r, "Stripe subscription", "exact"))
+            if tail:
                 for r in _rows_dict(conn, "SELECT r.id, r.name, r.location_group, r.location_name, r.neighborhood, "
                                           f"r.owner_email FROM alert_contacts c JOIN restaurants r ON r.id=c.restaurant_id "
                                           f"WHERE {_digits_sql('c.phone')} LIKE ? LIMIT 10", (f"%{tail}",)):
-                    add_loc(r, "alert contact phone", "digits")
-            for r in _rows_dict(conn, f"{base} WHERE name LIKE ? OR location_group LIKE ? OR location_name LIKE ? "
-                                      "OR neighborhood LIKE ? OR owner_email LIKE ? OR owner_name LIKE ? LIMIT 20",
-                                (like, like, like, like, like, like)):
-                add_loc(r, "name or owner", "contains")
-            subs = _rows_dict(conn, "SELECT s.restaurant_id AS id, r.name, r.location_group, r.location_name, "
-                                    "r.neighborhood, r.owner_email FROM stripe_subscriptions s JOIN restaurants r "
-                                    "ON r.id=s.restaurant_id WHERE s.subscription_id = ? LIMIT 5", (q,),
-                              optional=True)
-            for r in subs:
-                add_loc(r, "Stripe subscription", "exact")
-            if digits and digits == q.strip() and digits.isdigit():
-                for u in _rows_dict(conn, "SELECT u.id, u.username, u.email, u.role, u.restaurant_id, r.name FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id WHERE u.id = ?", (int(digits),)):
-                    res.append({"type": "owner" if u["role"] in ("client", "owner") else "login", "id": u["restaurant_id"], "user_id": u["id"], "title": u["username"], "match": "login id", "match_how": "exact", "sub": f"{u['email']} · {u['name'] or 'no restaurant'} · {u['role']}"})
-            for u in _rows_dict(conn, "SELECT u.id, u.username, u.email, u.role, u.restaurant_id, r.name FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id WHERE u.username LIKE ? OR u.email LIKE ? LIMIT 20", (like, like)):
-                res.append({"type": "owner" if u["role"] in ("client", "owner") else "login", "id": u["restaurant_id"], "user_id": u["id"], "title": u["username"], "match": "login name or email", "match_how": "contains", "sub": f"{u['email']} · {u['name'] or 'no restaurant'} · {u['role']}"})
-            for g in _rows_dict(conn, "SELECT location_group AS g, COUNT(*) AS n FROM restaurants WHERE location_group LIKE ? GROUP BY location_group LIMIT 10", (like,)):
-                res.append({"type": "brand", "id": None, "title": g["g"], "match": "brand", "match_how": "contains", "sub": f"{g['n']} locations"})
+                    cands.append((_SEARCH_RANK["alert contact phone"], r, "alert contact phone", "digits"))
+            users = _rows_dict(conn, "SELECT u.id, u.username, u.email, u.role, u.restaurant_id, r.name, "
+                                     + ("CASE WHEN u.id = ? THEN 0 ELSE 1 END" if is_id else "1") + " AS rk "
+                                     "FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id WHERE "
+                                     + ("u.id = ? OR " if is_id else "") + "u.username LIKE ? OR u.email LIKE ? "
+                                     "ORDER BY rk, u.id LIMIT 20",
+                               ((int(digits), int(digits)) if is_id else ()) + (like, like), label="users")
+            brands = _rows_dict(conn, "SELECT location_group AS g, COUNT(*) AS n FROM restaurants WHERE location_group "
+                                      "LIKE ? GROUP BY location_group LIMIT 10", (like,))
         finally:
             conn.close()
-    return {"ok": True, "results": res[:40], **_merge_problems(bucket)}
+    seen = set()
+    for _rank, r, match, how in sorted(cands, key=lambda c: (c[0], str(c[1].get("name") or "").lower())):
+        if r["id"] in seen:         # one row per restaurant: its strongest match
+            continue
+        seen.add(r["id"])
+        res.append({"type": "location", "id": r["id"], "title": r["name"], "match": match, "match_how": how,
+                    "sub": " · ".join(x for x in [r.get("location_group"), r.get("location_name"),
+                                                 r.get("neighborhood")] if x) or r.get("owner_email")})
+    seen_users = set()
+    for u in users:
+        if u["id"] in seen_users:
+            continue
+        seen_users.add(u["id"])
+        exact = is_id and int(u["rk"] or 1) == 0
+        res.append({"type": "owner" if u["role"] in ("client", "owner") else "login", "id": u["restaurant_id"],
+                    "user_id": u["id"], "title": u["username"], "match": "login id" if exact else "login name or email",
+                    "match_how": "exact" if exact else "contains",
+                    "sub": f"{u['email']} · {u['name'] or 'no restaurant'} · {u['role']}"})
+    for g in brands:
+        res.append({"type": "brand", "id": None, "title": g["g"], "match": "brand", "match_how": "contains",
+                    "sub": f"{g['n']} locations"})
+    return {"ok": True, "results": res[:SEARCH_MAX_RESULTS], **_merge_problems(bucket)}
 
 
 # ── recommendation acceptance (internal only) ────────────────────────────────

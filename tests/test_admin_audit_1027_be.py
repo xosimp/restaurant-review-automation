@@ -456,3 +456,59 @@ def test_p16_churn_risk_states_are_written_in_one_batch_each(db_path, monkeypatc
     assert admin_ops.snapshot_business_metrics()["ok"] == 1
     assert statements and all(kind == "executemany" for kind, _sql in statements), statements
     assert [r["restaurant_id"] for r in _rows(db_path, "SELECT restaurant_id FROM account_risk_state")] == [a]
+
+
+# ── P-17: search is one restaurants statement, ids matched exactly ───────────
+
+def _count_statements(monkeypatch, db_path):
+    seen = []
+    real_get_conn = models.get_conn
+
+    class Spy:
+        def __init__(self, conn):
+            self._c = conn
+
+        def __getattr__(self, k):
+            return getattr(self._c, k)
+
+        def execute(self, sql, *a, **k):
+            if not sql.lstrip().upper().startswith("PRAGMA"):
+                seen.append(" ".join(sql.split()))
+            return self._c.execute(sql, *a, **k)
+    monkeypatch.setattr(admin_ops, "get_conn", lambda *x, **k: Spy(real_get_conn(db_path)))
+    return seen
+
+
+def test_p17_a_keystroke_reads_the_restaurants_once_and_keeps_every_match(db_path, monkeypatch):
+    for i in range(12):
+        _rid(db_path, f"Filler {i}")
+    rid = _rid(db_path, "Search Co", owner_phone="(314) 555-0199", google_place_id="ChIJsearch123",
+               stripe_customer_id="cus_search9999")
+    _x(db_path, "UPDATE restaurants SET rpower_store_mid='MID42', name='Search Co 112' WHERE id=?", (rid,))
+    seen = _count_statements(monkeypatch, db_path)
+    res = admin_ops.search("314-555-0199")["results"]
+    assert next(r for r in res if r["id"] == rid)["match"] == "owner phone"
+    heap = [s for s in seen if "FROM restaurants" in s and "GROUP BY location_group" not in s
+            and "JOIN restaurants" not in s]
+    assert len(heap) == 1, f"one restaurants read per keystroke, not one per field: {heap}"
+    assert all("SELECT *" not in s for s in seen), "an explicit narrow column list"
+    assert len(seen) <= 5, seen
+    for q, match in (("ChIJsearch123", "Google Place ID"), ("ChIJsearch", "Google Place ID"),
+                     ("cus_search9999", "Stripe customer"), ("MID42", "RPOWER store"), ("Search", "name or owner")):
+        hit = next(r for r in admin_ops.search(q)["results"] if r["type"] == "location" and r["id"] == rid)
+        assert hit["match"] == match, q
+    assert not any(r["type"] == "location" and r["id"] == rid and r["match"] == "Google Place ID"
+                   for r in admin_ops.search("ChIJ")["results"]), "an identifier prefix needs six characters"
+
+
+def test_p17_a_number_matches_ids_exactly_and_is_labelled(db_path):
+    for i in range(12):
+        _rid(db_path, f"Filler {i}")
+    target = _rid(db_path, "Twelve Grill")
+    _x(db_path, "UPDATE restaurants SET name='Grill 1' || ? WHERE id=1", (str(target),))
+    res = admin_ops.search(str(target))["results"]
+    locs = [r for r in res if r["type"] == "location"]
+    assert locs[0]["id"] == target and locs[0]["match"] == "restaurant id" and locs[0]["match_how"] == "exact"
+    assert sum(1 for r in locs if r["match"] == "restaurant id") == 1, "id = ?, never id LIKE"
+    other = next((r for r in locs if r["id"] == 1), None)
+    assert other is None or other["match"] == "name or owner"
