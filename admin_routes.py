@@ -428,10 +428,28 @@ def deactivate_client(user_id, current_user):
     row = _login_row(user_id)
     if not row or row["is_admin"]:
         return jsonify(ok=False, error="That login can't be deactivated here."), 404
-    ended = _auth_d.end_login_access(user_id)
+    data = request.get_json(silent=True) or {}
+    principal = (row.get("role") or "client").strip().lower() in ("client", "owner")
+    if principal and row["is_active"] and not data.get("force"):
+        # The last owner login: with it off, view-as and the reset link both
+        # refuse ("no owner login") — role changes had this guard, deactivate
+        # did not (admin audit 10/27/26 F15). {force: true} goes ahead.
+        conn = get_conn()
+        try:
+            others = _auth_d._principal_count(conn, row["restaurant_id"], excluding=user_id)
+        finally:
+            conn.close()
+        if others == 0:
+            return jsonify(ok=False, last_owner=True,
+                           error=f"{row['username']} is the restaurant's only owner login. With it off nobody "
+                                 "can sign in as the owner, view-as and reset links stop working. Confirm to "
+                                 "deactivate it anyway."), 409
+    # Off first, then every session ended: a sign-in landing between the two
+    # used to survive the deactivation (F15).
     conn = get_conn()
     conn.execute("UPDATE users SET is_active=0 WHERE id=? AND is_admin=0", (user_id,))
     conn.commit(); conn.close()
+    ended = _auth_d.end_login_access(user_id)
     _audit_admin_action(current_user, "login_deactivated", restaurant_id=row["restaurant_id"],
                         target={"user_id": user_id, "username": row["username"]},
                         before={"is_active": bool(row["is_active"])}, after={"is_active": False},

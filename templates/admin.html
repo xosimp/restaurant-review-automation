@@ -2388,7 +2388,9 @@ async function revokeAll(uid, username){
 }
 async function deactivateLogin(uid, username, rname){
   if(!confirm('Deactivate ' + username + (rname ? ' at ' + rname : '') + '? Every session they have ends now and their remembered devices are forgotten. You can reactivate the login later.')) return;
-  const d = await post('/admin/deactivate-client/' + uid, {});
+  let d = await post('/admin/deactivate-client/' + uid, {});
+  // The restaurant's only owner login: the server asks first (409 last_owner).
+  if(d && d._status === 409 && d.last_owner){ if(!confirm(d.error)) return; d = await post('/admin/deactivate-client/' + uid, {force: true}); }
   if(say(d, username + ' deactivated — ' + (d.sessions_ended||0) + ' session(s) ended, ' + (d.devices_forgotten||0) + ' remembered device(s) forgotten')){ _clients = null; route(); }
 }
 async function reactivateLogin(uid, username, rname){
