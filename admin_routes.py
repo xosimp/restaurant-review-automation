@@ -7398,27 +7398,11 @@ def admin_api_messaging_health(current_user):
     the inbound webhooks (last verified event, signature failures, stale),
     email delivery over 7 days (bounce and complaint rates — a bounce is not
     a delivery), SMS over 24 hours, the push and webhook outboxes, and the
-    automatic alert-storm caps on today."""
-    import models as _m
-    import notify
-    import push
-    import webhooks
-    conn = _m.get_conn()
-    try:
-        caps = [dict(r) for r in conn.execute(
-            "SELECT c.*, r.name AS restaurant FROM alert_storm_caps c LEFT JOIN restaurants r ON r.id=c.restaurant_id "
-            "WHERE c.until_at > datetime('now') AND c.lifted_at IS NULL ORDER BY c.id DESC").fetchall()]
-    finally:
-        conn.close()
-    return jsonify(ok=True,
-                   problems=notify.messaging_problems(),
-                   inbound_webhooks=_m.inbound_webhook_health(),
-                   email=_m.email_delivery_stats(days=7),
-                   sms=notify.sms_stats(hours=24),
-                   push_outbox=push.outbox_counts(),
-                   webhook_outbox=webhooks.outbox_counts(),
-                   storm_caps=caps,
-                   operator_suppressed=[r for r in _m.get_email_suppressions(limit=1000) if r.get("operator")])
+    automatic alert-storm caps on today. One reading is shared for
+    ADMIN_MESSAGING_HEALTH_TTL_SECONDS (`cached`, `age_seconds` — admin audit
+    10/27/26 P-20: every Operations landing re-ran its seven reads); a part
+    that cannot be read is named in `read_failed`, never a 500 of the whole."""
+    return jsonify(**_admin_ops_c.messaging_health())
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/brief-deliveries")

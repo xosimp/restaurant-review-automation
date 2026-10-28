@@ -618,6 +618,7 @@ Changed by the blind re-audit fix round (10/20/26, R6-F4/F5/F10 — `home_snapsh
 | `ADMIN_HEAVY_CONCURRENCY` | `"1"` | admin_ops.py |
 | `ADMIN_HEAVY_WAIT_SECONDS` | `"2"` | admin_ops.py |
 | `ADMIN_JOB_WORKERS` | `"2"` | admin_routes.py |
+| `ADMIN_MESSAGING_HEALTH_TTL_SECONDS` | `"60"` | admin_ops.py — how long a request thread shares one `/admin/api/messaging/health` reading (0 reads fresh every time; admin audit 10/27/26 P-20) |
 | `ADMIN_OPS_STATE_TTL_SECONDS` | `"60"` | admin_ops.py — how long a request thread shares one `/admin/api/ops/state` reading (0 reads fresh every time) |
 | `ADMIN_PLATFORM_ISSUES_TTL_SECONDS` | `"60"` | admin_ops.py — how long the platform issues are kept with the fleet memo on request threads (P-01) |
 | `ADMIN_READ_CONCURRENCY` | `"2"` | admin_ops.py — heavy console GET reads at once on this process's request threads; past `ADMIN_READ_WAIT_SECONDS` a read is refused 503 busy with `Retry-After` (the rail poll, search, task polls and single-row reads never wait; `0` turns the cap off — admin audit 10/27/26 P-05) |

@@ -539,3 +539,58 @@ def test_p18_paging_back_reaches_every_row_not_the_newest_two_hundred(db_path):
     assert sum(1 for e in got if e["type"] == "activity") == 300, "the Chicago-clock ledger pages too"
     ats = [e["at"] for e in got]
     assert ats == sorted(ats, reverse=True), "newest first across pages"
+
+
+# ── P-19: /admin/api/issues reads the fleet memo, never a whole overview() ───
+
+def test_p19_the_issues_read_builds_no_overview_and_keeps_its_shape(app, db_path, monkeypatch):
+    rid = _rid(db_path, "Issue Grill")
+    _x(db_path, "UPDATE restaurants SET rpower_credential_id=3 WHERE id=?", (rid,))
+    want = admin_ops.overview()
+    monkeypatch.setattr(admin_ops, "overview", lambda: (_ for _ in ()).throw(AssertionError("an overview() build")))
+    out = admin_ops.issues()
+    assert [i["key"] for i in out["issues"]] == [i["key"] for i in want["issues"]]
+    assert out["issues_total"] == want["issues_total"] and out["issue_counts"] == want["issue_counts"]
+    for k in ("generated_at", "cached", "age_seconds", "errors", "query_errors", "unavailable", "windows"):
+        assert k in out, k
+    c, _uid = _admin(app, db_path)
+    d = c.get("/admin/api/issues").get_json()
+    assert d["ok"] and any(i["key"] == f"{rid}:rpower_store_unchosen" for i in d["issues"]) and "resolved" in d
+
+
+# ── P-20: messaging health shared for a minute; integrations reuse webhooks ──
+
+def test_p20_messaging_health_is_one_shared_reading_on_request_threads(app, db_path, monkeypatch):
+    n = []
+    real = admin_ops._messaging_health_build
+    monkeypatch.setattr(admin_ops, "_messaging_health_build", lambda: (n.append(1), real())[1])
+    c, _uid = _admin(app, db_path)
+    a = c.get("/admin/api/messaging/health").get_json()
+    b = c.get("/admin/api/messaging/health").get_json()
+    assert a["ok"] and a["cached"] is False and b["cached"] is True and len(n) == 1
+    assert {"problems", "inbound_webhooks", "email", "sms", "push_outbox", "webhook_outbox", "storm_caps",
+            "operator_suppressed"} <= set(b)
+    admin_ops.messaging_health()
+    admin_ops.messaging_health()
+    assert len(n) == 3, "off a request thread it is read fresh"
+
+
+def test_p20_a_messaging_part_that_fails_is_named_not_a_500_and_not_kept(app, db_path, monkeypatch):
+    import notify
+    monkeypatch.setattr(notify, "sms_stats", lambda **k: (_ for _ in ()).throw(RuntimeError("twilio ledger gone")))
+    c, _uid = _admin(app, db_path)
+    d = c.get("/admin/api/messaging/health").get_json()
+    assert d["ok"] and d["sms"] is None and "sms_stats" in d["read_failed"]
+    assert c.get("/admin/api/messaging/health").get_json()["cached"] is False, "a failed reading is not kept"
+
+
+def test_p20_integration_pages_reuse_one_webhook_reading(app, db_path, monkeypatch):
+    _rid(db_path, "Hook Grill")
+    n = []
+    real = admin_ops._webhook_health
+    monkeypatch.setattr(admin_ops, "_webhook_health", lambda conn: (n.append(1), real(conn))[1])
+    c, _uid = _admin(app, db_path)
+    for f in ("all", "error", "stale", "all"):
+        d = c.get(f"/admin/api/integrations?page=1&f={f}").get_json()
+        assert d["ok"] and "providers" in d["webhooks_inbound"]
+    assert len(n) <= 1, f"computed {len(n)} times for four page or filter clicks"

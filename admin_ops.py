@@ -4020,11 +4020,7 @@ def integrations(f="all", q=None, page=None, per_page=None, include_internal=Non
             if row["state"] == "error" and row["segment"] == "customer":
                 systemic.setdefault(row["label"], 0)
                 systemic[row["label"]] += 1
-        conn = get_conn()
-        try:
-            inbound = _webhook_health(conn)
-        finally:
-            conn.close()
+        inbound = _webhook_health_for(_d)
     customer_rows = [r for r in rows if r["segment"] == "customer"]
     internal_rows = [r for r in rows if r["segment"] != "customer"]
     counts = {k: sum(1 for r in customer_rows if fn(r)) for k, fn in INTEGRATION_FILTERS.items()}
@@ -4047,6 +4043,38 @@ def integrations(f="all", q=None, page=None, per_page=None, include_internal=Non
             "internal_included": bool(include_internal), **paging,
             "systemic": [{"label": k, "failing": v} for k, v in systemic.items() if v >= 2],
             "webhooks_inbound": inbound, **_payload_meta(meta, bucket)}
+
+
+def _webhook_health_for(d):
+    """_webhook_health, reused within the fleet memo's window on a request
+    thread (admin audit 10/27/26 P-20): the Integrations tab recomputed it —
+    a ledger read, the email_log, sms_log and admin_events MAXes, a send
+    count — on every page and filter click. The platform issues' own
+    reading is taken when it is fresh (they read it too), else one is
+    computed and kept on the memo's data for PLATFORM_ISSUES_TTL_SECONDS. A
+    reading with a failed read is not kept. Off a request, always fresh."""
+    def fresh():
+        conn = get_conn()
+        try:
+            return _webhook_health(conn)
+        finally:
+            conn.close()
+    if not _in_request() or PLATFORM_ISSUES_TTL_SECONDS <= 0 or d is None:
+        return fresh()
+    with _platform_lock:
+        now = time.monotonic()
+        plat = d.get("_platform_cache")
+        if plat and now - plat[0] <= PLATFORM_ISSUES_TTL_SECONDS and (plat[2] or {}).get("webhooks"):
+            return plat[2]["webhooks"]
+        hit = d.get("_webhook_cache")
+        if hit and now - hit[0] <= PLATFORM_ISSUES_TTL_SECONDS:
+            return hit[1]
+    with _collecting() as own:      # a failure reaches the caller's scope too (_note_failure)
+        out = fresh()
+    if not own["errors"]:
+        with _platform_lock:
+            d["_webhook_cache"] = (time.monotonic(), out)
+    return out
 
 
 def _utc_since(days):
@@ -5740,15 +5768,17 @@ def _has_cols(conn, table, cols):
 def issues():
     """The Support queue: the open customer and platform issues (the first
     ISSUES_IN_OVERVIEW, as the console has always read them) with the counts
-    of the FULL set per segment. issues_page() pages and filters them all."""
-    ov = overview()
-    # The fleet payload meta every other read carries (C's #36, #47, #89).
-    meta = {k: ov.get(k) for k in ("generated_at", "cached", "age_seconds", "errors", "query_errors",
-                                   "unavailable", "windows")}
-    meta["errors"], meta["unavailable"] = meta["errors"] or [], meta["unavailable"] or []
-    meta["query_errors"] = meta["query_errors"] or meta["errors"]
-    return {"ok": True, "issues": ov["issues"], "issues_total": ov["issues_total"],
-            "issue_counts": ov["issue_counts"], **meta}
+    of the FULL set per segment. issues_page() pages and filters them all.
+
+    From the fleet memo and the issue builder alone (admin audit 10/27/26
+    P-19): it ran a whole overview() — the KPIs, the AI, email and push
+    reads and the series — to hand back three of its keys."""
+    with _collecting() as bucket:
+        recs, d, meta = _records_cached()
+        issues, _facts = _all_issues(recs, d)
+    visible = [i for i in issues if i.get("segment") != "internal"]
+    return {"ok": True, "issues": visible[:ISSUES_IN_OVERVIEW], "issues_total": len(visible),
+            "issue_counts": _issue_counts(issues), **_payload_meta(meta, bucket)}
 
 
 def _current_issue(key):
@@ -8411,6 +8441,68 @@ _ops_state_lock = threading.Lock()
 _ops_state_memo = {}
 import process_caches as _process_caches   # noqa: E402 (beside the definition, the registry's rule)
 _process_caches.register("admin_ops._ops_state_memo", _ops_state_memo)
+
+
+# Operations' messaging health (/admin/api/messaging/health): email delivery
+# over 7 days, the inbound webhooks, SMS over 24 hours, both outboxes, the
+# storm caps and the operator addresses on the suppression list — seven
+# reads, three of them over email_log. One reading is kept and shared on
+# request threads for this long (admin audit 10/27/26 P-20), single-flight,
+# like ops/state: every Operations landing in every tab re-ran them.
+MESSAGING_HEALTH_TTL_SECONDS = float(os.getenv("ADMIN_MESSAGING_HEALTH_TTL_SECONDS", "60"))
+_messaging_lock = threading.Lock()
+_messaging_memo = {}
+_process_caches.register("admin_ops._messaging_memo", _messaging_memo)
+
+
+def messaging_health():
+    """The messaging health payload (#14, #59, #74, #75, #92), kept for
+    MESSAGING_HEALTH_TTL_SECONDS on request threads (`cached`,
+    `age_seconds`); off one, read fresh. A reading with a failed read is
+    not kept."""
+    if not _in_request() or MESSAGING_HEALTH_TTL_SECONDS <= 0:
+        return _messaging_health_build()
+    key = _memo_key()
+    with _messaging_lock:
+        hit = _messaging_memo.get("v")
+        if hit and hit[1] == key and time.monotonic() - hit[0] <= MESSAGING_HEALTH_TTL_SECONDS:
+            return dict(hit[2], cached=True, age_seconds=round(time.monotonic() - hit[0], 1))
+        out = _messaging_health_build()
+        if not out.get("read_failed"):
+            _messaging_memo["v"] = (time.monotonic(), key, out)
+        return dict(out, cached=False, age_seconds=0.0)
+
+
+@_reports_failures
+def _messaging_health_build():
+    import notify
+    import push
+    import webhooks
+
+    def read(label, fn, default):
+        try:
+            return fn()
+        except Exception as e:
+            _note_failure(label, e)
+            return default
+    conn = get_conn()
+    try:
+        caps = _rows_dict(conn, "SELECT c.*, r.name AS restaurant FROM alert_storm_caps c LEFT JOIN restaurants r "
+                                "ON r.id=c.restaurant_id WHERE c.until_at > datetime('now') AND c.lifted_at IS NULL "
+                                "ORDER BY c.id DESC", label="alert_storm_caps")
+    finally:
+        conn.close()
+    return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT),
+            "problems": read("messaging_problems", notify.messaging_problems, []),
+            "inbound_webhooks": read("inbound_webhook_health", _models_mod.inbound_webhook_health, None),
+            "email": read("email_delivery_stats", lambda: _models_mod.email_delivery_stats(days=7), None),
+            "sms": read("sms_stats", lambda: notify.sms_stats(hours=24), None),
+            "push_outbox": read("push_outbox", push.outbox_counts, None),
+            "webhook_outbox": read("webhook_outbox", webhooks.outbox_counts, None),
+            "storm_caps": caps,
+            "operator_suppressed": [r for r in read("email_suppressions",
+                                                    lambda: _models_mod.get_email_suppressions(limit=1000), [])
+                                    if r.get("operator")]}
 
 
 def ops_state():
