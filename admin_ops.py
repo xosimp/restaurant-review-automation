@@ -6410,8 +6410,26 @@ def recommendation_calibration(days=365, restaurant_id=None):
     `unpriced` and left out of the ratio. ratio = realised ÷ predicted over
     the kind; within_half = share of pairs whose realised figure landed
     within ±50% of the prediction."""
+    with heavy_slot("recommendation calibration"):
+        return _recommendation_calibration(days, restaurant_id)
+
+
+# The fleet-wide calibration views read every episode and event in their
+# window into Python on a request thread (admin audit 10/27/26 P-04): they
+# take the heavy slot, and the FLEET view is capped at this many days (one
+# restaurant's own view keeps the full window). The payload says so.
+FLEET_CALIBRATION_MAX_DAYS = int(os.getenv("ADMIN_FLEET_CALIBRATION_MAX_DAYS", "90"))
+
+
+def _calibration_days(days, restaurant_id):
+    """(days used, days asked for): the fleet view capped (P-04)."""
+    asked = max(1, min(int(days or 365), 730))
+    return (asked if restaurant_id else min(asked, max(1, FLEET_CALIBRATION_MAX_DAYS))), asked
+
+
+def _recommendation_calibration(days, restaurant_id):
     import models
-    days = max(1, min(int(days or 365), 730))
+    days, asked = _calibration_days(days, restaurant_id)
     since = _stamp(datetime.utcnow() - timedelta(days=days))
     where, args = "i.created_at >= ? AND i.dollar_value IS NOT NULL AND i.dollar_value > 0", [since]
     if restaurant_id:
@@ -6497,7 +6515,8 @@ def recommendation_calibration(days=365, restaurant_id=None):
     out.sort(key=lambda r: (-r["n"], r["kind"]))
     pred = sum(r["predicted"] for r in out)
     real = sum(r["realised"] for r in out)
-    return {"ok": True, "days": days, "restaurant_id": restaurant_id, "min_n": CALIBRATION_MIN_N, "by_kind": out,
+    return {"ok": True, "days": days, "days_requested": asked, "days_capped": days < asked,
+            "restaurant_id": restaurant_id, "min_n": CALIBRATION_MIN_N, "by_kind": out,
             "total": {"n": sum(r["n"] for r in out), "predicted": round(pred, 2), "realised": round(real, 2),
                       "ratio": round(real / pred, 3) if pred else None}}
 
@@ -6558,9 +6577,14 @@ def confidence_calibration(days=365, restaurant_id=None):
     Only snapshots of the support-score meaning (trust_version ≥ 2) are
     judged for order; older ones measured something else and are counted
     apart. Owners never see this."""
+    with heavy_slot("confidence calibration"):
+        return _confidence_calibration(days, restaurant_id)
+
+
+def _confidence_calibration(days, restaurant_id):
     import models
     import confidence_engine as ce
-    days = max(1, min(int(days or 365), 730))
+    days, asked = _calibration_days(days, restaurant_id)
     since = _stamp(datetime.utcnow() - timedelta(days=days))
     conn = models.get_conn()
     try:
@@ -6636,7 +6660,8 @@ def confidence_calibration(days=365, restaurant_id=None):
     dk = {}
     for e in distrust:
         dk[e["kind"]] = dk.get(e["kind"], 0) + 1
-    return {"ok": True, "days": days, "restaurant_id": restaurant_id, "floor_n": CALIBRATION_FLOOR_N,
+    return {"ok": True, "days": days, "days_requested": asked, "days_capped": days < asked,
+            "restaurant_id": restaurant_id, "floor_n": CALIBRATION_FLOOR_N,
             "kind_floor_n": CALIBRATION_MIN_N, "n": len(overall), "meaning": ce.MEANING,
             "ordering": ordering, "ordering_by_kind": order_by_kind, "ordering_by_dimension": order_dims,
             "alerts": alerts,

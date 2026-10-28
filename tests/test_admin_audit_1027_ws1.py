@@ -536,3 +536,23 @@ def test_p03_email_daily_counts_are_grouped_in_sql_on_chicago_days(db_path, monk
     assert not any(sql.strip().startswith("SELECT sent_at, status FROM email_log") for sql in seen)
     assert sum(d["n"] for d in out["daily"]) == 4 and sum(d["failed"] for d in out["daily"]) == 2
     assert len(out["daily"]) == 30 and out["daily"][-1]["day"] == admin_ops._now_ct().date().isoformat()
+
+
+# ── P-04: the calibration reads take the heavy slot; the fleet view is capped
+
+def test_p04_calibration_reads_are_bounded(db_path, monkeypatch):
+    from flask import Flask
+    out = admin_ops.confidence_calibration(days=365)
+    assert out["days"] == admin_ops.FLEET_CALIBRATION_MAX_DAYS and out["days_capped"] is True
+    rid = _rest(db_path, "Own View", billing_status="active")
+    assert admin_ops.confidence_calibration(days=365, restaurant_id=rid)["days"] == 365
+    assert admin_ops.recommendation_calibration(days=365)["days"] == admin_ops.FLEET_CALIBRATION_MAX_DAYS
+    monkeypatch.setattr(admin_ops, "HEAVY_WAIT_SECONDS", 0.01)
+    assert admin_ops._heavy_slots.acquire(timeout=1)
+    try:
+        with Flask(__name__).test_request_context("/admin/api/calibration"):
+            for fn in (admin_ops.confidence_calibration, admin_ops.recommendation_calibration):
+                with pytest.raises(admin_ops.AdminBusy):
+                    fn(days=365)
+    finally:
+        admin_ops._heavy_slots.release()
