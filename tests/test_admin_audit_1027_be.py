@@ -351,3 +351,30 @@ def test_p05_an_anonymous_request_takes_no_slot_and_off_a_request_nothing_waits(
     monkeypatch.setattr(admin_ops, "ADMIN_READ_CONCURRENCY", 0)
     c, _uid = _admin(app, db_path)
     assert c.get("/admin/api/emails").status_code == 200, "0 turns the cap off"
+
+
+# ── F12 contract 9: a RPOWER token with no store chosen is not "off" ─────────
+
+def test_f12_a_credential_with_no_store_is_configured_and_raises_store_not_chosen(db_path):
+    half = _rid(db_path, "Half Grill")
+    done = _rid(db_path, "Done Grill")
+    _x(db_path, "UPDATE restaurants SET rpower_credential_id=7 WHERE id=?", (half,))
+    _x(db_path, "UPDATE restaurants SET rpower_credential_id=7, rpower_cg='cg', rpower_store_mid='S1' WHERE id=?",
+       (done,))
+    recs = {r["id"]: r for r in admin_ops.clients()["clients"]}
+    rp = next(i for i in recs[half]["integrations"] if i["key"] == "rpower")
+    assert rp["configured"] is True and rp["in_use"] is True and rp["store_unchosen"] is True
+    issue = next(i for i in recs[half]["issues"] if i["key"] == f"{half}:rpower_store_unchosen")
+    assert issue["severity"] == "warning" and issue["title"] == "RPOWER store not chosen"
+    assert issue["action_kind"] == "link" and issue["action_href"] == f"#client/{half}?tab=data"
+    assert issue["category"] == "rpower_store_unchosen"
+    assert not any(i["key"].endswith(":rpower_store_unchosen") for i in recs[done]["issues"])
+    assert next(i for i in recs[done]["integrations"] if i["key"] == "rpower")["store_unchosen"] is False
+    row = next(r for r in admin_ops.integrations()["rows"] if r["restaurant_id"] == half and r["integration"] == "rpower")
+    assert row["store_unchosen"] is True, "the Integrations list carries it too"
+
+
+def test_f12_a_legacy_token_without_a_store_is_also_unchosen_and_no_token_is_nothing():
+    assert admin_ops.rpower_store_unchosen({"rpower_token": "abc", "rpower_store_mid": ""}) is True
+    assert admin_ops.rpower_store_unchosen({"rpower_credential_id": None, "rpower_token": " "}) is False
+    assert admin_ops.rpower_store_unchosen({"rpower_credential_id": 3, "rpower_store_mid": "S9"}) is False

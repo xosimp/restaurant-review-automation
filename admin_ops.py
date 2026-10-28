@@ -1583,6 +1583,16 @@ def _pos_integration(r, name, label, configured, auth):
             **({"error_since": _iso_z(auth_failed, "UTC")} if auth_failed else {})}
 
 
+def rpower_store_unchosen(r):
+    """A RPOWER token on file — the partner credential, or a legacy token —
+    with no store bound (rpower_store_mid): saved, but every call needs the
+    store, so nothing syncs until one is chosen (admin audit 10/27/26 F12;
+    rpower.is_connected's own rule)."""
+    get = r.get if isinstance(r, dict) else (lambda k, d=None: getattr(r, k, d))
+    return bool((get("rpower_credential_id") or str(get("rpower_token") or "").strip())
+                and not str(get("rpower_store_mid") or "").strip())
+
+
 def review_source(r):
     """(source, label) for how this location's Google reviews arrive.
     Places — a place id with reviews_live and no Business Profile — returns
@@ -1675,8 +1685,14 @@ def _integrations_for(r, hooks, d=None):
                          "token" if r.get("square_access_token") else "none"),
         _pos_integration(r, "clover", "Clover POS", bool(r.get("clover_api_token")),
                          "token" if r.get("clover_api_token") else "none"),
-        _pos_integration(r, "rpower", "RPOWER POS", bool(r.get("rpower_token") or r.get("rpower_store_mid")),
-                         "credential" if r.get("rpower_credential_id") else "token" if r.get("rpower_token") else "none"),
+        # A partner credential bound with no store chosen yet is configured
+        # — half-set-up, not "off" (admin audit 10/27/26 F12): it raises
+        # rpower_store_unchosen.
+        dict(_pos_integration(r, "rpower", "RPOWER POS",
+                              bool(r.get("rpower_token") or r.get("rpower_store_mid") or r.get("rpower_credential_id")),
+                              "credential" if r.get("rpower_credential_id") else "token" if r.get("rpower_token")
+                              else "none"),
+             store_unchosen=rpower_store_unchosen(r)),
         {"key": "instagram", "label": "Instagram & Facebook",
          "connected": bool(r.get("ig_token")) and (ig_days_left is None or ig_days_left >= 0),
          "configured": bool(r.get("ig_token")),
@@ -2604,6 +2620,13 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
             add(f"int:{i['key']}", f"{i['label']} needs attention", sev, i.get("error_since") or i.get("last_success"),
                 label, route, detail, zone="UTC", occurrence=i.get("error_since") or i.get("last_success"),
                 occurrence_zone="UTC", action_kind=kind, action_href=href)
+    # A token saved, no store bound (F12): a multi-store partner token waits
+    # for the store choice, or a single store's bootstrap failed — nothing
+    # syncs, and it read RPOWER "off" with no prompt at all.
+    if rpower_store_unchosen(r):
+        add("rpower_store_unchosen", "RPOWER store not chosen", "warning", None, "Choose the store", None,
+            "A token is saved but no RPOWER store is bound, so nothing syncs. Open RPOWER token & sync and pick "
+            "the store the token can see.", action_kind="link", action_href=data_tab)
     # The rest of an RPOWER store's health from its rollup row (A6-01, A6-03,
     # A6-19, A6-23): the archive, the integrity checks, the data checks.
     rrow = (d.get("rpower") or {}).get(rid)
@@ -3954,6 +3977,8 @@ def integrations(f="all", q=None, page=None, per_page=None, include_internal=Non
                              # The per-location list's POS reading (CA3 F6), carried to the
                              # fleet list too so both say the same thing.
                              "sync_state": i.get("sync_state"), "age_days": i.get("age_days"),
+                             # RPOWER saved with no store chosen yet (F12).
+                             "store_unchosen": bool(i.get("store_unchosen")),
                              # A POS row reads pos_health's state — the registry's one
                              # POS rule (re-audit B6#5) — not its own 3-day cut.
                              # A connection with no sync of its own (Instagram — a token, not a
