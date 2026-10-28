@@ -76,6 +76,7 @@ svg.i.s{width:15px;height:15px}svg.i.xs{width:13px;height:13px}
 .heart{position:relative;width:8px;height:8px;border-radius:50%;background:var(--green-t);flex-shrink:0}
 .heart:after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--green-t);opacity:0;animation:beat 2.4s var(--ease) infinite}
 .heart.bad{background:var(--red-t)}.heart.bad:after{border-color:var(--red-t)}
+.heart.warn{background:var(--amber-t)}.heart.warn:after{border-color:var(--amber-t)}
 @keyframes beat{0%{transform:scale(.6);opacity:.55}70%{transform:scale(1.5);opacity:0}100%{opacity:0}}
 .me{display:flex;align-items:center;gap:10px;padding:4px 6px;font-size:12.5px;font-weight:700}
 .me .av{width:30px;height:30px;border-radius:50%;background:#2a2622;color:var(--ember2);display:flex;align-items:center;justify-content:center;font-family:var(--disp);font-weight:600;font-size:12px}
@@ -551,7 +552,19 @@ function posCell(f){
   return `<span class="num">${ago(ps.last_synced || (f && f.pos))}</span>${ps.provider?' <span class="dim">'+esc(String(ps.provider).toUpperCase()==='RPOWER'?'RPOWER':ps.provider)+'</span>':''}${bad?` <span class="chip ${ps.state==='error'?'bad':'warn'}" title="${esc(ps.error||'')}">${esc(ps.state)}</span>`:''}`;
 }
 function setupDone(r){ return (r && (r.setup_completeness || r.data_completeness)) || {}; }
-function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round((Date.now()-d)/60000); if(m<1) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<48) return h+'h'; const dd=Math.round(h/24); if(dd<60) return dd+'d'; return Math.round(dd/30)+'mo'; }
+// One humanising duration for the whole console (admin audit 10/27/26, L1):
+// minutes as "12m", "3h", "28d", "4mo" — never "41,020m". ago(), minsAgo()
+// and every heartbeat, lease, bound and stale-after on the page read through it.
+function durMin(m){
+  if(m == null || m === '' || isNaN(m)) return '—';
+  m = Math.max(0, +m);
+  if(m < 1) return '<1m';
+  var mm = Math.round(m); if(mm < 60) return mm + 'm';
+  var h = Math.round(m / 60); if(h < 48) return h + 'h';
+  var d = Math.round(m / 1440); if(d < 60) return d + 'd';
+  return Math.round(m / 43200) + 'mo';
+}
+function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round((Date.now()-d)/60000); if(m<1) return 'now'; return durMin(m); }
 // Dates read M/D/YY everywhere (CLAUDE.md), the console included.
 function mdy(d){ return d ? (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2) : '—'; }
 function fmtD(s){ return mdy(parseTs(s)); }
@@ -574,6 +587,19 @@ let _seq = 0;
 // refusal (409) from a send that failed (502). A response the server masked
 // for the support role (X-Redacted: support) turns the write controls off:
 // body.role-support hides every element marked .w.
+//
+// A write whose answer never came back (the connection dropped, a deploy
+// restarted the server) is said, never thrown away (admin audit 10/27/26,
+// W4/C2): api() answers it {ok:false, _status:0, network:true} with the
+// sentence below, so every write path — post(), opsWrite, formSubmit, the
+// uploads — shows it through say()/errText() and gives its button back. A
+// read still throws, and a page's own reads are aborted when the admin moves
+// to another page (P-05): the server's four request threads are not spent
+// on answers nobody will see. A read with a method (a poll, the rail) is
+// never aborted.
+var NO_ANSWER = 'No answer from the server — the outcome is unknown. Refresh before trying again.';
+var _readCtl = null;
+function isWrite(opts){ var m = opts && opts.method ? String(opts.method).toUpperCase() : 'GET'; return m !== 'GET' && m !== 'HEAD'; }
 let _reauthP = null, _reauthRes = null;
 async function api(path, opts, _retry, _s0){
   const s = _s0 == null ? _seq : _s0;
@@ -581,7 +607,14 @@ async function api(path, opts, _retry, _s0){
   // path (auth._admin_wants_json), not a 302 to a login page.
   const o = Object.assign({}, opts || {});
   o.headers = Object.assign({'Accept': 'application/json'}, (opts && opts.headers) || {});
-  const r = await fetch(path, o);
+  if(!(opts && (opts.method || opts.signal)) && _readCtl && s === _seq) o.signal = _readCtl.signal;
+  var r;
+  try{ r = await fetch(path, o); }
+  catch(e){
+    if(s !== _seq && !(opts && opts.method)) throw new Error(STALE);
+    if(isWrite(opts)) return {ok:false, _status:0, network:true, error:NO_ANSWER};
+    throw e;
+  }
   let j; try{ j = await r.json(); }catch(e){ j = {ok:false, error:'HTTP '+r.status}; }
   if(j && typeof j === 'object' && !Array.isArray(j)) j._status = r.status;
   if(r.headers.get('X-Redacted') === 'support') document.body.classList.add('role-support');
@@ -737,6 +770,9 @@ async function route(){
   const area = name === 'client' || name === 'locations' ? 'customers' : name;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === area));
   _tgt = null; menusClose();
+  // The page being left: its reads in flight are cancelled (P-05).
+  if(_readCtl) _readCtl.abort();
+  _readCtl = typeof AbortController === 'function' ? new AbortController() : null;
   const seq = ++_seq;
   const view = $('view'); view.classList.remove('enter');
   view.innerHTML = '<div class="sk" style="width:28%;height:26px"></div><div class="sk blk"></div><div class="sk blk"></div>';
@@ -764,8 +800,11 @@ async function badges(){
   if (document.hidden) return;   // a background tab skips the poll; it refreshes when looked at again (CLIENT-37)
   // A method, so a poll that lands after the admin moved on is still drawn.
   let d = null; try{ d = await api('/admin/api/badges', {method:'GET'}); }catch(e){ d = {ok:false, error:String((e && e.message) || e)}; }
-  if(!d || d.ok === false || d._status >= 400){ railStale(d && d.error); return; }
-  applyBadges(d);
+  if(!d || d.ok === false || d._status >= 400) railStale(d && d.error);
+  else applyBadges(d);
+  // The scheduler pill is the server's one verdict (W2), read after the
+  // counts — one request at a time — and shared with the page.
+  return opsStateRead(false);
 }
 function railStale(why){
   const rail = document.querySelector('.rail'); if(rail) rail.classList.add('stale');
@@ -789,17 +828,80 @@ function applyBadges(d){
     set('n-ops', pl.total || 0, pl.critical ? 'bad' : 'warn', (pl.total || 0) + ' platform issue' + (pl.total === 1 ? '' : 's'));
     set('n-cust', cu.total || 0, cu.critical ? 'bad' : '', (cu.total || 0) + ' customer issue' + (cu.total === 1 ? '' : 's'));
   }
-  const m = k.scheduler_heartbeat_minutes;
-  // null is "never beat" only when the heartbeat was read; a failed read is unknown.
-  const unread = m == null && [].concat(d.errors || [], d.query_errors || []).some(e => e && /heartbeat/.test(e.query || ''));
-  const bad = !unread && (m == null || m > 15);
-  $('hb-pill').title = 'Scheduler heartbeat' + (d.generated_at ? ' · read ' + fmtDT(d.generated_at) + (d.cached ? ' (cached)' : '') : '');
-  $('hb-pill').innerHTML = `<span class="heart ${unread?'unk':(bad?'bad':'')}"></span>Scheduler<span class="t">${unread?'unknown':(m==null?'never':(m<1?'just now':Math.round(m)+'m ago'))}</span>`;
+  // The scheduler pill is not judged here from the beat's age (a 15-minute
+  // rule the server doesn't use): it is the server's verdict, railHealth().
+  if(_opsSt) railHealth(_opsSt);
+}
+
+// ── one platform verdict (admin audit 10/27/26, W2/O1/V04) ──────────────────
+// The Overview ring, the rail's scheduler pill, Operations' system cards and
+// its sentence all draw ONE server reading: GET /admin/api/ops/state
+// (admin_ops.ops_state — {systems: {name: {state: ok|warn|bad|unknown,
+// reason, since}}, worst, generated_at}). The page keeps no thresholds of its
+// own (DESIGN_SYSTEM 12c: "never a threshold the page makes up"). A system the
+// server adds is listed under its key; one it doesn't report is unknown; a
+// read that failed makes every system unknown, never green. The reading is
+// shared for 30 seconds and single-flight, so the rail and the page asking
+// at once make one request; it is read with a method, so it is never
+// dropped — whoever still shows a page draws it.
+var OPS_SYSTEMS = [['scheduler', 'Scheduler'], ['jobs', 'Jobs'], ['api', 'API'], ['ai', 'AI'], ['push', 'Push'],
+  ['email', 'Email'], ['sms', 'SMS'], ['integrations', 'Integrations']];
+var OPS_STATE_TTL = 30000, _opsSt = undefined, _opsStAt = 0, _opsStP = null;
+function opsStateRead(force){
+  if(!force && _opsSt && okRes(_opsSt) && Date.now() - _opsStAt < OPS_STATE_TTL) return Promise.resolve(_opsSt);
+  if(_opsStP) return _opsStP;
+  _opsStP = api('/admin/api/ops/state', {method: 'GET'})
+    .then(null, function(e){ return {ok: false, _status: 0, error: "Couldn't reach the server (" + ((e && e.message) || e) + ')'}; })
+    .then(function(d){ _opsStP = null; return opsStateKeep(d); });
+  return _opsStP;
+}
+// A reading in hand (the rail's poll, or Operations' own read): kept, and
+// the rail redrawn from it. Only a good reading is reused; a failed one is
+// drawn as unknown and read again next time.
+function opsStateKeep(d){
+  _opsSt = d || {ok: false, error: 'No answer from the server.'};
+  _opsStAt = okRes(_opsSt) ? Date.now() : 0;
+  railHealth(_opsSt);
+  return _opsSt;
+}
+// The reading when it is fresh enough to paint with, else undefined ("reading…").
+function opsStateCached(){ return _opsSt && okRes(_opsSt) && Date.now() - _opsStAt < OPS_STATE_TTL ? _opsSt : undefined; }
+function sysLabel(k){ var t = String(k).replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); }
+// [{key, label, state: ok|warn|bad|unknown, reason, since}] in the page's
+// order, then any system the server adds. undefined = not read yet.
+function systemsOf(st){
+  var out = [], seen = {}, sys = (st && st.systems) || {}, err = null, i, k;
+  if(st === undefined) err = 'reading…';
+  else if(!okRes(st) || !st.systems) err = 'unknown — ' + (st && st.busy ? 'the console is busy, refresh in a few seconds' : ((st && st.error) || "the platform state couldn't be read"));
+  function one(key, label){
+    var x = sys[key], state;
+    seen[key] = 1;
+    if(err) return {key: key, label: label, state: 'unknown', reason: err, since: null};
+    if(!x) return {key: key, label: label, state: 'unknown', reason: 'not reported by the server', since: null};
+    state = x.state === 'ok' || x.state === 'warn' || x.state === 'bad' ? x.state : 'unknown';
+    return {key: key, label: label, state: state, reason: x.reason || (state === 'unknown' ? 'unknown' : ''), since: x.since || null};
+  }
+  for(i = 0; i < OPS_SYSTEMS.length; i++) out.push(one(OPS_SYSTEMS[i][0], OPS_SYSTEMS[i][1]));
+  if(!err) for(k in sys){ if(Object.prototype.hasOwnProperty.call(sys, k) && !seen[k]) out.push(one(k, sysLabel(k))); }
+  return out;
+}
+function sysOf(st, key){ var all = systemsOf(st), i; for(i = 0; i < all.length; i++){ if(all[i].key === key) return all[i]; } return {key: key, label: sysLabel(key), state: 'unknown', reason: 'not reported by the server', since: null}; }
+// The rail's scheduler pill: the server's state as the heart's colour, how
+// long since the beat in words (durMin, through agoWord), the server's reason
+// on hover. Unread or failed, it says unknown — never a green heart.
+var HEART = {ok: '', warn: 'warn', bad: 'bad', unknown: 'unk'};
+function railHealth(st){
+  var p = $('hb-pill'), s, word;
+  if(!p || st === undefined) return;
+  s = sysOf(st, 'scheduler');
+  word = s.state === 'unknown' ? 'unknown' : (s.since ? agoWord(s.since) : ({ok: 'beating', warn: 'degraded', bad: 'failing'})[s.state]);
+  p.title = 'Scheduler: ' + (s.reason || s.state) + (st && st.generated_at ? ' · read ' + fmtDT(st.generated_at) : '');
+  p.innerHTML = '<span class="heart ' + HEART[s.state] + '"></span>Scheduler<span class="t">' + esc(word) + '</span>';
 }
 
 // ── ⌘K: jump anywhere, or search the fleet ─────────────────────────────────
 const PAGES = [
-  ['Overview','#overview','Page'], ['Needs you','#overview','Page'],
+  ['Overview','#overview','Page'],
   ['Operations · Jobs','#operations/jobs','Page'], ['Operations · Email & SMS','#operations/email','Page'], ['Operations · Push & alerts','#operations/push','Page'], ['Operations · AI','#operations/ai','Page'], ['Operations · Integrations','#operations/integrations','Page'], ['Operations · RPOWER','#operations/rpower','Page'], ['Operations · Event calendar','#operations/events','Page'],
   ['Customers · Restaurants','#customers/restaurants','Page'], ['Customers · Billing','#customers/billing','Page'], ['Customers · Onboarding','#customers/onboarding','Page'], ['Customers · Support queue','#customers/support','Page'],
   ['Customers · Bug reports','#customers/support?view=bugs','Page'], ['Customers · Deletion requests','#customers/support?view=deletions','Page'], ['Customers · Resolved issues','#customers/support?view=resolved','Page'],
@@ -811,7 +913,22 @@ const PAGES = [
 let _palSel = 0, _qt;
 function palOpen(){ $('pal').classList.add('on'); $('q').value=''; palRender([]); setTimeout(()=>$('q').focus(), 20); }
 function palClose(){ const p = $('pal'); if(p) p.classList.remove('on'); }
-function palRender(results){
+// `note` is a line above the matches: the fleet search still running, or
+// why it couldn't run (admin audit 10/27/26, V29) — a failed search never
+// reads as "No matches."
+function palNote(text, bad){ return bad ? '<div class="warnline" role="status" style="margin:6px 8px">' + esc(text) + '</div>' : '<div class="dim" role="status" style="padding:10px 14px;font-size:12.5px">' + esc(text) + '</div>'; }
+var _qSeq = 0;
+function palSearch(q){
+  var mine = ++_qSeq;
+  return api('/admin/api/search?q=' + encodeURIComponent(q), {method: 'GET'})
+    .then(null, function(e){ return {ok: false, _status: 0, error: String((e && e.message) || e)}; })
+    .then(function(d){
+      if(mine !== _qSeq || $('q').value.trim() !== q) return;       // a newer search, or the box changed
+      if(!okRes(d)) palRender([], palNote("Search couldn't run — " + errText(d), true));
+      else palRender(d.results || []);
+    });
+}
+function palRender(results, note){
   const q = $('q').value.trim().toLowerCase();
   const pages = PAGES.filter(p => !q || p[0].toLowerCase().indexOf(q) >= 0).slice(0, q ? 6 : 12);
   // Each fleet result says what it matched — a phone number, a Place ID, a
@@ -819,12 +936,12 @@ function palRender(results){
   const rows = results.map(r => ({href: r.type==='brand' ? '#locations?brand='+encodeURIComponent(r.title) : (r.id ? '#client/'+r.id : '#customers'), t: r.type, title: r.title, d: r.sub||'', m: r.match||''}))
     .concat(pages.map(p => ({href: p[1], t: p[2], title: p[0], d: '', m: ''})));
   _palSel = Math.min(_palSel, Math.max(0, rows.length-1));
-  $('q-res').innerHTML = rows.length ? rows.map((r,i)=>{ const fn = r.href.indexOf('fn:') === 0 ? r.href.slice(3) : null;
-    return `<a href="${fn ? '#' : esc(r.href)}" class="${i===_palSel?'act':''}" onclick="palClose();${fn ? fn + '();return false' : ''}"><span class="t">${esc(r.t)}</span><b>${esc(r.title)}</b>${r.m?`<span class="chip" title="What this result matched">${esc(r.m)}</span>`:''}<span class="d">${esc(r.d)}</span></a>`; }).join('') : '<div class="empty">No matches.</div>';
+  $('q-res').innerHTML = (note || '') + (rows.length ? rows.map((r,i)=>{ const fn = r.href.indexOf('fn:') === 0 ? r.href.slice(3) : null;
+    return `<a href="${fn ? '#' : esc(r.href)}" class="${i===_palSel?'act':''}" onclick="palClose();${fn ? fn + '();return false' : ''}"><span class="t">${esc(r.t)}</span><b>${esc(r.title)}</b>${r.m?`<span class="chip" title="What this result matched">${esc(r.m)}</span>`:''}<span class="d">${esc(r.d)}</span></a>`; }).join('') : (note ? '' : '<div class="empty">No matches.</div>'));
 }
-$('q').addEventListener('input', () => { clearTimeout(_qt); _palSel = 0; const q = $('q').value.trim(); if(q.length<2){ palRender([]); return; } _qt = setTimeout(async () => {
-  let d; try{ d = await api('/admin/api/search?q='+encodeURIComponent(q)); }catch(e){ return; } palRender(d.ok !== false && d.results ? d.results : []);
-}, 200); });
+$('q').addEventListener('input', () => { clearTimeout(_qt); _palSel = 0; _qSeq++; const q = $('q').value.trim(); if(q.length<2){ palRender([]); return; }
+  palRender([], palNote('Searching the fleet…'));
+  _qt = setTimeout(function(){ palSearch(q); }, 200); });
 $('q').addEventListener('keydown', e => {
   const links = $('q-res').querySelectorAll('a'); if(!links.length) return;
   if(e.key==='ArrowDown' || e.key==='ArrowUp'){ e.preventDefault(); _palSel = (_palSel + (e.key==='ArrowDown'?1:-1) + links.length) % links.length; links.forEach((a,i)=>a.classList.toggle('act', i===_palSel)); links[_palSel].scrollIntoView({block:'nearest'}); }
@@ -879,48 +996,28 @@ function readFailed(d, tables){
   return hit ? (hit.query + ': ' + (hit.error || 'failed')) : null;
 }
 function figOr(d, tables, html){ const f = readFailed(d, tables); return f ? unknownV(f) : html; }
-// Seven named systems, so "5/7" is countable rather than a score. Each is ok,
-// warn or bad by its own threshold — a card can turn red (#158) — or unknown
-// (grey, never green) when its read failed (#128). SMS is the seventh (#14),
-// read from messaging health after the first paint.
+// Named systems, so "6/8" is countable rather than a score. Each is ok, warn
+// or bad by the SERVER's verdict (/admin/api/ops/state, W2/O1/V04 — the ring
+// used to judge them here with thresholds of its own and showed "All systems
+// healthy" through an AI outage), or unknown (grey, never green) when that
+// read failed or hasn't answered yet (#128).
 const SYS_COLOR = {ok:'var(--green)', warn:'var(--amber)', bad:'var(--red)', unk:'rgba(255,255,255,.2)', neu:'rgba(255,255,255,.2)'};
 const SYS_TEXT = {ok:'var(--green-t)', warn:'var(--amber-t)', bad:'var(--red-t)', unk:'var(--ink4)', neu:'var(--ink4)'};
-function platformSystems(d, mh){
-  const k = (d && d.kpis) || {}, hbm = k.scheduler_heartbeat_minutes, f = t => readFailed(d, t), sys = [];
-  const hbErr = f(['scheduler_heartbeat']);
-  sys.push(['Scheduler', hbErr ? 'unk' : (hbm == null ? 'bad' : hbm <= 15 ? 'ok' : hbm <= 60 ? 'warn' : 'bad'), hbErr ? "unknown — the heartbeat couldn't be read" : (hbm == null ? 'never beat' : 'beat ' + Math.round(hbm) + 'm ago')]);
-  const jErr = f(['job_failures', 'jobs_overdue']);
-  sys.push(['Jobs', jErr ? 'unk' : (k.jobs_overdue ? 'bad' : (k.job_failures_24h ? 'warn' : 'ok')), jErr ? 'unknown' : (k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.job_failures_24h ? (k.jobs_failing || 1) + ' failing · 24h' : 'on schedule'))]);
-  const er = k.server_error_rate, win = k.api_window_label || 'last 5 minutes';
-  sys.push(['API', er == null ? 'neu' : (er >= 5 ? 'bad' : er >= 1 ? 'warn' : 'ok'), er == null ? 'no traffic · ' + win : er + '% 5xx · ' + win]);
-  const aErr = f(['ai_usage']), af = k.ai_failures_24h || 0;
-  sys.push(['AI', aErr ? 'unk' : (af >= 10 ? 'bad' : af ? 'warn' : 'ok'), aErr ? 'unknown' : (af ? af + ' failed · 24h' : 'no failures · 24h')]);
-  const pErr = f(['push_deliveries']);
-  sys.push(['Push', pErr ? 'unk' : (k.push_failures_today ? 'warn' : 'ok'), pErr ? 'unknown' : (k.push_failures_today ? k.push_failures_today + ' failed today' : 'delivering')]);
-  const eErr = f(['email_log']), rates = k.email_rates || {}, r7 = rates['7d'] || {}, th = rates.thresholds || {};
-  let et = k.email_failures_today ? 'warn' : 'ok', es = k.email_failures_today ? k.email_failures_today + ' undeliverable today' : 'delivering';
-  if(r7.enough){
-    const b = r7.bounce_rate, c = r7.complaint_rate;
-    if((b != null && b >= (th.bounce_crit_pct || 8)) || (c != null && c >= (th.complaint_crit_pct || .3))){ et = 'bad'; es = 'bounce ' + b + '% · complaints ' + c + '% · 7d'; }
-    else if((b != null && b >= (th.bounce_warn_pct || 4)) || (c != null && c >= (th.complaint_warn_pct || .1))){ et = 'warn'; es = 'bounce ' + b + '% · complaints ' + c + '% · 7d'; }
-  }
-  sys.push(['Email', eErr ? 'unk' : et, eErr ? 'unknown' : es]);
-  if(mh === undefined) sys.push(['SMS', 'unk', 'reading…']);
-  else if(!mh || mh.ok === false || mh._status >= 400) sys.push(['SMS', 'unk', "unknown — messaging health couldn't be read"]);
-  else {
-    const s = mh.sms || {}, by = s.by_status || {}, failed = (by.failed || 0) + (by.undelivered || 0);
-    sys.push(['SMS', s.account_errors ? 'bad' : (failed ? 'warn' : 'ok'), s.account_errors ? s.account_errors + ' account-level error' + (s.account_errors === 1 ? '' : 's') + ' · 24h' : (failed ? failed + ' failed · 24h' : (s.attempted ? s.attempted + ' sent · 24h' : 'none sent · 24h'))]);
-  }
-  return sys;
+// [name, ok|warn|bad|unk, the server's reason] for healthRing/healthCard.
+var RING_TONE = {ok: 'ok', warn: 'warn', bad: 'bad', unknown: 'unk'};
+function platformSystems(st){
+  return systemsOf(st).map(function(s){ return [s.label, RING_TONE[s.state] || 'unk', s.reason]; });
 }
 function healthRing(sys){
   const n = sys.length, ok = sys.filter(s=>s[1]==='ok' || s[1]==='neu').length, r = 46, c = 2*Math.PI*r, seg = c/n;
   const arcs = sys.map((s,i)=>`<circle cx="59" cy="59" r="${r}" fill="none" stroke="${SYS_COLOR[s[1]]||SYS_COLOR.unk}" stroke-width="9" stroke-dasharray="${(seg-4).toFixed(2)} ${(c-seg+4).toFixed(2)}" stroke-dashoffset="${(-seg*i).toFixed(2)}"><title>${esc(s[0])}: ${esc(s[2])}</title></circle>`).join('');
   return `<svg width="118" height="118" viewBox="0 0 118 118" role="img" aria-label="${ok} of ${n} systems healthy" style="flex-shrink:0"><g transform="rotate(-90 59 59)"><circle cx="59" cy="59" r="${r}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="9"/>${arcs}</g><text x="59" y="58" text-anchor="middle" fill="var(--ink)" style="font-family:var(--num);font-size:26px;font-weight:600">${ok}/${n}</text><text x="59" y="77" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--sans);font-size:10.5px;font-weight:700;letter-spacing:.1em">HEALTHY</text></svg>`;
 }
-function healthCard(d, mh){
-  const sys = platformSystems(d, mh), down = sys.filter(s => s[1] === 'bad' || s[1] === 'warn'), unk = sys.filter(s => s[1] === 'unk' && s[2] !== 'reading…');
-  const said = down.length ? down.map(s=>s[0]).join(' and ') + (down.some(s=>s[1]==='bad') ? ' failing' : ' degraded') : (unk.length ? unk.map(s=>s[0]).join(' and ') + ' unknown' : 'All systems healthy');
+function healthCard(st){
+  const sys = platformSystems(st), down = sys.filter(s => s[1] === 'bad' || s[1] === 'warn'), unk = sys.filter(s => s[1] === 'unk' && s[2] !== 'reading…');
+  // Nothing is said healthy before the server has answered.
+  var pending = sys.filter(function(s){ return s[2] === 'reading…'; }).length;
+  const said = pending ? 'Reading the platform state…' : (down.length ? down.map(s=>s[0]).join(' and ') + (down.some(s=>s[1]==='bad') ? ' failing' : ' degraded') : (unk.length === sys.length ? 'Platform state unknown' : (unk.length ? unk.map(s=>s[0]).join(' and ') + ' unknown' : 'All systems healthy')));
   const show = (down.length ? down : (unk.length ? unk : sys.slice(0,2))).slice(0,3);
   return `${healthRing(sys)}
     <div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span class="lbl">Platform health</span>
@@ -1012,7 +1109,7 @@ function stripCell(href, icn, tone, label, value, sub){
 function watchKpi(href, v, l, cls, title){ return `<a class="kpi ${cls||''}" href="${href}"${title?` title="${esc(title)}"`:''}><div class="v">${v}</div><div class="l">${esc(l)}</div></a>`; }
 const MRR_SRC = {mirror:'billed', list:'list price', mixed:'billed + list price'};
 async function overview(){
-  const q = _fresh ? '?fresh=1' : ''; _fresh = false;
+  const ovFresh = _fresh, q = _fresh ? '?fresh=1' : ''; _fresh = false;
   const d = await api('/admin/api/overview' + q);
   if(!d || d.ok === false || d._status >= 400) throw new Error((d && d.error) || "The overview couldn't be read");
   _ov = d; _ovMsg = undefined; applyBadges(d);
@@ -1058,14 +1155,14 @@ async function overview(){
         <div style="margin-top:auto;padding-top:10px"><span style="display:flex;align-items:flex-end;gap:4px;height:34px">${sgv.map((v,i)=>`<i style="display:block;flex:1;max-width:9px;height:${v ? Math.max(4, Math.round(34*v/sgMax)) : 2}px;border-radius:2px;background:${v?'var(--ember2)':'rgba(255,255,255,.09)'}" title="Week of ${esc(mdy(dayOf((s.signups[i]||{}).week_start)))}: ${v}"></i>`).join('')}</span><span class="s" style="font-size:11.5px">last <span class="n">${sgv.length}</span> weeks</span>
         <span class="s" style="font-size:11.5px;display:block;margin-top:4px">${tc.available ? `Trial → paid: <span class="n">${tc.rate_pct==null?'—':tc.rate_pct+'%'}</span> of ${fmtN(tc.started)} in ${tc.window_days||90}d${tc.median_days_to_convert!=null?' · median '+tc.median_days_to_convert+'d':''}` : `<span title="${esc(tc.reason||'')}">Trial conversion: not measurable yet</span>`}</span></div>
       </a>
-      <a class="card kc" href="#operations" style="grid-column:span 4;flex-direction:row;align-items:center;gap:20px" id="ov-health">${healthCard(d, undefined)}</a>
+      <a class="card kc" href="#operations" style="grid-column:span 4;flex-direction:row;align-items:center;gap:20px" id="ov-health">${healthCard(opsStateCached())}</a>
     </section>
     <section class="card strip">
       ${stripCell('#overview', 'alert', fleetErr?'neu':(ic.critical?'bad':'good'), 'Critical', fleetErr?unknownV(fleetErr):fmtN(ic.critical||0), crit[0] ? esc(crit[0].restaurant||'Platform') : 'none open')}
       ${stripCell('#customers/support', 'inbox', fleetErr?'neu':(cu.total?'warn':'good'), 'Support queue', fleetErr?unknownV(fleetErr):fmtN(cu.total||0), older48 ? older48 + (d.issues_truncated?'+':'') + ' older than 48h' : 'nothing aging')}
       ${stripCell('#operations/jobs', 'clock', readFailed(d,['job_failures'])?'neu':(k.job_failures_24h||k.jobs_overdue?'warn':'good'), 'Failed jobs', figOr(d, ['job_failures'], fmtN(k.job_failures_24h||0)), k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.jobs_failing ? k.jobs_failing + ' job' + (k.jobs_failing===1?'':'s') + ' · 24h' : 'all on schedule · 24h'))}
       ${stripCell('#operations/ai', 'spark', readFailed(d,['ai_usage'])?'neu':(k.ai_failures_24h?'warn':'neu'), 'AI activity', figOr(d, ['ai_usage'], fmtN(k.ai_calls_today)), `<span class="n">${fmtUSD(k.ai_cost_today,2)}</span> today · ${fmtN(k.ai_failures_24h)} failed${k.ai_quality_24h?' · '+fmtN(k.ai_quality_24h)+' quality':''}`)}
-      ${stripCell('#engineering', 'gauge', k.server_error_rate==null?'neu':(k.server_error_rate>=5?'bad':'good'), 'API health', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.server_error_rate==null ? 'no traffic · ' + esc(k.api_window_label||'last 5 minutes') : `p95 · <span class="n">${k.server_error_rate}%</span> 5xx · ${esc(k.api_window_label||'last 5 minutes')}`)}
+      ${stripCell('#engineering', 'gauge', 'neu', 'API health', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.server_error_rate==null ? 'no traffic · ' + esc(k.api_window_label||'last 5 minutes') : `p95 · <span class="n">${k.server_error_rate}%</span> 5xx · ${esc(k.api_window_label||'last 5 minutes')}`)}
       ${stripCell('#operations/email', 'mail', readFailed(d,['email_log'])?'neu':(k.email_failures_today?'warn':'good'), 'Email delivery', figOr(d, ['email_log'], emPct==null?'—':`${emPct}<small>%</small>`), emTot ? `<span class="n">${fmtN(k.email_bounced_today||0)}</span> bounced · <span class="n">${fmtN(k.email_complained_today||0)}</span> complaints today` : 'none sent today')}
     </section>
     <section class="grid g8">
@@ -1085,9 +1182,11 @@ async function overview(){
         <div class="card" style="padding:4px 18px 14px"><div style="display:flex;align-items:center;justify-content:space-between;padding-top:14px"><h2>What changed</h2><span class="muted" style="font-size:12px">14 days</span></div><div id="ov-chg">${changesList((d.activity||[]).slice(0,8))}</div>${(d.activity||[]).length>8?`<button class="lnk" style="margin-top:8px" onclick="this.remove();$('ov-chg').innerHTML=changesList(_ov.activity)">Show all ${d.activity.length}</button>`:''}</div>
       </div>
     </section>`;
-  // SMS joins the ring once messaging health answers; its failure is its own.
-  api('/admin/api/messaging/health').then(mh => { _ovMsg = mh; if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(d, mh); })
-    .catch(e => { if(e && e.message === STALE) return; _ovMsg = null; if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(d, null); });
+  // The ring is the server's one verdict on every system (W2): drawn when
+  // /admin/api/ops/state answers (a Refresh reads it again), and only into
+  // this same Overview. The API figure in the strip carries no verdict of its
+  // own — a 5% rule with no request floor turned it red on one failed request.
+  opsStateRead(ovFresh).then(function(st){ if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(st); });
 }
 
 // ── shared pieces ───────────────────────────────────────────────────────────
@@ -1103,13 +1202,41 @@ function issuesTable(issues, opts){
 }
 // An issue's POST action (#62): the confirm names the client (and the address
 // a payload carries, e.g. a suppression to reinstate), and the toast is the
-// server's own answer — its error on any non-2xx (#109).
+// server's own answer — its error on any non-2xx (#109). A payload with an
+// empty `note` (Lift hold) asks for the note the route requires BEFORE the
+// password step — it was posted empty and refused after the password
+// (admin audit 10/27/26, W1). An action that starts a job (Sync now, Refresh
+// token) is followed to its end and says how it went, then the page reloads
+// if the admin is still on it (W5) — it used to reload at once, with the
+// issue still there and a failure never shown.
 async function issueAction(path, label, where, payload){
   if(path.startsWith('/admin/view-as/') || path.startsWith('/admin/client-settings/')){ location.href = path; return; }
   let body = {}; if(payload){ try{ body = JSON.parse(payload) || {}; }catch(e){ body = {}; } }
   if(!confirm(label + (where ? ' — ' + where : '') + (body.email ? ' (' + body.email + ')' : '') + '?')) return;
+  if(!issueNote(body, label, where)) return;
+  var here = location.hash;
   const d = await post(path, body);
+  if(okRes(d) && d.job_id){ toast(d.message || (label + ' — started'), ''); return followJob(d.job_id, label, here); }
   if(say(d, label + ' — done')){ _clients = null; route(); badges(); } }
+// The note an action's payload asks for (an empty `note`), asked for here:
+// false when the admin cancels or leaves it blank — nothing is sent.
+function issueNote(body, label, where){
+  if(!body || !Object.prototype.hasOwnProperty.call(body, 'note') || String(body.note || '').trim()) return true;
+  var n = prompt(label + (where ? ' — ' + where : '') + '\n\nSay why (the note is the record):', '');
+  if(n === null) return false;
+  if(!n.trim()){ toast('A note is required — nothing was changed', 'bad'); return false; }
+  body.note = n.trim();
+  return true;
+}
+// A job an action started, followed through pollJob and said (jobSaid);
+// the page reloads only if the admin is still where it was started.
+function followJob(jobId, label, here){
+  return pollJob(jobUrl(jobId)).then(function(r){
+    jobSaid(r, label); _clients = null; badges();
+    if(location.hash === here){ if(here.indexOf('#operations') === 0) _opsFresh = true; route(); }
+    return r;
+  });
+}
 // Resolve holds for the occurrence the console saw (#24): a newer one reopens
 // the issue. Without an occurrence (a platform view that didn't carry one)
 // the server resolves the one open now.
@@ -1118,8 +1245,24 @@ function resolveOpen(key, title, occurrenceAt){ _resolve = {key: key, occurrence
   $('r-scope').textContent = occurrenceAt ? 'For this occurrence (' + fmtDT(occurrenceAt) + ') — it reopens if it happens again.' : 'For as long as this condition lasts — it reopens once it clears and comes back.'; openModal('m-resolve'); }
 let _capRid = null;
 function capOpen(rid, name, current){ _capRid = rid; $('cap-name').textContent = name || ('#'+rid); $('cap-n').value = current||0; openModal('m-cap'); $('cap-n').focus(); }
+// One request at a time per control (admin audit 10/27/26, C11/W15-f): a
+// second click while the first is out does nothing, and the button is off
+// until the answer is in — whatever it was, a lost answer included.
+var _inflight = {};
+function oneAtATime(key, btn, run){
+  if(_inflight[key]) return Promise.resolve(null);
+  _inflight[key] = true; if(btn) btn.disabled = true;
+  function done(){ _inflight[key] = false; if(btn) btn.disabled = false; }
+  var p; try{ p = Promise.resolve(run()); }catch(e){ p = Promise.reject(e); }
+  return p.then(function(v){ done(); return v; }, function(e){ done(); throw e; });
+}
+// The button in `within` (an element or its id) that calls fn(…).
+function goBtn(within, fn){ var el = typeof within === 'string' ? $(within) : within; return el ? el.querySelector('button[onclick^="' + fn + '("]') : null; }
+// A cap changed from Operations redraws Operations from fresh reads (W7):
+// the 60-second cache still offered "Cap alerts" on the capped storm.
 async function capSubmit(){ const n = parseInt($('cap-n').value,10); if(isNaN(n)||n<0){ toast('Enter 0 or a positive number','bad'); return; }
-  const d = await post('/admin/api/client/'+_capRid+'/alert-cap', {max_per_day:n}); if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ closeModal('m-cap'); _clients=null; route(); } }
+  const d = await oneAtATime('cap', goBtn('m-cap', 'capSubmit'), function(){ return post('/admin/api/client/'+_capRid+'/alert-cap', {max_per_day:n}); }); if(!d) return;
+  if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ closeModal('m-cap'); _clients=null; _opsFresh = true; route(); } }
 // Run now (#95, #9, #64): the job is handed to the scheduler, which starts it
 // on its next tick; one that sends is refused on a server that may not
 // schedule, and the toast is the server's own sentence. The page then
@@ -1134,8 +1277,10 @@ async function runJob(job, sends, label){
   const here = location.hash;
   setTimeout(() => { if(location.hash === here && onJobsPage()){ _opsFresh = true; route(); } }, 2500);
 }
-async function capSet(rid, n, name){ if(!n && !confirm('Remove the daily alert cap' + (name ? ' for ' + name : '') + '? Every alert sends again.')) return; const d = await post('/admin/api/client/'+rid+'/alert-cap', {max_per_day:n}); if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ _clients=null; route(); } }
-async function resolveSubmit(){ if(!_resolve) return; const d = await post('/admin/api/issues/resolve', {key:_resolve.key, note:$('r-note').value, occurrence_at:_resolve.occurrence_at}); closeModal('m-resolve');
+async function capSet(rid, n, name){ if(!n && !confirm('Remove the daily alert cap' + (name ? ' for ' + name : '') + '? Every alert sends again.')) return; const d = await post('/admin/api/client/'+rid+'/alert-cap', {max_per_day:n}); if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ _clients=null; _opsFresh = true; route(); } }
+async function resolveSubmit(){ if(!_resolve) return;
+  const d = await oneAtATime('resolve', goBtn('m-resolve', 'resolveSubmit'), function(){ return post('/admin/api/issues/resolve', {key:_resolve.key, note:$('r-note').value, occurrence_at:_resolve.occurrence_at}); }); if(!d) return;
+  closeModal('m-resolve');
   // 409: this one can't be resolved — it clears itself, or closes another way.
   if(d && (d._status === 409 || d.resolvable === false)){ toast(d.error || "This issue can't be marked resolved — it clears itself.", 'bad'); return; }
   if(say(d, d && d.scope === 'condition' ? 'Resolved while the condition lasts' : 'Resolved for this occurrence')){ route(); badges(); } }
@@ -1156,14 +1301,17 @@ function errText(d, fallback){ return (d && d.error) || ((fallback || 'That didn
 function say(d, okMsg){ const ok = okRes(d); toast(ok ? ((d && d.message) || okMsg || 'Done') : errText(d), ok ? 'good' : 'bad'); return ok; }
 // An admin job (#153): the action answers {job_id} at once and the work runs
 // on the server's bounded pool; its poll URL answers {status: pending} until
-// the result is in. Polled every 2 s, five minutes at most. A poll carries a
-// method, so it is never dropped when the admin moves to another page.
-async function pollJob(url, onTick){
+// the result is in. Polled every 2 s, five minutes at most unless the caller
+// names a longer bound (maxMs); past it the answer is {ok:false, timed_out}.
+// A poll carries a method, so it is never dropped when the admin moves to
+// another page — every poll in the console is this one (C3).
+async function pollJob(url, onTick, maxMs){
   const t0 = Date.now();
+  var bound = maxMs || 300000;
   for(;;){
     let d; try{ d = await api(url, {method:'GET'}); }catch(e){ d = {ok:false, error:String((e && e.message) || e)}; }
     if(!d || d.status !== 'pending') return d || {ok:false, error:'No answer from the server.'};
-    if(Date.now() - t0 > 300000) return {ok:false, error:'Still running after five minutes — check back later.'};
+    if(Date.now() - t0 > bound) return {ok:false, timed_out:true, error:'Still running after ' + durMin(bound / 60000) + ' — check back later.'};
     if(onTick) onTick(d);
     await new Promise(r => setTimeout(r, 2000));
   }
@@ -1176,14 +1324,26 @@ function jobSaid(r, label){
     $('pw-title').textContent = label || 'Shown once'; $('pw-sub').textContent = 'The new password — copy it now, it is not shown again.';
     $('pw-out').textContent = r.password_once; $('pw-log').hidden = !r.output; $('pw-log').textContent = r.output || ''; openModal('m-password');
   }
+  // A pool task that failed keeps its reason inside its result
+  // (ops.run_admin_task: {ok:false, state, result:{error}}): that reason is
+  // what the admin reads, never "That didn't work (HTTP 200)" (W15-i).
+  if(r && !okRes(r) && !r.error && r.result && r.result.error) r = Object.assign({}, r, {error: String(r.result.error)});
   return say(r, (label || 'Done') + ' — finished');
 }
 // A panel that reads its own data after the page is drawn: the page never
 // waits for it, and a failure is said inside the panel, not over the page.
 function skel(n){ let h = ''; for(let i = 0; i < (n || 2); i++) h += '<div class="sk" style="width:' + (38 + 17*i) + '%"></div>'; return h; }
-function lazy(id, fn){
-  Promise.resolve().then(fn).then(html => { const el = $(id); if(el && html != null) el.innerHTML = html; })
-    .catch(e => { if(e && e.message === STALE) return; const el = $(id); if(el) el.innerHTML = `<div class="warnline" role="status">${ico('alert','xs')} This panel couldn't load — ${esc((e && e.message) || e)}</div>`; console.error(e); });
+// With `rid`, the panel belongs to that client's page (admin audit 10/27/26,
+// W3): a reload a slow write asks for after the admin has opened another
+// client is not drawn there — the panel ids (cd-intake, off-card, …) are the
+// same on every client page, and the read itself is never dropped once the
+// route has moved on.
+function onClient(rid){ var m = /^#client\/(\d+)/.exec(location.hash || ''); return !!m && +m[1] === +rid; }
+function lazy(id, fn, rid){
+  var here = function(){ return rid == null || onClient(rid); };
+  if(!here()) return;
+  Promise.resolve().then(fn).then(html => { if(!here()) return; const el = $(id); if(el && html != null) el.innerHTML = html; })
+    .catch(e => { if(e && e.message === STALE) return; if(!here()) return; const el = $(id); if(el) el.innerHTML = `<div class="warnline" role="status">${ico('alert','xs')} This panel couldn't load — ${esc((e && e.message) || e)}</div>`; console.error(e); });
 }
 // A read for a panel: throws the server's sentence so lazy() can say it.
 async function need(path){ const d = await api(path); if(!d || d.ok === false || d._status >= 400) throw new Error((d && d.error) || ('HTTP ' + (d && d._status))); return d; }
@@ -1346,12 +1506,18 @@ function brandRow(b){
 }
 async function loadClients(){ if(!_clients){ const d = await api('/admin/api/clients'); if(!okRes(d)) throw new Error(errText(d, 'The client records couldn\'t be read')); _clients = d.clients; } return _clients; }
 function clientsPage(n){ _cpage = n; clientsView(); }
+// Each list keeps its own request count (admin audit 10/27/26, W14): typing
+// re-reads under the same route, so only the newest answer is drawn — a
+// slower answer for "Sim" never lands over the one for "Simple".
+var _cvSeq = 0, _isSeq = 0;
 async function clientsView(){
+  var mine = ++_cvSeq;
   const p = new URLSearchParams({segment: _showDemo ? 'all' : 'customer', sort: _csort, page: String(_cpage), per_page: '50'});
   // Demo accounts are always listed, tagged "demo" (10/17/26) - still never counted.
   if(!_showDemo) p.set('include_demo', '1');
   if(_cq) p.set('q', _cq); if(_ch) p.set('health', _ch); if(_cs) p.set('status', _cs);
   const d = await api('/admin/api/clients/list?' + p.toString());
+  if(mine !== _cvSeq) return;
   if(!okRes(d)) throw new Error(errText(d, 'The restaurant list couldn\'t be read'));
   const rows = d.items || [], cnt = d.counts || {}, hc = cnt.health || {}, sc = cnt.status || {}, segc = cnt.segment || {};
   const hTotal = Object.keys(hc).reduce((n,k)=>n+hc[k],0);
@@ -1467,15 +1633,31 @@ async function bulkApply(){
   if(!d.ok){ toast(d.error || 'The list was not applied', 'bad'); $('bulk-apply').disabled = false; return; }
   $('bulk-token').value = '';
   $('bulk-out').innerHTML = `<div class="sub">Creating ${d.rows} row${d.rows===1?'':'s'}…</div>`;
-  for(let i = 0; i < 120; i++){
-    await new Promise(r=>setTimeout(r, 1500));
-    const j = await api('/admin/api/onboarding/provision/' + d.job_id);
-    if(j.status === 'pending') continue;
-    if(j.ok === false && !j.rows){ $('bulk-out').innerHTML = `<div class="warnline">${esc(j.error||'Failed')}</div>`; return; }
-    const c = j.counts || {};
-    $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.created||0}</span> created · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> not created</div>` + bulkRows(j.rows);
-    toast((c.created||0) + ' restaurants created'); return;
-  }
+  return bulkFollow(d.job_id);
+}
+// The provisioning job followed through pollJob (admin audit 10/27/26,
+// W10/O11/C3): never dropped when the admin moves on, up to 20 minutes for a
+// long list. Its table is drawn when the Onboarding page is still open; the
+// toast says the counts wherever the admin is — in red when any row failed —
+// and a list still running says where its restaurants appear.
+var BULK_MAX_MS = 1200000;
+function bulkFollow(jobId){
+  return pollJob('/admin/api/onboarding/provision/' + encodeURIComponent(jobId), null, BULK_MAX_MS).then(function(j){
+    var out = $('bulk-out'), c = (j && j.counts) || {}, bad, msg;
+    if(j && j.timed_out){
+      msg = 'The list is still being created after ' + durMin(BULK_MAX_MS / 60000) + ' — its restaurants appear in Customers → Restaurants as they are made.';
+      if(out) out.innerHTML = '<div class="warnline">' + esc(msg) + '</div>';
+      toast(msg, 'bad'); return;
+    }
+    if(!j || (j.ok === false && !j.rows)){
+      msg = errText(j, 'The list was not applied');
+      if(out) out.innerHTML = '<div class="warnline">' + esc(msg) + '</div>';
+      toast(msg, 'bad'); return;
+    }
+    bad = j.ok === false || (c.error || 0) > 0;
+    if(out) out.innerHTML = '<div class="sub"><span class="n">' + fmtN(c.created || 0) + '</span> created · <span class="n">' + fmtN(c.exists || 0) + '</span> already here · <span class="n">' + fmtN(c.error || 0) + '</span> not created</div>' + bulkRows(j.rows);
+    toast(fmtN(c.created || 0) + ' restaurant' + (c.created === 1 ? '' : 's') + ' created' + ((c.error || 0) ? ' · ' + fmtN(c.error) + ' not created' : '') + (j.ok === false && j.error ? ' — ' + j.error : '') + (out ? '' : ' — see Customers → Restaurants'), bad ? 'bad' : 'good');
+  });
 }
 async function openSetup(rid){
   const d = await api('/admin/api/onboarding/' + rid + '/setup'); if(!d.ok){ toast(d.error||'Setup couldn\'t be read','bad'); return; }
@@ -1643,7 +1825,8 @@ async function issues(qs){
   if(_sview === 'resolved') return resolvedIssues(nav);
   const p = new URLSearchParams({segment:_sf, sort:_ssort, page:String(_spage), per_page:'40'});
   if(_ssev) p.set('severity', _ssev); if(_sq) p.set('q', _sq);
-  const d = await api('/admin/api/issues/list?' + p.toString()); if(!okRes(d)) throw new Error(errText(d, 'The support queue couldn\'t be read'));
+  var mine = ++_isSeq;
+  const d = await api('/admin/api/issues/list?' + p.toString()); if(mine !== _isSeq) return; if(!okRes(d)) throw new Error(errText(d, 'The support queue couldn\'t be read'));
   const c = d.counts || {}, n = x => (c[x] || {}).total || 0;
   const segs = [['attention','Needs attention', c.attention || 0],['customer','Customers', n('customer')],['platform','Platform', n('platform')],['internal','Internal', n('internal')]];
   V().innerHTML = `${errBanner(d)}
@@ -1709,7 +1892,7 @@ function actionsMenu(c, d){
   // The legacy settings and data pages refuse support logins (INT-2): hidden
   // from support like every write control.
   const aw = (label, href) => `<a data-a class="w" href="${href}">${label}</a>`;
-  const login = c.logins.find(l=>l.is_active && (l.role==='client'||l.role==='owner')) || c.logins.find(l=>l.is_active) || {};
+  const login = principalLogin(c.logins) || {};
   const n = jsq(c.name), em = jsq((c.owner||{}).email || c.owner_email || '');
   const status = (c.billing||{}).status || 'trial';
   return `<div class="menu" id="cl-actions" style="width:320px">
@@ -1726,6 +1909,15 @@ function actionsMenu(c, d){
     ${b(c.is_demo ? 'Mark as real client…' : 'Mark as demo…', `setDemo(${c.id},${c.is_demo?0:1},'${n}')`)}
     <hr><span class="lbl" style="color:var(--red-t)">Danger zone</span>${b('Freeze account (takeover response)…', `freezeAccount(${c.id},'${n}')`, 'dz')}${a('Close this account (offboarding)…', '#client/'+c.id+'?tab=offboarding')}${c.is_demo?`<button data-a class="dz w" data-name="${esc(c.name)}" onclick="menusClose();deleteDemo(${c.id},this.dataset.name)">Delete this demo account</button>`:''}
     <span class="dim" style="padding:8px 10px 4px;white-space:normal;line-height:1.4">Plan, holds and contract changes are on the Billing tab. A real restaurant is deleted only through the offboarding checklist on Access. Each action confirms first.</span></div>`;
+}
+// The login "Send a password-reset link" goes to: the account holder as the
+// server picks it (admin_routes._principal_login_id, W15-e) — an active
+// client or owner login, a blank role counting as client, never a staff PIN
+// identity, oldest first; else the oldest active non-staff console login.
+function principalLogin(logins){
+  var l = (logins || []).filter(function(x){ return x && x.is_active && !/@staff\.invalid$/.test(x.email || ''); }).sort(function(a, b){ return (a.id || 0) - (b.id || 0); });
+  var own = l.filter(function(x){ var r = x.role || 'client'; return r === 'client' || r === 'owner'; })[0];
+  return own || l.filter(function(x){ return ['employee', 'support'].indexOf(x.role || '') < 0; })[0] || null;
 }
 function stripDiv(label, value, sub, tone){ return `<div><span class="lbl">${label}</span><span class="v" style="${tone||''}">${value}</span><span class="s">${sub}</span></div>`; }
 function setupRing(sc){
@@ -1955,7 +2147,7 @@ async function intakeStore(rid, name){
   const d = await post('/admin/api/client/' + rid + '/intake/store', {location_id: v});
   if(say(d, 'Store mapped')) intakeReload(rid, name);
 }
-function intakeReload(rid, name){ lazy('cd-intake', () => intakeHtml({id:rid, name:name})); }
+function intakeReload(rid, name){ lazy('cd-intake', () => intakeHtml({id:rid, name:name}), rid); }
 async function intakeCreate(rid, name){
   const v = $('intake-senders').value.trim();
   if(!v){ toast('Name at least one sender — mail from anyone else is held', 'bad'); return; }
@@ -2009,12 +2201,12 @@ async function contactAdd(id, name){
   if(!ph){ toast('Enter a mobile number', 'bad'); return; }
   if(!confirm('Add ' + (nm || ph) + ' as an alert contact for ' + name + '?')) return;
   const d = await post('/admin/api/alert-contacts/' + id, {name: nm, phone: ph});
-  if(say(d, 'Alert contact added')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}));
+  if(say(d, 'Alert contact added')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}), id);
 }
 async function contactDelete(id, cid, who, name){
   if(!confirm('Remove ' + who + ' from ' + name + "'s alert contacts? They stop getting alerts.")) return;
   const d = await post('/admin/api/alert-contacts/' + id + '/' + cid + '/delete', {});
-  if(say(d, who + ' removed')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}));
+  if(say(d, who + ' removed')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}), id);
 }
 async function templatesHtml(c){
   const d = await need('/admin/api/templates/' + c.id);
@@ -2025,12 +2217,12 @@ async function templatesHtml(c){
 function templateAdd(id, name){
   formOpen({title:'New reply template — ' + name, go:'Add template', done:'Template added',
     fields:[{id:'title', label:'Title', placeholder:'e.g. Thanks for a 5-star visit'},{id:'category', label:'For', type:'select', options:[['general','Any review'],['positive','Positive reviews'],['negative','Negative reviews'],['neutral','Neutral reviews']]},{id:'body', label:'Reply text', type:'textarea', rows:5}],
-    submit: v => post('/admin/api/templates/' + id, v), after: () => lazy('cd-templates', () => templatesHtml({id:id, name:name}))});
+    submit: v => post('/admin/api/templates/' + id, v), after: () => lazy('cd-templates', () => templatesHtml({id:id, name:name}), id)});
 }
 async function templateDelete(id, tid, title, name){
   if(!confirm('Delete the reply template “' + title + '” from ' + name + '?')) return;
   const d = await post('/admin/api/templates/' + id + '/' + tid + '/delete', {});
-  if(say(d, 'Template deleted')) lazy('cd-templates', () => templatesHtml({id:id, name:name}));
+  if(say(d, 'Template deleted')) lazy('cd-templates', () => templatesHtml({id:id, name:name}), id);
 }
 // Staff scheduling notes (#142): a new note is added to the person's notes,
 // never written over them; a removal offers Undo.
@@ -2040,11 +2232,15 @@ function staffNotesHtml(c, notes){
     <div style="display:flex;gap:6px;flex-wrap:wrap"><input id="sn-name" placeholder="Employee name" style="flex:1;min-width:110px"><input id="sn-notes" placeholder="e.g. no Sundays; off by 4pm" style="flex:2;min-width:150px"><button class="btn s w" onclick="staffNoteAdd(${c.id},'${jsq(c.name)}')">Add</button></div>
     <span class="dim">A note for someone who already has one is added to theirs, never written over it.</span>`;
 }
-async function staffNoteAdd(id, name, who, text){
+async function staffNoteAdd(id, name, who, text, expires){
   const nm = who || $('sn-name').value.trim(), nt = text || $('sn-notes').value.trim();
   if(!nm || !nt){ toast('Enter the employee and the note', 'bad'); return; }
   const fd = new FormData(); fd.append('employee_name', nm); fd.append('notes', nt);
-  const d = await api('/admin/staff-notes/' + id, {method:'POST', body: fd});
+  // Undo puts the note back with its end date when the delete returned one (W15-h).
+  if(expires) fd.append('expires_on', expires);
+  // Sent once however often Add is clicked (C11/W15-f): it appends.
+  const d = await oneAtATime('staff-note:' + id, goBtn('cd-staff', 'staffNoteAdd'), function(){ return api('/admin/staff-notes/' + id, {method:'POST', body: fd}); });
+  if(!d) return;
   if(say(d, d.appended ? ('Added to ' + nm + "'s notes") : ('Note saved for ' + nm))) route();
 }
 async function staffNoteDelete(id, nid, who, name){
@@ -2053,7 +2249,7 @@ async function staffNoteDelete(id, nid, who, name){
   if(!say(d, who + "'s notes removed")) return;
   const gone = d.deleted || {};
   route();
-  if(gone.notes && confirm('Removed ' + who + '’s notes. Undo — put them back?')) staffNoteAdd(id, name, gone.employee_name || who, gone.notes);
+  if(gone.notes && confirm('Removed ' + who + '’s notes. Undo — put them back?')) staffNoteAdd(id, name, gone.employee_name || who, gone.notes, gone.expires_on || null);
 }
 // Menu (#73, #142, #153). The menu notes the AI writes from, edited here: read
 // from the client's settings (INT-2's GET …/settings) and saved under B1's
@@ -2077,7 +2273,10 @@ async function menuNotesHtml(c){
   const d = await need('/admin/api/client/' + c.id + '/settings');
   const s = d.settings || {};
   _mn = {id: c.id, name: c.name, version: d.version, base: s.menu_notes == null ? null : s.menu_notes,
-         url: d.save_url || ('/admin/client-settings/' + c.id), mine: null};
+         url: d.save_url || ('/admin/client-settings/' + c.id), mine: null,
+         // The page a menu was read from rides with the next save (W15-c):
+         // the stored one (for `base`), and one an extraction brought.
+         baseUrl: s.menu_url == null ? null : s.menu_url, newUrl: null, extractUrl: null};
   return `<label class="lbl" for="mn-text">Menu notes</label>
     <textarea id="mn-text" rows="6" maxlength="${MENU_NOTES_MAX}" style="width:100%" placeholder="Signature dishes, current specials — what the AI should know about the menu" oninput="mnCount()">${esc(_mn.base || '')}</textarea>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn s w" id="mn-save" onclick="mnSave()">Save menu notes</button><span class="dim" id="mn-count">${mnCountText(_mn.base || '')}</span><span id="mn-status" role="status" style="font-size:12.5px"></span></div>
@@ -2090,15 +2289,22 @@ async function mnSave(){
   const t = $('mn-text'), m = _mn;
   if(!t || !m) return;
   const v = t.value.trim();
-  if(v === String(m.base || '').trim()){ mnSay('', 'Nothing changed.'); return; }
+  var newUrl = m.newUrl && m.newUrl !== String(m.baseUrl || '') ? m.newUrl : null;
+  if(v === String(m.base || '').trim() && !newUrl){ mnSay('', 'Nothing changed.'); return; }
   $('mn-save').disabled = true; mnSay('', 'Saving…');
-  let d; try{ d = await post(m.url, {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}}); }catch(e){ d = null; }
+  // The notes, and the menu page they were read from when an extraction
+  // brought one (W15-c: it fed the website-ownership proof and was never
+  // saved) — each field sent with the value it loaded at (B1).
+  var body = {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}};
+  if(newUrl){ body.menu_url = newUrl; body.base.menu_url = m.baseUrl; }
+  let d; try{ d = await post(m.url, body); }catch(e){ d = null; }
   if($('mn-save')) $('mn-save').disabled = false;
   if(_mn !== m || !$('mn-text')) return;                 // the admin has moved on
   if(!d){ mnSay('bad', 'No answer from the server — the outcome is unknown. Reload before saving again.'); return; }
   if(okRes(d)){
     const saved = (d.saved || {}).menu_notes;
     m.base = saved == null ? null : saved; m.version = d.version; m.mine = null;
+    if(newUrl){ m.baseUrl = Object.prototype.hasOwnProperty.call(d.saved || {}, 'menu_url') ? d.saved.menu_url : newUrl; m.newUrl = null; }
     $('mn-text').value = m.base || ''; $('mn-mine').innerHTML = ''; mnCount();
     mnSay('good', (m.base || '') === v ? 'Saved for ' + m.name + '.' : 'Saved for ' + m.name + ' — as the box now shows (tags are removed, and anything past ' + fmtN(MENU_NOTES_MAX) + ' characters is cut).');
     return;
@@ -2108,10 +2314,11 @@ async function mnSave(){
     // now (the 409 carries it; a race lost at the write itself doesn't, so
     // read it again) and keep this text to put back.
     const cur = d.current || {};
+    if(Object.prototype.hasOwnProperty.call(cur, 'menu_url')) m.baseUrl = cur.menu_url;
     if(Object.prototype.hasOwnProperty.call(cur, 'menu_notes') && d.current_version != null){ m.base = cur.menu_notes; m.version = d.current_version; }
     else {
       let f; try{ f = await api('/admin/api/client/' + m.id + '/settings', {method:'GET'}); }catch(e){ f = null; }
-      if(okRes(f)){ m.base = (f.settings || {}).menu_notes; m.version = f.version; }
+      if(okRes(f)){ m.base = (f.settings || {}).menu_notes; m.version = f.version; m.baseUrl = (f.settings || {}).menu_url == null ? null : f.settings.menu_url; }
       else { mnSay('bad', errText(d) + ' The notes stored now couldn\'t be read — reload the page.'); return; }
     }
     if(_mn !== m || !$('mn-text')) return;
@@ -2134,6 +2341,7 @@ function mnUse(){
   const t = $('mn-text'), x = $('mx-text'); if(!t || !x) return;
   const long = x.value.length > MENU_NOTES_MAX;
   t.value = x.value.slice(0, MENU_NOTES_MAX); mnCount();
+  if(_mn.extractUrl) _mn.newUrl = _mn.extractUrl;         // saved with the notes (W15-c)
   mnSay('', 'The extracted menu is in the box — review it, then Save menu notes.' + (long ? ' Cut to ' + fmtN(MENU_NOTES_MAX) + ' characters, the most the notes keep.' : ''));
   t.focus();
 }
@@ -2145,11 +2353,12 @@ async function menuExtract(id, source){
   if(!okRes(d) || !d.job_id){ out.innerHTML = `<div class="warnline">${esc(errText(d, 'The extraction didn\'t start'))}</div>`; return; }
   out.innerHTML = `<span class="muted" style="font-size:12.5px">Reading the menu… this can take a minute.</span>`;
   const r = await pollJob('/admin/api/menu-extract/' + encodeURIComponent(d.job_id));
-  if(!$('mx-out')) return;
+  if(!$('mx-out') || !onClient(id)) return;                // the admin has opened another page (W3)
   if(!okRes(r) || !r.menu_notes){ $('mx-out').innerHTML = `<div class="warnline">${esc(errText(r, 'Nothing came back'))}</div>`; return; }
   // Into the notes box above when it loaded for this client; the legacy
   // settings page only when it couldn't be read.
   const box = _mn && _mn.id === id && $('mn-text');
+  if(box) _mn.extractUrl = r.menu_url || null;            // the page it was read from, when there was one
   $('mx-out').innerHTML = `<textarea id="mx-text" rows="8" style="width:100%">${esc(r.menu_notes)}</textarea><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn s" onclick="navigator.clipboard&&navigator.clipboard.writeText($('mx-text').value).then(()=>toast('Copied','good'))">Copy</button>${box ? '<button class="btn s w" onclick="mnUse()">Put it in the menu notes</button>' : `<a class="btn s w" href="/admin/client-settings/${id}">Open Settings to save it</a>`}<span class="dim">Not saved.${r.message?' '+esc(r.message):''}</span></div>`;
 }
 // ── the client's Messages & AI tab ──
@@ -2185,12 +2394,14 @@ function dayKeysBack(n){ const out = []; for(let i = 0; i < n; i++){ const x = n
 async function suppressionsHtml(c){
   const d = await need('/admin/api/suppressions?restaurant_id=' + c.id);
   const rows = d.suppressions || [];
-  return `<h2>Suppressed addresses</h2>${rows.map(s=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1;min-width:0"><b>${esc(s.email)}</b> <span class="dim">${esc((s.roles||[]).join(', '))} · ${esc(s.reason||'')} ${fmtD(s.created_at)}</span><div class="dim">${s.scope==='marketing'?'Marketing only — alerts and reports still go.':(s.scope==='guest'?'Guest mail only.':'Gets no email from Cavnar AI — alerts, briefs and reports included.')}${s.operator?' (operator address: never suppressed for operator mail)':''}</div></span><button class="btn s w" onclick="reinstate('${jsq(s.email)}','${jsq(c.name)}')">Reinstate</button></div>`).join('') || '<span class="muted" style="font-size:13px">No address this client\'s mail goes to is suppressed.</span>'}`;
+  return `<h2>Suppressed addresses</h2>${rows.map(s=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1;min-width:0"><b>${esc(s.email)}</b> <span class="dim">${esc((s.roles||[]).join(', '))} · ${esc(s.reason||'')} ${fmtD(s.created_at)}</span><div class="dim">${s.scope==='marketing'?'Marketing only — alerts and reports still go.':(s.scope==='guest'?'Guest mail only.':'Gets no email from Cavnar AI — alerts, briefs and reports included.')}${s.operator?' (operator address: never suppressed for operator mail)':''}</div></span>${s.reinstatable === false ? NOT_REINSTATABLE : `<button class="btn s w" onclick="reinstate('${jsq(s.email)}','${jsq(c.name)}',${c.id})">Reinstate</button>`}</div>`).join('') || '<span class="muted" style="font-size:13px">No address this client\'s mail goes to is suppressed.</span>'}`;
 }
-async function reinstate(email, name){
+async function reinstate(email, name, rid){
   const why = prompt('Reinstate ' + email + (name ? ' (' + name + ')' : '') + '? Mail to it starts going out again. Why (for the record)?');
   if(why === null) return;
-  const d = await post('/admin/api/suppressions/reinstate', {email, reason: why});
+  // From a client page the lift names its client (WS-2 C7); a 409 (their own opt-out) says the server's sentence.
+  var body = {email: email, reason: why}; if(rid) body.restaurant_id = rid;
+  const d = await post('/admin/api/suppressions/reinstate', body);
   if(say(d, email + ' reinstated')) route();
 }
 async function smsHtml(c){
@@ -2206,10 +2417,10 @@ async function testText(id, name){
   if(!confirm('Text a test alert to ' + contacts.map(x=>(x.name||'contact') + ' (…' + String(x.phone||'').slice(-4) + ')').join(', ') + ' for ' + name + '?')) return;
   const d = await post('/admin/alert-contacts/test/' + id, {});
   const res = (d && d.results) || [];
-  const el = $('cm-test');
+  const el = onClient(id) ? $('cm-test') : null;
   if(el) el.innerHTML = res.length ? res.map(r=>`<div style="font-size:13px"><span class="chip ${r.ok?'ok':'bad'}">${r.ok?'accepted':'failed'}</span> …${esc(r.to_last4||'')} ${r.ok?'<span class="dim">Twilio took it; the status updates when the phone gets it</span>':'<span style="color:var(--red-t)">'+esc((r.error_code?r.error_code+' · ':'')+(r.error||r.status||''))+'</span>'}</div>`).join('') : `<div class="warnline">${esc(errText(d, 'No text went out'))}</div>`;
   say(d, 'Test text sent to ' + ((d && d.sent) || 0) + ' contact' + ((d && d.sent) === 1 ? '' : 's'));
-  lazy('cm-sms', () => smsHtml({id:id, name:name}));
+  lazy('cm-sms', () => smsHtml({id:id, name:name}), id);
 }
 async function stormHtml(c){
   const d = await need('/admin/api/messaging/health');
@@ -2403,13 +2614,18 @@ async function reactivateLogin(uid, username, rname){
 // integrations clears every stored credential), withdraw, and delete —
 // unlocked only when the checklist is finished.
 const STEP_TONE = {done:'good', skipped:'neu', not_needed:'neu', pending:'warn'};
+// Steps whose "done" acted outside: setting them back to pending only marks
+// the step — nothing is undone (W15-g), so the button doesn't say Undo.
+var OFF_DONE_STAYS = {stripe: 'Only marks the step pending — the Stripe subscription stays cancelled.',
+  docusign: 'Only marks the step pending — the envelope stays voided.',
+  integrations: 'Only marks the step pending — the connections stay revoked; the owner would reconnect them.'};
 async function offboardHtml(c){
   const d = await need('/admin/api/client/' + c.id + '/offboarding');
   const rq = d.request, n = jsq(c.name), open = (d.steps||[]).filter(s=>s.status==='pending').length;
   const conn = Object.keys(d.connected||{}).filter(k=>d.connected[k]);
   const body = `${rq ? `<span class="ink2" style="font-size:13px">The owner asked to close the account on ${esc(rq.requested_on)}. Finish the checklist and delete it by ${esc(rq.due_on)}, or withdraw the request with them.</span>` : '<span class="muted" style="font-size:13px">No deletion request is open. The checklist is here for a client you are closing yourself.</span>'}
     <div class="lst">${(d.steps||[]).map(s=>`<div class="li" style="padding:12px 0"><span style="width:92px;flex-shrink:0">${pill(STEP_TONE[s.status]||'neu', esc((s.status||'').replace('_',' ')), false)}</span><div class="tt"><b>${esc(s.label)}</b><span>${esc(s.note || s.hint || '')}${s.actor?' · '+esc(s.actor)+' '+fmtD(s.updated_at):''}${s.step==='integrations'&&conn.length&&s.status==='pending'?' · connected now: '+esc(conn.join(', ')):''}</span></div>
-      ${s.status==='pending' ? `<button class="btn s w" onclick="offStep(${c.id},'${jsq(s.step)}','done','${jsq(s.label)}','${n}')">Mark done</button><button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','skipped','${jsq(s.label)}','${n}')">Skip…</button>` : (s.status==='not_needed' ? '' : `<button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','pending','${jsq(s.label)}','${n}')">Undo</button>`)}</div>`).join('')}</div>
+      ${s.status==='pending' ? `<button class="btn s w" onclick="offStep(${c.id},'${jsq(s.step)}','done','${jsq(s.label)}','${n}')">Mark done</button><button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','skipped','${jsq(s.label)}','${n}')">Skip…</button>` : (s.status==='not_needed' ? '' : `<button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','pending','${jsq(s.label)}','${n}')"${OFF_DONE_STAYS[s.step] && s.status === 'done' ? ` title="${esc(OFF_DONE_STAYS[s.step])}"` : ''}>${OFF_DONE_STAYS[s.step] && s.status === 'done' ? 'Mark pending' : 'Undo'}</button>`)}</div>`).join('')}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn s w" onclick="posExport(${c.id})">POS archive (CSV zip)…</button><span class="dim" id="posx-${c.id}"></span></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${rq?`<button class="btn s w" onclick="withdrawDeletion(${c.id},'${n}')">Withdraw the request…</button>`:''}<button class="btn s d w" ${d.ready_to_delete?'':'disabled'} title="${d.ready_to_delete?'Permanently delete this restaurant':esc('Finish the checklist first: ' + (d.outstanding||[]).join(', '))}" onclick="deleteRestaurant(${c.id},'${n}')">Delete permanently…</button><span class="dim">${d.ready_to_delete ? 'The checklist is finished. The audit trail and this checklist are kept after the delete.' : open + ' step' + (open===1?'':'s') + ' left before it can be deleted.'}</span></div>`;
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>${rq ? 'Close this account' : 'Offboarding'}</h2>${rq ? pill(rq.overdue ? 'bad' : 'warn', rq.overdue ? 'overdue' : 'due ' + esc(rq.due_on), false) : ''}</div>` + (rq ? body : `<details class="more-d" style="margin:0 -18px -18px"><summary>The checklist, withdraw and delete</summary><div style="padding:0 18px 16px;display:flex;flex-direction:column;gap:12px">${body}</div></details>`);
@@ -2426,7 +2642,7 @@ async function offStep(id, step, status, label, name){
   else if(status === 'done' && step === 'docusign'){ if(!confirm('Void the DocuSign envelope still waiting for ' + name + '’s signature? It can no longer be signed. A contract that is already signed is not voided — skip this step with a note instead.')) return; }
   else if(!confirm((status === 'done' ? 'Mark “' + label + '” done for ' : 'Set “' + label + '” back to pending for ') + name + '?')) return;
   const d = await post('/admin/api/client/' + id + '/offboarding/' + encodeURIComponent(step), {status, note});
-  if(say(d, status === 'done' ? label + ' — done' : (status === 'skipped' ? label + ' — skipped' : label + ' — back to pending'))) lazy('off-card', () => offboardHtml({id:id, name:name}));
+  if(say(d, status === 'done' ? label + ' — done' : (status === 'skipped' ? label + ' — skipped' : label + ' — back to pending'))) lazy('off-card', () => offboardHtml({id:id, name:name}), id);
 }
 // The POS archive for the export step (Audit #23 A7-13): built on the admin
 // pool, then downloaded once (the server deletes it as it sends it).
@@ -2434,15 +2650,38 @@ async function posExport(id){
   const el = $('posx-'+id); const d = await post('/admin/api/client/'+id+'/pos-export', {});
   if(!okRes(d)){ if(el) el.textContent = errText(d); return; }
   if(el) el.textContent = 'Building…';
-  let st = {status:'pending'};
-  for(let i = 0; i < 120 && st.status === 'pending'; i++){ await new Promise(r => setTimeout(r, 2000)); st = await api('/admin/api/client/'+id+'/pos-export/'+d.job_id); }
-  if(!st || st.ok === false || st.status !== 'done'){ if(el) el.textContent = errText(st, 'The export failed'); return; }
-  const go = async () => { const r = await fetch('/admin/api/client/'+id+'/pos-export/'+d.job_id+'/download', {method:'POST'});
-    if(r.status === 403){ const j = await r.json().catch(() => ({})); if(j.reauth_required && await reauth()) return go(); if(el) el.textContent = j.error || 'Refused'; return; }
-    if(!r.ok){ if(el) el.textContent = 'The file is gone; build it again.'; return; }
-    const b = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = st.file || 'pos-export.zip'; document.body.appendChild(a); a.click(); a.remove();
-    if(el) el.textContent = 'Downloaded ' + Math.round((st.bytes||0)/1024) + ' KB. Send it to the owner and note where in the export step.'; };
-  await go();
+  return posExportFollow(id, d.job_id);
+}
+// The build followed through pollJob (admin audit 10/27/26, C3/W15-j): a
+// plain read died on navigation and left the one-shot zip orphaned. The file
+// is downloaded when it is ready wherever the admin is; the line on the
+// Access tab says so, or a toast when that page is no longer open.
+function posExportFollow(id, jobId){
+  var say2 = function(msg, ok){ var el = $('posx-' + id); if(el) el.textContent = msg; else toast('POS archive for #' + id + ': ' + msg, ok ? 'good' : 'bad'); };
+  return pollJob('/admin/api/client/' + id + '/pos-export/' + encodeURIComponent(jobId)).then(function(st){
+    if(!st || st.ok === false || st.status !== 'done'){ say2(errText(st, 'The export failed'), false); return; }
+    return downloadOnce('/admin/api/client/' + id + '/pos-export/' + encodeURIComponent(jobId) + '/download', st.file || 'pos-export.zip').then(function(res){
+      say2(res.ok ? 'Downloaded ' + Math.round((st.bytes || 0) / 1024) + ' KB. Send it to the owner and note where in the export step.' : res.error, res.ok);
+    });
+  });
+}
+// A file the server hands over once, on a POST: the step-up password when it
+// asks (once), then the browser's own save. {ok} or {ok:false, error}.
+function downloadOnce(url, filename, retried){
+  return fetch(url, {method: 'POST'}).then(function(r){
+    if(r.status === 403){
+      return r.json().then(null, function(){ return {}; }).then(function(j){
+        if(j && j.reauth_required && !retried) return reauth().then(function(ok){ return ok ? downloadOnce(url, filename, true) : {ok: false, error: j.error || 'Confirm your password to download it.'}; });
+        return {ok: false, error: (j && j.error) || 'Refused'};
+      });
+    }
+    if(!r.ok) return {ok: false, error: 'The file is gone; build it again.'};
+    return r.blob().then(function(b){
+      var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      return {ok: true};
+    });
+  }, function(){ return {ok: false, error: NO_ANSWER}; });
 }
 async function withdrawDeletion(id, name){
   const note = prompt('Withdraw ' + name + "'s request to close their account? The account carries on as before. A note for the record (optional):");
@@ -2486,8 +2725,10 @@ async function notesHtml(c, before){
 }
 async function noteAdd(id, name){
   const body = ($('note-body').value || '').trim(); if(!body){ toast('Write the note first', 'bad'); return; }
-  const d = await post('/admin/api/client/' + id + '/notes', {body});
-  if(say(d, 'Note added to ' + name)) lazy('cs-notes', () => notesHtml({id:id, name:name}));
+  // Notes are append-only: a double click wrote two (C11/W15-f).
+  const d = await oneAtATime('note:' + id, goBtn('cs-notes', 'noteAdd'), function(){ return post('/admin/api/client/' + id + '/notes', {body}); });
+  if(!d) return;
+  if(say(d, 'Note added to ' + name)) lazy('cs-notes', () => notesHtml({id:id, name:name}), id);
 }
 async function timelineHtml(c, before, keep){
   const q = new URLSearchParams({limit:'60'}); if(_tlTypes.length) q.set('types', _tlTypes.join(',')); if(before) q.set('before', before);
@@ -2529,16 +2770,15 @@ async function auditFind(id, name){
 async function auditLink(aid, rid, auditName, name, pageId){
   if(!confirm((rid ? 'Link the sales audit “' + auditName + '” to ' : 'Unlink the sales audit “' + auditName + '” from ') + name + '?')) return;
   const d = await post('/admin/api/audits/' + aid + '/link', {restaurant_id: rid});
-  if(say(d, rid ? 'Audit linked to ' + name : 'Audit unlinked')) lazy('cs-audits', () => salesAuditsHtml({id:pageId, name:name}));
+  if(say(d, rid ? 'Audit linked to ' + name : 'Audit unlinked')) lazy('cs-audits', () => salesAuditsHtml({id:pageId, name:name}), pageId);
 }
 
 // ── Operations ──────────────────────────────────────────────────────────────
-// One system state first: seven systems, each read from the server's own
-// verdict — job states and the heartbeat's stale / wedged / loop_stalled
-// (D), the platform issues and their severities (C), the messaging problems
-// (E), the AI health status (G). A read that failed is "unknown", never
-// green (#128, #158). Then six subsystems as cards (state, figure, trend);
-// each opens its tab. The reads are shared across the tabs for a minute.
+// One system state first: eight systems, each the server's own verdict from
+// GET /admin/api/ops/state (W2 — the same reading Overview's ring and the
+// rail draw). A read that failed is "unknown", never green (#128, #158).
+// Then six subsystems as cards (state, figure, trend); each opens its tab.
+// The reads are shared across the tabs for a minute.
 let _ops = null, _opsAt = 0, _opsFresh = false, _opsTab = 'jobs', _aid = 30, _ef = 'all', _nf = 'all', _if = 'all', _jobsAll = false;
 // The server pages the Integrations list and the data sources (Audit #23
 // A6-15): the page each is on; a filter change goes back to page 1.
@@ -2559,10 +2799,13 @@ function readErr(d, tables){
   for(let i = 0; i < all.length; i++){ const e = all[i], q = typeof e === 'string' ? e : (e.query || e.name || ''); if(tables.indexOf(q) >= 0) return q + ': ' + ((e && e.error) || 'unavailable'); }
   return null;
 }
-// At most `limit` console reads in flight (#32): four request threads serve
-// the whole platform. A read that throws (the network) becomes a failed
-// payload, so it draws as unknown; a read the admin has navigated away from
-// stops the rest.
+// At most `limit` console reads in flight (#32), and never more than two
+// (admin audit 10/27/26, P-05): four request threads serve the whole
+// platform, and a console page must leave two of them to owners, the iPhone
+// app, webhooks and /health. A read that throws (the network) becomes a
+// failed payload, so it draws as unknown; a read the admin has navigated
+// away from stops the rest.
+var API_ALL_MAX = 2;
 async function apiAll(paths, limit){
   const out = new Array(paths.length); let next = 0, stale = null;
   async function worker(){
@@ -2571,7 +2814,7 @@ async function apiAll(paths, limit){
       try{ out[k] = await api(paths[k]); }
       catch(e){ if(e && e.message === STALE){ stale = e; break; } out[k] = {ok:false, _status:0, error:"Couldn't reach the server (" + (e && e.message || e) + ')'}; } }
   }
-  await Promise.all(Array.from({length: Math.max(1, Math.min(limit || 3, paths.length))}, worker));
+  await Promise.all(Array.from({length: Math.max(1, Math.min(limit || API_ALL_MAX, API_ALL_MAX, paths.length))}, worker));
   if(stale) throw stale;
   return out;
 }
@@ -2582,7 +2825,7 @@ function fillUtcDays(rows, n){ const by = {}; (rows||[]).forEach(r => { by[r.day
   return out; }
 // Minutes since, as words: "just now" under a minute, never "0m ago".
 function agoWord(ts){ const a = ago(ts); return a === 'now' ? 'just now' : (a === '—' ? '—' : a + ' ago'); }
-function minsAgo(m){ return m == null ? '—' : (m < 1 ? 'just now' : fmtN(Math.round(m)) + 'm ago'); }
+function minsAgo(m){ return m == null ? '—' : (m < 1 ? 'just now' : durMin(m) + ' ago'); }
 function tsAt(v){ return typeof v === 'number' ? new Date(v*1000) : parseTs(v); }
 // Every write in these areas: a confirm that says what it does and names
 // the client or recipient, then a toast from the server's own answer — its
@@ -2598,73 +2841,26 @@ async function opsWrite(path, body, question, done, okText){
 const ST_WORD = {good:'OK', warn:'Degraded', bad:'Failing', neu:'Unknown'};
 // The worst severity among the platform issues matching `pred`, as a tone.
 function issueTone(list, pred){ const hit = list.filter(pred); return hit.some(i => i.severity === 'critical') ? 'bad' : (hit.length ? 'warn' : null); }
+// Each system's tone and line are the server's verdict (o.st, from
+// /admin/api/ops/state — W2/O1/V04): this page used to judge them itself
+// from five payloads and disagreed with Overview and the server (a stalled
+// loop red here, amber there, green on the ring). The Jobs card's figure —
+// how many registry jobs are in good standing — is a count of the jobs
+// payload, not a verdict, and stays.
+var ST_OF = {ok: 'good', warn: 'warn', bad: 'bad', unknown: 'neu'};
 function opsState(o){
-  const ov = o.ov, jb = o.jb, mh = o.mh, ai = o.ai, k = (ov && ov.kpis) || {};
-  const ovE = readErr(ov), jbE = readErr(jb), mhE = readErr(mh), aiE = readErr(ai);
-  const plat = ovE ? [] : (ov.issues || []).filter(i => !i.restaurant_id);
-  const pk = (pre) => (i) => (i.key || '').indexOf(pre) === 0;
-  const words = (pred) => plat.filter(pred).map(i => i.title);
-  const probs = mhE ? [] : (mh.problems || []);
-  const out = [];
-  // Scheduler — D's liveness, never the beat's age alone (#121).
-  { const h = jbE ? null : (jb.heartbeat || {}); let tone = 'good', sub = '';
-    if(!h){ tone = 'neu'; sub = jbE; }
-    else if(h.wedged){ tone = 'bad'; sub = `${h.running_job} has run ${Math.round(h.running_minutes)}m, past its ${h.running_bound_minutes}m bound`; }
-    else if(h.loop_stalled){ tone = 'bad'; sub = `no tick has finished in ${Math.round(h.loop_completed_age_minutes)}m`; }
-    else if(h.beat_age_minutes == null){ tone = 'bad'; sub = 'it has never beaten'; }
-    else if(h.stale){ tone = 'bad'; sub = `last beat ${Math.round(h.beat_age_minutes)}m ago`; }
-    else sub = `beat ${h.beat_age_minutes < 1 ? 'just now' : Math.round(h.beat_age_minutes) + 'm ago'}`;
-    out.push({key:'scheduler', label:'Scheduler', tone, sub}); }
-  // Jobs — each registry job's own state (D, #40).
-  { let tone = 'neu', sub = jbE, value = '—', bad = 0;
-    if(!jbE){ const js = jb.jobs || [], n = s => js.filter(j => j.state === s).length;
-      bad = n('failed') + n('stuck') + n('overdue');
-      const part = n('partial'), missed = (jb.missed_windows || []).length + (jb.dsr_missing || []).length;
-      tone = bad ? 'bad' : (part || missed ? 'warn' : 'good');
-      value = `${n('ok') + n('running')}/${js.length}`;
-      sub = [n('failed') ? n('failed') + ' failed' : '', n('stuck') ? n('stuck') + ' stuck' : '', n('overdue') ? n('overdue') + ' overdue' : '', part ? part + ' partial' : '', missed ? missed + ' missed window' + (missed === 1 ? '' : 's') : ''].filter(Boolean).join(' · ') || 'every job on schedule'; }
-    out.push({key:'jobs', label:'Jobs', tone, sub, value, bad}); }
-  // API — the server's 5xx issue (5% of 20+ requests, #160: last 5 minutes).
-  { let tone = 'neu', sub = ovE;
-    if(!ovE){ const t = issueTone(plat, pk('platform:'));
-      tone = t || 'good';
-      sub = k.p95_ms == null ? 'no customer traffic · ' + (k.api_window_label || 'last 5 minutes') : `${k.server_error_rate}% 5xx · p95 ${fmtN(Math.round(k.p95_ms))}ms · ${k.api_window_label || 'last 5 minutes'}`; }
-    out.push({key:'api', label:'API', tone, sub}); }
-  // Email — bounce and complaint issues, the Resend webhook (C, E).
-  { let tone = 'neu', sub = ovE || mhE;
-    if(!ovE){ const r7 = (k.email_rates || {})['7d'] || {};
-      const resendBad = probs.some(p => /Resend/.test(p));
-      tone = issueTone(plat, i => pk('email:')(i) || /^webhook(_stale)?:resend/.test(i.key || '')) || (resendBad ? 'bad' : null) || (k.email_failures_today ? 'warn' : 'good');
-      if(mhE && tone === 'good') tone = 'neu';
-      sub = `${fmtN(k.email_failures_today)} undeliverable today` + (r7.bounce_rate != null ? ` · bounce ${r7.bounce_rate}%` : '') + (r7.complaint_rate ? ` · complaints ${r7.complaint_rate}%` : '') + (mhE ? ' · webhook health unknown' : ''); }
-    out.push({key:'email', label:'Email', tone, sub}); }
-  // SMS — Twilio account errors and webhook failures (E, #14).
-  { let tone = 'neu', sub = mhE;
-    if(!mhE){ const s = mh.sms || {}, by = s.by_status || {}, failed = (by.failed || 0) + (by.undelivered || 0);
-      const tw = probs.filter(p => /Twilio|text\(s\)/.test(p));
-      tone = tw.length || s.account_errors ? 'bad' : (failed ? 'warn' : 'good');
-      sub = tw.length ? tw[0] : `${fmtN(s.attempted || 0)} sent · ${fmtN(failed)} failed · 24 hours`; }
-    out.push({key:'sms', label:'SMS', tone, sub}); }
-  // Push — failures today, automatic storm caps, the outbox (C, E).
-  { let tone = 'neu', sub = ovE;
-    if(!ovE){ const caps = mhE ? 0 : (mh.storm_caps || []).length, pf = mhE ? 0 : ((mh.push_outbox || {}).failed_24h || 0);
-      tone = k.push_failures_today || caps || pf ? 'warn' : 'good';
-      sub = `${fmtN(k.push_failures_today)} failed today` + (caps ? ` · ${caps} storm cap${caps === 1 ? '' : 's'} on` : '') + (pf ? ` · ${pf} dropped from the outbox` : ''); }
-    out.push({key:'push', label:'Push', tone, sub}); }
-  // AI — G's health: breakers, the last hour's error rate, the budget (#104).
-  { let tone = 'neu', sub = aiE;
-    if(!aiE){ const h = ai.health || {};
-      tone = h.status === 'outage' ? 'bad' : h.status === 'degraded' ? 'warn' : (h.status === 'operational' ? 'good' : 'neu');
-      const tw = issueTone(plat, pk('stalled:'));
-      if(tw && tone === 'good') tone = 'warn';
-      sub = h.reason || (h.status ? `${fmtN(k.ai_failures_24h)} failed · ${fmtN(k.ai_quality_24h)} quality findings · 24h` : 'health unknown'); }
-    out.push({key:'ai', label:'AI', tone, sub}); }
-  // Integrations — each failing connection is a critical issue (C, #44, #74).
-  { let tone = 'neu', sub = ovE;
-    if(!ovE){ const hooks = issueTone(plat, i => /^webhook(_stale)?:(stripe|docusign|twilio)/.test(i.key || ''));
-      tone = k.integrations_failing ? 'bad' : (hooks || 'good');
-      sub = k.integrations_failing ? `${k.integrations_failing} failing` : (words(i => /^webhook(_stale)?:/.test(i.key || '') && !/resend/.test(i.key))[0] || 'none failing'); }
-    out.push({key:'integrations', label:'Integrations', tone, sub}); }
+  var out = systemsOf(o.st).map(function(s){ return {key: s.key, label: s.label, tone: ST_OF[s.state] || 'neu', sub: s.reason || ''}; });
+  var jobs = null, jb = o.jb, jbE = readErr(jb), js, n, i;
+  for(i = 0; i < out.length; i++){ if(out[i].key === 'jobs') jobs = out[i]; }
+  if(jobs){
+    jobs.value = '—'; jobs.bad = 0;
+    if(!jbE){
+      js = jb.jobs || [];
+      n = function(st){ return js.filter(function(j){ return j.state === st; }).length; };
+      jobs.value = (n('ok') + n('running')) + '/' + js.length;
+      jobs.bad = n('failed') + n('stuck') + n('overdue');
+    }
+  }
   return out;
 }
 // The area's one sentence, from the states above: every system that is
@@ -2695,8 +2891,8 @@ async function operations(tab){
   _opsTab = OPS_TABS[tab] || 'jobs';
   if(_opsFresh || !_ops || Date.now() - _opsAt > 60000){
     const fresh = _opsFresh, f = fresh ? '?fresh=1' : ''; _opsFresh = false;
-    const r = await apiAll(['/admin/api/overview' + f, '/admin/api/jobs', '/admin/api/messaging/health', '/admin/api/emails', '/admin/api/notifications', '/admin/api/ai?days=' + _aid], 3);
-    _ops = {ov: r[0], jb: r[1], mh: r[2], em: r[3], nt: r[4], ai: r[5], aiDays: _aid, fresh: fresh}; _opsAt = Date.now();
+    const r = await apiAll(['/admin/api/ops/state', '/admin/api/overview' + f, '/admin/api/jobs', '/admin/api/messaging/health', '/admin/api/emails', '/admin/api/notifications', '/admin/api/ai?days=' + _aid], 2);
+    _ops = {st: opsStateKeep(r[0]), ov: r[1], jb: r[2], mh: r[3], em: r[4], nt: r[5], ai: r[6], aiDays: _aid, fresh: fresh}; _opsAt = Date.now();
   } else if(_ops.aiDays !== _aid){ _ops.ai = await api('/admin/api/ai?days=' + _aid); _ops.aiDays = _aid; }
   const o = _ops, k = readErr(o.ov) ? {} : o.ov.kpis, sys = opsState(o), st = {}; sys.forEach(s => { st[s.key] = s; });
   const worse = (a, b) => ({bad:3, warn:2, neu:1, good:0}[a] >= {bad:3, warn:2, neu:1, good:0}[b] ? a : b);
@@ -2716,7 +2912,7 @@ async function operations(tab){
       ${subCard('push', 'bell', 'Push &amp; alerts', st.push.tone, ovE ? unknownV(ovE) : fmtN(k.push_today), 'delivered today', st.push.sub, pushTrend, 'var(--green-t)')}
       ${subCard('ai', 'spark', 'AI', st.ai.tone, ovE ? unknownV(ovE) : fmtN(k.ai_calls_today), 'calls today', st.ai.sub, aiTrend, 'var(--ember2)')}
       ${subCard('integrations', 'plug', 'Integrations', st.integrations.tone, ovE ? unknownV(ovE) : fmtN(k.integrations_active), 'live', st.integrations.sub, null)}
-      ${subCard('api', 'gauge', 'API', st.api.tone, ovE ? unknownV(ovE) : (k.p95_ms == null ? '—' : fmtN(Math.round(k.p95_ms))), k.p95_ms == null ? '' : 'ms p95', st.api.sub, null, null, '#engineering')}
+      ${subCard('api', 'gauge', 'API', st.api.tone, ovE ? unknownV(ovE) : (k.p95_ms == null ? '—' : fmtN(Math.round(k.p95_ms))), k.p95_ms == null ? '' : 'ms p95 · ' + esc(k.api_window_label || 'last 5 minutes'), st.api.sub, null, null, '#engineering')}
     </section>`
     + tabsNav('operations', [['jobs', 'Jobs', st.jobs.bad || '', 'bad'], ['email', 'Email &amp; SMS', k.email_failures_today || '', emT === 'bad' ? 'bad' : 'warn'], ['push', 'Push &amp; alerts', k.push_failures_today || '', 'warn'], ['ai', 'AI', k.ai_failures_24h || '', st.ai.tone === 'bad' ? 'bad' : 'warn'], ['integrations', 'Integrations', k.integrations_failing || '', 'bad'], ['rpower', 'RPOWER', '', 'bad'], ['events', 'Event calendar', '', 'warn']], _opsTab)
     + '<div class="area-body" id="area-body"></div>';
@@ -2760,7 +2956,7 @@ async function opsEvents(){
           <td><input data-f="broadcast" data-o="${esc(e.broadcast || '')}" value="${esc(e.broadcast || '')}" size="7" aria-label="Broadcast"></td>
           <td><select data-f="status" data-o="${esc(e.status || '')}" aria-label="Status">${st}</select></td>
           <td><input data-f="result" data-o="${esc(e.result || '')}" value="${esc(e.result || '')}" size="8" placeholder="W 24-20" aria-label="Result"></td>
-          <td style="white-space:nowrap"><button class="btn p s" onclick="evSave(${e.id},this)">Save</button>${over.length ? ` <button class="btn g s" title="Hand ${esc(over.join(', '))} back to the season file" onclick="evRevert(${e.id},this)">Revert</button>` : ''}</td>
+          <td style="white-space:nowrap"><button class="btn p s w" onclick="evSave(${e.id},this)">Save</button>${over.length ? ` <button class="btn g s w" title="Hand ${esc(over.join(', '))} back to the season file" onclick="evRevert(${e.id},this)">Revert</button>` : ''}</td>
         </tr>`; }).join('')}
       </tbody></table></div></section>`; }).join('');
 }
@@ -2851,7 +3047,7 @@ function jobRow(j, d){
   const live = j.state === 'running' || j.state === 'stuck';
   const last = live ? 'running · ' + ago(j.running_since) : (j.last_ok_at ? agoWord(j.last_ok_at) : 'never ran clean');
   const sid = 'jr-' + String(j.job).replace(/[^A-Za-z0-9_-]/g, '_');
-  const facts = [j.sla_minutes ? `SLA ${fmtN(Math.round(j.sla_minutes / 60 * 10) / 10)}h between successes` : 'no SLA', `stuck after ${fmtN(j.stuck_after_minutes)}m`, j.lane ? esc(j.lane) + ' lane' : '', j.retry ? 'retried after a failure' : '', `7 days: ${fmtN(j.runs_7d)} runs · ${fmtN(j.failed_7d)} failed · ${fmtN(j.partial_7d)} partial`].filter(Boolean).join(' · ');
+  const facts = [j.sla_minutes ? `SLA ${fmtN(Math.round(j.sla_minutes / 60 * 10) / 10)}h between successes` : 'no SLA', `stuck after ${durMin(j.stuck_after_minutes)}`, j.lane ? esc(j.lane) + ' lane' : '', j.retry ? 'retried after a failure' : '', `7 days: ${fmtN(j.runs_7d)} runs · ${fmtN(j.failed_7d)} failed · ${fmtN(j.partial_7d)} partial`].filter(Boolean).join(' · ');
   const od = j.overdue ? `<span style="color:var(--red-t);font-size:13px">Overdue: <span class="n">${fmtN(j.overdue.hours_since)}h</span> since its last success (SLA <span class="n">${fmtN(j.overdue.max_hours)}h</span>) · last success ${j.overdue.last_ok_at ? fmtDT(j.overdue.last_ok_at) : 'never'}</span>` : '';
   return `<div class="li click" onclick="toggleRow(this)"><i style="display:block;width:9px;height:9px;border-radius:50%;background:${JOB_TONE[j.state] || 'var(--ink5)'};box-shadow:0 0 0 4px var(--hover);flex-shrink:0"></i>
     <div class="tt"><b>${esc(j.label || j.job)}${j.sends ? ' <span class="pill emb nd" style="height:18px;font-size:10.5px;margin-left:6px"><i></i>sends</span>' : ''}${held && held.refused_n ? ` <span class="chip bad" title="The newest run refused a window under its floor">${fmtN(held.refused_n)} refused</span>` : ''}${held && held.capped_n ? ` <span class="chip warn" title="The newest run hit the per-pass cap">${fmtN(held.capped_n)} capped</span>` : ''}</b><span><span class="mono">${esc(j.job)}</span> · ${esc(j.cadence || '')}${j.what ? ' · ' + esc(j.what) : ''}</span></div>
@@ -2895,7 +3091,7 @@ function opsJobs(d){
   const js = d.jobs || [], grp = s => js.filter(j => s.indexOf(j.state) >= 0);
   const bad = grp(['failed', 'stuck', 'overdue']), running = grp(['running']), partial = grp(['partial']), ok = grp(['ok']), never = grp(['never']);
   const h = d.heartbeat || {}, fk = failKinds(d);
-  const hbState = h.wedged ? ['bad', 'Wedged'] : h.loop_stalled ? ['bad', 'Loop stalled'] : (h.beat_age_minutes == null || h.stale) ? ['bad', 'Stale'] : ['good', 'Beating'];
+  const hbState = h.wedged ? ['bad', 'Wedged'] : h.loop_stalled ? ['warn', 'Loop stalled'] : (h.beat_age_minutes == null || h.stale) ? ['bad', 'Stale'] : ['good', 'Beating'];
   const section = (label, list, color, total) => list.length ? `<div class="lgroup lbl" style="${color ? 'color:' + color : ''}">${label} · <span class="n">${total == null ? list.length : total}</span></div>${list.map(j => jobRow(j, d)).join('')}` : '';
   const shown = _jobsAll ? ok : ok.slice(0, 6);
   const lease = d.lease || null, bk = d.backup || {}, oa = d.operator_alert;
@@ -2903,8 +3099,8 @@ function opsJobs(d){
   const reqs = (d.requests || []).slice(0, 6), tasks = (d.inflight || []).slice(0, 10);
   const missed = d.missed_windows || [], dsr = d.dsr_missing || [];
   V().innerHTML = `
-    ${h.wedged ? `<div class="err"><b>Wedged:</b> ${esc(h.running_job)} has run ${fmtN(Math.round(h.running_minutes))} minutes, past its ${fmtN(h.running_bound_minutes)}-minute bound. The heartbeat stops vouching for it; check Railway's logs.</div>` : ''}
-    ${h.loop_stalled ? `<div class="err"><b>Loop stalled:</b> no scheduler tick has finished in ${fmtN(Math.round(h.loop_completed_age_minutes))} minutes and no job is running to explain it.</div>` : ''}
+    ${h.wedged ? `<div class="err"><b>Wedged:</b> ${esc(h.running_job)} has run ${durMin(h.running_minutes)}, past its ${durMin(h.running_bound_minutes)} bound. The heartbeat stops vouching for it; check Railway's logs.</div>` : ''}
+    ${h.loop_stalled ? `<div class="err"><b>Loop stalled:</b> no scheduler tick has finished in ${durMin(h.loop_completed_age_minutes)} and no job is running to explain it.</div>` : ''}
     ${d.local_sends_refused ? `<div class="warnbox"><b>Jobs that email, text or push are off on this server.</b> ${esc(d.local_sends_refused_reason || '')}</div>` : ''}
     ${retentionNow(d.retention)}
     ${missed.length || dsr.length ? `<div class="warnbox"><b>Missed:</b> ${missed.slice(0, 4).map(m => `${esc(m.job)} for ${m.restaurant_id ? clientLink(m.restaurant_id, m.restaurant || '#' + m.restaurant_id) : 'the platform'} on ${mdy(dayOf(m.local_date))}${m.detail ? ' (' + esc(m.detail) + ')' : ''}`).join(' · ')}${missed.length > 4 ? ` · +${missed.length - 4} more` : ''}${dsr.length ? `${missed.length ? ' · ' : ''}Daily Sales Report not delivered for ${dsr.slice(0, 4).map(x => `${clientLink(x.restaurant_id, x.restaurant || '#' + x.restaurant_id)} (${mdy(dayOf(x.business_date))})`).join(', ')}${dsr.length > 4 ? ' +' + (dsr.length - 4) : ''}` : ''}</div>` : ''}
@@ -2918,7 +3114,7 @@ function opsJobs(d){
         ${!js.length ? '<div class="empty">The job registry came back empty — check jobs_registry.py on this deploy.</div>' : ''}
       </div>
       <div class="stack">
-        ${card('Scheduler heartbeat', `<div class="kv" style="grid-template-columns:130px 1fr"><span class="k">Last beat</span><span class="n">${h.beat_age_minutes == null ? 'never' : minsAgo(h.beat_age_minutes)}</span><span class="k">Last full tick</span><span class="n">${minsAgo(h.loop_completed_age_minutes)}</span><span class="k">Running</span><span>${h.running_job ? `<span class="mono">${esc(h.running_job)}</span> · <span class="n">${fmtN(Math.round(h.running_minutes))}m</span> of <span class="n">${fmtN(h.running_bound_minutes)}m</span>` : '—'}</span><span class="k">Stale after</span><span class="n">${fmtN(h.stale_after_minutes)}m</span></div>`, pill(hbState[0], hbState[1]))}
+        ${card('Scheduler heartbeat', `<div class="kv" style="grid-template-columns:130px 1fr"><span class="k">Last beat</span><span class="n">${h.beat_age_minutes == null ? 'never' : minsAgo(h.beat_age_minutes)}</span><span class="k">Last full tick</span><span class="n">${minsAgo(h.loop_completed_age_minutes)}</span><span class="k">Running</span><span>${h.running_job ? `<span class="mono">${esc(h.running_job)}</span> · <span class="n">${durMin(h.running_minutes)}</span> of <span class="n">${durMin(h.running_bound_minutes)}</span>` : '—'}</span><span class="k">Stale after</span><span class="n">${durMin(h.stale_after_minutes)}</span></div>`, pill(hbState[0], hbState[1]))}
         ${card('Lease', lease ? `<div class="kv" style="grid-template-columns:130px 1fr"><span class="k">Held by</span><span class="mono" style="white-space:normal;word-break:break-all">${esc(lease.owner || '—')}</span><span class="k">Renewed</span><span class="n">${lease.heartbeat_at ? agoWord(lease.heartbeat_at) : '—'}</span><span class="k">Kept alive</span><span>${lease.kept ? 'yes, every 60 seconds' : 'no'}</span></div>` : '<span class="muted" style="font-size:13px">No process holds the scheduler lease — nothing is scheduling.</span>', lease ? '' : pill('bad', 'None'))}
         ${card('Backup', `<span style="font-size:13px" class="ink2">${esc(bk.summary || 'Backup state unknown.')}</span><span class="muted" style="font-size:12px">${bk.offsite_targets && bk.offsite_targets.length ? 'Off-site: ' + esc(bk.offsite_targets.join(' and ')) : 'No off-site copy is configured'}${bk.last_run_at ? ' · last run ' + fmtDT(bk.last_run_at) : ''} · <a href="#engineering">details</a></span>`, pill(bk.state === 'ok' ? 'good' : (bk.state === 'never' || bk.state == null ? 'neu' : 'bad'), esc({ok:'OK', stale:'Stale', failed:'Failed', no_offsite:'No off-site copy', never:'Never ran'}[bk.state] || 'Unknown')))}
         ${card('Last operator alert', oa ? `<span style="font-size:13px"><b>${esc(oa.subject || oa.key || '')}</b></span><span class="muted" style="font-size:12px">${fmtDT(oa.created_at)}${oa.channels ? ' · ' + esc(oa.channels) : ''}${oa.error ? ' · <span style="color:var(--red-t)">' + esc(oa.error) + '</span>' : ''}</span>` : '<span class="muted" style="font-size:13px">No operator page on record.</span>', oa ? pill(oa.sent ? 'good' : 'bad', oa.sent ? 'Sent' : 'Failed') : '')}
@@ -3017,6 +3213,10 @@ function opsEmail(d, mh){
 }
 // Suppressions (#45, #101): scope, reason, and whether it is an operator
 // address (never suppressed now — but it bounced). Reinstate is audited.
+// A suppression the server won't lift (WS-2 S2: the person's own unsubscribe
+// or spam complaint, `reinstatable: false`) offers no Reinstate; its 409
+// sentence is said if one is asked for anyway (say()).
+var NOT_REINSTATABLE = '<span class="dim" title="An unsubscribe or a spam complaint — only the person can undo it.">their own choice</span>';
 function supLoad(){
   const q = ($('sup-q') || {}).value || '';
   lazyRead('ops-sup', '/admin/api/suppressions?limit=200' + (q ? '&q=' + encodeURIComponent(q) : ''), x => table([
@@ -3024,12 +3224,12 @@ function supLoad(){
     {h:'Scope', key:'scope', cell:r => `<span class="chip">${esc(r.scope || 'all')}</span>`},
     {h:'Why', key:'reason', wrap:true, cell:r => `${esc(r.reason || '')}${r.detail ? ' <span class="dim">' + esc(String(r.detail).slice(0, 120)) + '</span>' : ''}`},
     {h:'Since', key:'created_at', cell:r => `<span class="num">${fmtD(r.created_at)}</span>`},
-    {h:'', cell:r => `<button class="btn s w" onclick="supReinstate('${jsq(r.email)}','${jsq(r.scope || 'all')}')">Reinstate</button>`}], x.suppressions || [], {id:'sup-t', sort:'created_at', limit:15, empty: q ? 'No suppressed address matches.' : 'No address is suppressed.'}));
+    {h:'', cell:r => r.reinstatable === false ? NOT_REINSTATABLE : `<button class="btn s w" onclick="supReinstate('${jsq(r.email)}','${jsq(r.scope || 'all')}')">Reinstate</button>`}], x.suppressions || [], {id:'sup-t', sort:'created_at', limit:15, empty: q ? 'No suppressed address matches.' : 'No address is suppressed.'}));
 }
 async function supReinstate(email, scope){
   const reason = prompt(`Reinstate ${email}? Mail to it (${scope} scope) starts again, and it is recorded with your name.\n\nWhy (for the record):`, '');
   if(reason === null) return;
-  await opsWrite('/admin/api/suppressions/reinstate', {email: email, reason: reason}, null, () => { supLoad(); }, 'Reinstated ' + email + ' — mail to it resumes');
+  await opsWrite('/admin/api/suppressions/reinstate', {email: email, reason: reason}, null, () => { _opsFresh = true; supLoad(); }, 'Reinstated ' + email + ' — mail to it resumes');
 }
 
 // Which channels an alert really went out on (#14) — alert_log.channels,
@@ -3521,13 +3721,20 @@ function engApi(S, sE){
     ${sE ? unknownV(sE) : `<div class="kv" style="grid-template-columns:90px 1fr;font-size:12.5px">${row('web', 'Web')}${row('web_api', 'Web API')}${row('mobile', 'iOS app')}${row('admin', 'Console')}</div>`}
     <span class="muted" style="font-size:12px">${sE ? '' : `In flight <span class="n">${fmtN(inf.now)}</span> of <span class="n">${fmtN(inf.threads)}</span> threads · peak <span class="n">${fmtN(inf.peak_5m)}</span>${inf.oldest_ms ? ' · oldest ' + fmtN(inf.oldest_ms) + 'ms on ' + esc(inf.oldest_route || '') : ''}`}</span></div>`;
 }
+// The scheduler card's state is the server's (status_manager.scheduler_state,
+// in the system report as S.scheduler: ok | stalled | stale | wedged |
+// unknown), mapped as admin_ops.ops_state maps it — never a 15-minute rule
+// of the page's own (W2/O1). A dead scheduler thread in this process is bad.
+var SCHED_TONE = {ok: 'good', stalled: 'warn', stale: 'bad', wedged: 'bad', unknown: 'neu'};
+var SCHED_WORD = {ok: 'Beating', stalled: 'Loop stalled', stale: 'Stale', wedged: 'Wedged', unknown: 'Unknown'};
 function engSched(S, sE){
   const hb = S.heartbeat_minutes, sup = S.supervisor || null, lease = S.lease || null, sla = sup ? sup.last_sla : null;
-  const bad = !sE && (hb == null || hb > 15 || (sup && sup.scheduler_thread === 'dead'));
-  return `<div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico ${sE ? 'neu' : bad ? 'bad' : 'good'}">${ico('clock')}</span><span class="lbl">Scheduler</span><span style="margin-left:auto">${pill(sE ? 'neu' : bad ? 'bad' : 'good', sE ? 'Unknown' : bad ? 'Stale' : 'Beating')}</span></span>
-    <span class="n" style="font-size:26px;font-weight:600">${sE ? unknownV(sE) : (hb == null ? 'never' : fmtN(Math.round(hb)) + 'm')} <span style="font-size:14px;color:var(--ink4);font-weight:500">since the last beat</span></span>
+  var sst = sE ? 'unknown' : ((S.scheduler && S.scheduler.state) || 'unknown'), dead = !sE && !!(sup && sup.scheduler_thread === 'dead');
+  var tone = dead ? 'bad' : (SCHED_TONE[sst] || 'neu'), word = dead ? 'Thread dead' : (SCHED_WORD[sst] || 'Unknown');
+  return `<div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico ${tone}">${ico('clock')}</span><span class="lbl">Scheduler</span><span style="margin-left:auto">${pill(tone, word)}</span></span>
+    <span class="n" style="font-size:26px;font-weight:600">${sE ? unknownV(sE) : (hb == null ? 'never' : durMin(hb))} <span style="font-size:14px;color:var(--ink4);font-weight:500">since the last beat</span></span>
     <div class="kv" style="grid-template-columns:110px 1fr;margin-top:auto;font-size:12.5px"><span class="k">Thread</span><span>${sup ? esc(sup.scheduler_thread) + (sup.scheduler_restarts ? ' · restarted ' + fmtN(sup.scheduler_restarts) + '×' : '') : '<span class="dim">no supervisor in this process</span>'}</span>
-    <span class="k">Lease</span><span class="mono" style="white-space:normal;word-break:break-all">${lease && lease.owner ? esc(lease.owner) + (lease.age_seconds != null ? ' · ' + fmtN(lease.age_seconds) + 's ago' : '') : (lease && lease.error ? unknownV(lease.error) : 'nobody')}</span>
+    <span class="k">Lease</span><span class="mono" style="white-space:normal;word-break:break-all">${lease && lease.owner ? esc(lease.owner) + (lease.age_seconds != null ? ' · ' + (lease.age_seconds < 60 ? fmtN(lease.age_seconds) + 's' : durMin(lease.age_seconds / 60)) + ' ago' : '') : (lease && lease.error ? unknownV(lease.error) : 'nobody')}</span>
     <span class="k">Last SLA check</span><span>${sla ? `${fmtN(sla.jobs_overdue)} overdue${sla.alerted ? ' · paged' : ''}` : '—'}${sup && sup.last_tick_at ? ' · ' + agoWord(sup.last_tick_at) : ''}</span></div></div>`;
 }
 function sysRow(label, tone, value, sub){
@@ -3858,7 +4065,11 @@ async function analytics(tab){
   const live = real.filter(r => ['churned', 'canceled'].indexOf(r.status) < 0);
   const within = (r, days) => { const t = parseTs(r.last_active); return t && (Date.now() - t) < days * 864e5; };
   const a7 = live.filter(r => within(r, 7)).length, a1 = live.filter(r => within(r, 1)).length, a28 = live.filter(r => within(r, 28)).length;
-  const canceled = real.length - live.length, kept = real.length ? Math.round(live.length / real.length * 100) : null;
+  // Retention over the accounts that ever paid, "—" over none (admin audit
+  // 10/27/26, L2/K-12): it read "100% kept" with nobody paying, every trial
+  // that never paid counted as kept.
+  var ret = retentionOf(real), perAcct = custCostPer(ai, live);
+  const canceled = ret.lost, kept = ret.rate;
   // Churn risk is scored for paying accounts only (#83); the rest are "not scored".
   // Only a paying account is scored (#83): any other level ("n/a") is not scored.
   const churn = {low:0, medium:0, high:0, unscored:0}; live.forEach(r => { if(r.churn === 'low' || r.churn === 'medium' || r.churn === 'high') churn[r.churn]++; else churn.unscored++; });
@@ -3880,10 +4091,10 @@ async function analytics(tab){
         <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">${stackBar([[a1, 'var(--green)'], [a7 - a1, 'var(--green-bg)'], [a28 - a7, 'var(--amber)'], [live.length - a28, 'var(--hover)']])}
         <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${a1}</span> today</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${a28 - a7}</span> 1–4 weeks</span><span>● <span class="n">${live.length - a28}</span> quiet</span></span></div>`}</div>
       <div class="card kc"><span class="lbl" title="${esc(adE ? '' : ad.basis || '')}">Module use · 28 days</span>${adE ? unknownV(adE) : (ad.modules || []).map(m => { const p = m.paying || {}, tr = m.trial || {}; return `<div style="display:flex;flex-direction:column;gap:5px"><span style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px"><span class="ink2">${esc((MODULE_KEYS.find(k => k[0] === m.module) || [0, m.module === 'intel' ? 'Intel' : m.module])[1])}</span><span class="n">${fmtN(p.using)}/${fmtN(p.entitled)} paying${tr.entitled ? ` · <span class="dim">${fmtN(tr.using)}/${fmtN(tr.entitled)} trial</span>` : ''}</span></span><span class="bar"><i style="width:${p.rate_pct == null ? 0 : Math.round(p.rate_pct)}%;background:var(--green)"></i></span></div>`; }).join('') || '<span class="s">No module is on for anyone yet.</span>'}</div>
-      <div class="card kc"><span class="lbl">Retention</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px">${kept == null ? '—' : kept + '%'}</span><span class="s">kept · ${canceled} canceled</span></span>
+      <div class="card kc"><span class="lbl">Retention</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px" title="${esc(ret.basis)}">${kept == null ? '—' : kept + '%'}</span><span class="s">kept · ${canceled} canceled</span></span>
         <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px"><span class="s" style="font-size:12px">Churn risk now · paying accounts</span>${stackBar([[churn.low, 'var(--green)'], [churn.medium, 'var(--amber)'], [churn.high, 'var(--red)']])}
         <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${churn.low}</span> low</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${churn.medium}</span> medium</span><span><span style="color:var(--red-t)">●</span> <span class="n">${churn.high}</span> high</span>${churn.unscored ? `<span>● <span class="n">${churn.unscored}</span> not scored</span>` : ''}</span></div>`}</div>
-      <div class="card kc"><span class="lbl">${esc(aiE ? 'AI & data APIs' : ((ai.labels || {}).cost_card || 'AI & data APIs'))} · 30 days</span><span class="big" style="font-size:34px">${aiE ? unknownV(aiE) : fmtUSD(t.cost, 2)}</span><span class="s">${aiE ? '' : `AI <span class="n">${fmtUSD(t.ai_cost, 2)}</span> · data APIs <span class="n">${fmtUSD(t.data_api_cost, 2)}</span>${live.length && t.cost != null ? ` · <span class="n">${fmtUSD(t.cost / live.length, 2)}</span> per account` : ''}`}</span>
+      <div class="card kc"><span class="lbl">${esc(aiE ? 'AI & data APIs' : ((ai.labels || {}).cost_card || 'AI & data APIs'))} · 30 days</span><span class="big" style="font-size:34px">${aiE ? unknownV(aiE) : fmtUSD(t.cost, 2)}</span><span class="s">${aiE ? '' : `AI <span class="n">${fmtUSD(t.ai_cost, 2)}</span> · data APIs <span class="n">${fmtUSD(t.data_api_cost, 2)}</span>${cErr || !perAcct ? '' : ` · <span class="n" title="${esc(perAcct.basis)}">${perAcct.per == null ? '—' : fmtUSD(perAcct.per, 2)}</span> per customer account`}`}</span>
         ${b && b.budget ? `<div style="margin-top:auto;display:flex;flex-direction:column;gap:6px"><span class="bar" style="height:8px"><i style="width:${Math.min(100, b.pct)}%;background:${b.over ? 'var(--red)' : b.warn ? 'var(--amber)' : 'linear-gradient(90deg,var(--ember),var(--ember2))'}"></i></span><span class="s" style="font-size:11.5px"><span class="n">${b.pct}%</span> of the <span class="n">${fmtUSD(b.budget)}</span> monthly ceiling · resets ${fmtD(b.resets_at)}</span></div>` : ''}</div>
     </section>
     ${anaHistory(bm, bmE)}
@@ -3901,6 +4112,36 @@ async function analytics(tab){
           ${L ? `<span class="ink2" style="font-size:13px">Cross-restaurant patterns start once a cohort reaches <span class="n">${intel.floor}</span> restaurants.</span>${Object.entries(L.cohorts).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([cName, n]) => `<div style="display:flex;flex-direction:column;gap:5px"><span style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(L.cohort_labels[cName] || (cName === 'uncategorised' ? 'Uncategorised' : cName))}</span><span class="n">${Math.min(n, intel.floor)}/${intel.floor}</span></span><span class="bar"><i style="width:${Math.min(100, Math.round(n / intel.floor * 100))}%;background:var(--ember2)"></i></span></div>`).join('')}<a href="#analytics/intelligence" style="font-size:12.5px;font-weight:700">Patterns, cohorts and benchmarks</a>` : `<span class="muted">${unknownV(inE)} — Intelligence couldn't be read.</span>`}</div>
       </div>
     </section>`;
+}
+// Retention (L2/K-12): of the customer accounts that ever paid, the share
+// still in service — null (drawn "—") when none ever paid. Ever paid is the
+// row's converted_at when the list carries it; otherwise a paying status
+// (active, past due, paused) or a cancelled one, which then also counts a
+// trial that ended unpaid — the basis says which.
+var PAYING_STATUSES = ['active', 'past_due', 'paused'];
+function retentionOf(rows){
+  rows = rows || [];
+  var exact = rows.some(function(r){ return Object.prototype.hasOwnProperty.call(r, 'converted_at'); }), kept = 0, lost = 0;
+  rows.forEach(function(r){
+    var gone = r.status === 'churned' || r.status === 'canceled', paying = PAYING_STATUSES.indexOf(r.status) >= 0;
+    if(exact ? !r.converted_at : !(gone || paying)) return;
+    if(gone) lost++; else kept++;
+  });
+  var base = kept + lost;
+  return {rate: base ? Math.round(kept / base * 100) : null, kept: kept, lost: lost,
+          basis: base ? 'Of ' + base + ' account' + (base === 1 ? '' : 's') + ' that ever paid' + (exact ? '' : ' (a cancelled trial counts too — the list has no conversion dates)') : 'No account has paid yet'};
+}
+// AI and data-API cost per customer account (K-12): the cost attributed to
+// the customer accounts in service, over how many there are — not the whole
+// fleet's spend (demo, internal and unattributed calls) over them. null when
+// the AI read failed; per is null over no accounts.
+function custCostPer(ai, live){
+  if(!ai || readErr(ai) || !Array.isArray(ai.by_client)) return null;
+  var ids = {}, cost = 0;
+  (live || []).forEach(function(r){ ids[r.id] = 1; });
+  ai.by_client.forEach(function(c){ if(c && ids[c.restaurant_id]) cost += +c.cost || 0; });
+  var n = (live || []).length;
+  return {per: n ? cost / n : null, cost: cost, n: n, basis: n ? 'Cost attributed to the ' + n + ' customer account' + (n === 1 ? '' : 's') + ' in service, divided by them' : 'No customer account in service'};
 }
 // The customer accounts as the slim, server-paged rows (#79) — segment,
 // billing status, last active and churn level are all this page reads; the
@@ -4048,11 +4289,12 @@ function recDays(n){ _recDays = n; route(); }
 async function recommendations(arg){
   const rid = arg ? parseInt(arg, 10) : null;
   const q = rid ? '&restaurant_id=' + rid : '';
-  const [d, cal, miss, conf] = await Promise.all([
-    api('/admin/api/recommendations?days=' + _recDays + q),
-    api('/admin/api/recommendations/calibration?days=365' + q).catch(() => ({ok:false})),
-    api('/admin/api/recommendations/missed?days=' + _recDays + q).catch(() => ({ok:false})),
-    api('/admin/api/calibration?days=365' + q).catch(() => null)]);
+  // Two at a time, like every page's reads (P-05); a failed one is a failed payload.
+  const [d, cal, miss, conf] = await apiAll([
+    '/admin/api/recommendations?days=' + _recDays + q,
+    '/admin/api/recommendations/calibration?days=365' + q,
+    '/admin/api/recommendations/missed?days=' + _recDays + q,
+    '/admin/api/calibration?days=365' + q], API_ALL_MAX);
   if(!d.ok) throw new Error('recommendations failed');
   const T = d.total, pct = v => v==null ? '—' : Math.round(v*100)+'%';
   const ci = T.accept_ci90 ? `90%: ${pct(T.accept_ci90[0])}–${pct(T.accept_ci90[1])}` : '';
@@ -4708,6 +4950,9 @@ async function act(path, label, dangerous, body){
     const said = d.message || d.msg || (d.new_reviews != null ? d.new_reviews + ' new review' + (d.new_reviews === 1 ? '' : 's') + ' fetched' : label + ' — done');
     toast(said + (errs.length ? ' — but: ' + errs.join('; ') : ''), errs.length ? 'bad' : 'good');
   }
+  // From Operations (Integrations' Sync / Fetch / Refresh), the redraw reads
+  // fresh — the 60-second cache showed the state before the action (W7).
+  if(location.hash.indexOf('#operations') === 0) _opsFresh = true;
   _clients = null; badges(); route();
   return d;
 }
@@ -4803,8 +5048,26 @@ function changePlan(rid, name, current, live){
     submit: v => { if(!v.modules.length) return {ok:false, error:'Pick at least one module.'}; if(!confirm('Change ' + name + ' to ' + v.modules.map(m=>(MODULE_KEYS.find(x=>x[0]===m)||[m,m])[1]).join(', ') + '?' + (live ? ' Stripe is charged or credited as chosen.' : ''))) return false; return post('/admin/api/billing/' + rid + '/change-plan', {modules: v.modules, proration: v.proration}); }});
 }
 // Mark signed (offline) (#78): a contract signed on paper; the note is the record.
+// Its answer says what each owed send did (admin audit 10/27/26, W6) — the
+// route returns `sends` [{kind, state, error}] — and a welcome that was
+// ticked but not sent (the owner has signed in before) is said too.
+var SEND_KIND = {payment_link: 'payment link', welcome: 'welcome', card_update: 'card-update link'};
+var SEND_STATE = {sent: 'sent', retry: 'not sent yet — it is retried', skipped: 'skipped', held: 'held — this server does not send'};
+function markSignedSaid(d, asked){
+  var sends = (d && d.sends) || [], parts = [], bad = false, kinds = {}, i, x, k;
+  for(i = 0; i < sends.length; i++){
+    x = sends[i]; k = SEND_KIND[x.kind] || String(x.kind || 'email').replace(/_/g, ' '); kinds[x.kind] = 1;
+    if(x.state !== 'sent') bad = true;
+    parts.push(k + ' ' + (SEND_STATE[x.state] || x.state || 'unknown') + (x.error && x.state !== 'sent' ? ' (' + x.error + ')' : ''));
+  }
+  if(asked && asked.send_payment_link && !kinds.payment_link){ bad = true; parts.push('payment link not queued'); }
+  if(asked && asked.send_welcome && !kinds.welcome){ bad = true; parts.push('welcome not sent — the owner has signed in before, or has no login'); }
+  return {text: 'Contract marked signed' + (parts.length ? ' — ' + parts.join(' · ') : ''), bad: bad};
+}
 function markSigned(rid, name, email){
+  var asked = null;
   formOpen({title:'Mark signed (offline) — ' + name, go:'Mark signed', done:'Contract marked signed',
+    after: function(d){ var m = markSignedSaid(d, asked); toast(m.text, m.bad ? 'bad' : 'good'); route(); },
     sub:'For a contract signed outside DocuSign. The pay-link reminders count from the signing date.',
     fields:[{id:'note', label:'How it was signed', placeholder:'e.g. Signed on paper at the 9/28 meeting'},
             {id:'signed_on', label:'Signed on (M/D/YY — blank is today)', placeholder:'9/28/26'},
@@ -4812,10 +5075,19 @@ function markSigned(rid, name, email){
             {id:'send_welcome', label:'Email the welcome (set-password link) — only if the owner has never signed in', type:'checkbox', value:false}],
     submit: v => { if(!v.note) return {ok:false, error:'Say how it was signed — the note is the record.'}; const sends = [v.send_payment_link ? 'the payment link' : '', v.send_welcome ? 'the welcome' : ''].filter(Boolean);
       if(!confirm('Mark ' + name + '\'s contract signed' + (sends.length ? ' and email ' + (email || 'the owner') + ' ' + sends.join(' and ') : '') + '?')) return false;
-      return post('/admin/api/billing/' + rid + '/mark-signed', v); }});
+      asked = v; return post('/admin/api/billing/' + rid + '/mark-signed', v); }});
+}
+// The reconcile run after an attach is said (W15-d): its error, or the
+// mismatches it found with Stripe — not only "attached".
+function attachSaid(d){
+  var mm = (d && Array.isArray(d.mismatches)) ? d.mismatches : [];
+  if(d && d.error) return {text: 'Stripe customer attached — but the check against Stripe failed: ' + d.error, bad: true};
+  if(mm.length) return {text: 'Stripe customer attached — ' + mm.length + ' mismatch' + (mm.length === 1 ? '' : 'es') + ' with Stripe: ' + mm.map(function(m){ return (m && (m.detail || m.kind)) || String(m); }).join('; '), bad: true};
+  return {text: 'Stripe customer attached', bad: false};
 }
 function attachCustomer(rid, name, stored){
   formOpen({title:(stored ? 'Replace the Stripe customer — ' : 'Attach a Stripe customer — ') + name, go:'Attach', done:'Stripe customer attached',
+    after: function(d){ var m = attachSaid(d); toast(m.text, m.bad ? 'bad' : 'good'); route(); },
     sub: stored ? 'Now attached: <span class="mono">' + esc(stored) + '</span>. Replacing it changes where this client\'s payments are matched.' : 'Links this client to a customer that already exists in Stripe (checked with Stripe, read-only).',
     fields:[{id:'customer_id', label:'Stripe customer id', placeholder:'cus_…'}].concat(stored ? [{id:'replace', label:'Yes, replace ' + stored, type:'checkbox', value:false}] : []),
     submit: v => { if(!confirm('Attach ' + (v.customer_id || 'that customer') + ' to ' + name + '?' + (stored ? ' It replaces ' + stored + '.' : ''))) return false; return post('/admin/api/billing/' + rid + '/attach-stripe-customer', v); }});
@@ -4845,7 +5117,18 @@ async function valueRecap(rid, name, email){
 let _tRid=null, _tName='';
 async function toastOpen(rid, name){ _tRid=rid; _tName=name||''; $('m-toast-title').textContent='Toast POS — '+name; $('m-toast-status').textContent='Loading…'; ['t-cid','t-sec','t-guid'].forEach(i=>$(i).value=''); openModal('m-toast'); let d; try{ d = await api('/admin/toast/status/'+rid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; } $('m-toast-status').textContent = !okRes(d) && !d.connected ? errText(d, 'Toast status couldn\'t be read') : (d.connected ? ('Connected · GUID '+(d.guid_masked||'')+' · last sync '+ago(d.last_synced)+(d.sync_error?' · error: '+d.sync_error:'')) : 'Not connected — enter credentials below.'); }
 async function toastSave(){ const d = await post('/admin/toast/save/'+_tRid, {client_id:$('t-cid').value.trim(), client_secret:$('t-sec').value.trim(), restaurant_guid:$('t-guid').value.trim(), test:true}); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Saved and tested')) : ('✕ '+errText(d)); if(okRes(d)){ _clients=null; } }
-async function toastSync(){ const d = await post('/admin/toast/sync/'+_tRid); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Synced')) : ('✕ '+errText(d, 'Sync failed')); }
+async function toastSync(){ const rid = _tRid, d = await post('/admin/toast/sync/'+rid); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Synced')) : ('✕ '+errText(d, 'Sync failed')); if(okRes(d) && d.job_id) return posSyncFollow(d.job_id, 'Toast', rid, function(){ return _tRid; }, 'm-toast-status'); }
+// A POS "Sync now" followed to its end (admin audit 10/27/26, W5): the
+// modal's line says how it went while that client's modal is still open,
+// and the toast says it wherever the admin is — a refused sync used to
+// stay "✓ Sync started" for good.
+function posSyncFollow(jobId, provider, rid, openRid, lineId){
+  return pollJob(jobUrl(jobId)).then(function(r){
+    var ok = jobSaid(r, provider + ' sync'), line = $(lineId);
+    if(line && openRid() === rid) line.textContent = ok ? '✓ ' + provider + ' sync finished' : '✕ ' + errText(r && !r.error && r.result && r.result.error ? {error: r.result.error} : r, provider + ' sync failed');
+    return r;
+  });
+}
 async function toastDisconnect(){ if(!confirm('Disconnect Toast for ' + (_tName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/toast/disconnect/'+_tRid); $('m-toast-status').textContent = okRes(d)?'Disconnected':errText(d); _clients=null; }
 // RPOWER
 let _rpRid=null, _rpName='';
@@ -4875,7 +5158,7 @@ async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ $('m-rp
 async function rpowerBind(){ const d = await post('/admin/rpower/bootstrap/'+_rpRid, {store_mid:$('rp-store').value});
   $('m-rpower-status').textContent = okRes(d) ? ('✓ Bound to '+(d.store&&d.store.name||'store')) : ('✕ '+errText(d));
   if(okRes(d)){ $('rp-stores').style.display='none'; _clients=null; } }
-async function rpowerSync(){ const d = await post('/admin/rpower/sync/'+_rpRid); $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Sync started')) : ('✕ '+errText(d, 'Sync failed')); }
+async function rpowerSync(){ const rid = _rpRid, d = await post('/admin/rpower/sync/'+rid); $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Sync started')) : ('✕ '+errText(d, 'Sync failed')); if(okRes(d) && d.job_id) return posSyncFollow(d.job_id, 'RPOWER', rid, function(){ return _rpRid; }, 'm-rpower-status'); }
 async function rpowerDisconnect(){ if(!confirm('Disconnect RPOWER for ' + (_rpName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/rpower/disconnect/'+_rpRid); $('m-rpower-status').textContent = okRes(d)?'Disconnected':errText(d); _clients=null; }
 // Brand (#23): the form is this client's own stored values; only what the
 // admin changed is sent, with the version it was loaded at; an emptied field
@@ -4947,7 +5230,9 @@ async function brandSave(){
   if(lov !== lov0){ body.learning_override = lov; if(lov === 'include') body.learning_history = $('b-lhist').checked; }
   if(clear.length) body.clear = clear;
   if(Object.keys(body).length === 1){ $('b-status').textContent = 'Nothing changed.'; return; }
-  const d = await post('/admin/api/brand/'+_bRid, body);
+  // Once per click (C11/W15-f): a second Save while the first was out got the first one's 409.
+  const d = await oneAtATime('brand', $('b-save'), function(){ return post('/admin/api/brand/'+_bRid, body); });
+  if(!d) return;
   if(okRes(d)){ brandFill(d); $('b-status').textContent = '✓ Saved'; return; }
   if(d && d._status === 409 && d.current){ brandFill(d.current); $('b-status').textContent = '✕ Changed by someone else since this opened — the form now shows what is stored. Make your change again.'; return; }
   $('b-status').textContent = '✕ ' + errText(d);
