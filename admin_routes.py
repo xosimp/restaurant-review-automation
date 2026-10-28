@@ -153,11 +153,17 @@ def create_client(current_user):
     timezone = (data.get("timezone") or "").strip() or "America/Chicago"
     try:
         # Check for duplicate email/username BEFORE creating anything. Both
-        # are stored lower-cased (auth.create_user), so compared that way.
+        # are stored lower-cased (auth.create_user), so compared that way —
+        # and crosswise: a sign-in looks the typed name up as a username
+        # first and an email second (auth), so a new username equal to
+        # another login's email would capture that login's email sign-in
+        # (admin audit 10/27/26 F17).
         conn_check = get_conn()
+        new_email, new_username = data["owner_email"].strip(), data["username"].strip()
         existing = conn_check.execute(
-            "SELECT id FROM users WHERE lower(email)=lower(?) OR lower(username)=lower(?)",
-            (data["owner_email"].strip(), data["username"].strip())
+            "SELECT id FROM users WHERE lower(email) IN (lower(?), lower(?)) "
+            "OR lower(username) IN (lower(?), lower(?))",
+            (new_email, new_username, new_username, new_email)
         ).fetchone()
         conn_check.close()
         if existing:
@@ -199,54 +205,58 @@ def create_client(current_user):
             location_name=(data.get("location_name") or "").strip() or None,
             timezone=timezone,
         ))
-        if (data.get("timezone") or "").strip():
-            # The zone the admin chose, stamped as chosen (update_restaurant):
-            # the Chicago default nobody chose is what Data Health flags
-            # (blind re-audit 10/26/26 B2).
-            from models import update_restaurant as _upd_tz
-            _upd_tz(rid, {"timezone": timezone})
+        # Set module access directly from checkboxes
+        def _flag(key, default=0):
+            try: return int(data.get(key, default))
+            except (TypeError, ValueError): return default
+
         try:
+            if (data.get("timezone") or "").strip():
+                # The zone the admin chose, stamped as chosen (update_restaurant):
+                # the Chicago default nobody chose is what Data Health flags
+                # (blind re-audit 10/26/26 B2).
+                from models import update_restaurant as _upd_tz
+                _upd_tz(rid, {"timezone": timezone})
             create_user(
                 restaurant_id=rid,
                 username=data["username"].strip(),
                 email=data["owner_email"].strip(),
                 password=data["password"],
             )
+            from models import update_restaurant
+            update_restaurant(rid, {
+                "module_reviews":  _flag("module_reviews", 1),
+                "module_labor":    _flag("module_labor"),
+                "module_inventory":_flag("module_inventory"),
+                "module_marketing":_flag("module_marketing"),
+                # A Place ID IS the reviews connection until Google OAuth is
+                # done — fetcher.fetch_google reads it directly. reviews_live
+                # defaulted to 0 and was settable only from the settings page,
+                # so scheduler.run_daily_fetch's
+                # "WHERE reviews_live=1 OR gmb_refresh_token IS NOT NULL"
+                # skipped every new client until someone remembered the
+                # checkbox. The owner's first session was a working dashboard
+                # with nothing in it, and nothing said why. The Place ID was
+                # already validated against place_id_conflict above, so turning
+                # this on is exactly as safe as the ID that was just accepted.
+                # The settings save applies the same rule (reviews_live_decision).
+                "reviews_live":    1 if ((data.get("google_place_id") or "").strip()
+                                         and _flag("module_reviews", 1)) else 0,
+            })
         except Exception:
-            # A double-clicked Create passed the duplicate check twice and
-            # left an orphan restaurant with no login (DATA-62): take the
-            # half-made one back out before reporting the failure.
+            # Every step up to here is undone together: a double-clicked
+            # Create passed the duplicate check twice and left an orphan
+            # restaurant with no login (DATA-62), and a failure AFTER the
+            # login (the module flags, a database lock) left a restaurant and
+            # a login with no flags, no audit row and a retry refused as a
+            # duplicate (admin audit 10/27/26 F10). The restaurant's delete
+            # takes its new login with it. Nothing has reached a provider yet.
             try:
                 import models as _models_cc
                 _models_cc.delete_restaurant(rid)
             except Exception as _del_e:
                 _ops.capture(_del_e, job="create_client_rollback", context=f"restaurant_id={rid}")
             raise
-        # Set module access directly from checkboxes
-        def _flag(key, default=0):
-            try: return int(data.get(key, default))
-            except (TypeError, ValueError): return default
-
-        from models import update_restaurant
-        update_restaurant(rid, {
-            "module_reviews":  _flag("module_reviews", 1),
-            "module_labor":    _flag("module_labor"),
-            "module_inventory":_flag("module_inventory"),
-            "module_marketing":_flag("module_marketing"),
-            # A Place ID IS the reviews connection until Google OAuth is
-            # done — fetcher.fetch_google reads it directly. reviews_live
-            # defaulted to 0 and was settable only from the settings page,
-            # so scheduler.run_daily_fetch's
-            # "WHERE reviews_live=1 OR gmb_refresh_token IS NOT NULL"
-            # skipped every new client until someone remembered the
-            # checkbox. The owner's first session was a working dashboard
-            # with nothing in it, and nothing said why. The Place ID was
-            # already validated against place_id_conflict above, so turning
-            # this on is exactly as safe as the ID that was just accepted.
-            # The settings save applies the same rule (reviews_live_decision).
-            "reviews_live":    1 if ((data.get("google_place_id") or "").strip()
-                                     and _flag("module_reviews", 1)) else 0,
-        })
 
         # The new store's setup checklist (scale audit 10/19/26 ONB-12):
         # the confirmations a person makes once, on its onboarding tracker.
@@ -272,7 +282,13 @@ def create_client(current_user):
             "module_names": module_names,
             "actor": current_user.get("username") or "admin",
         }
-        job_id, setup_error = _start_client_setup(rid, setup)
+        try:
+            job_id, setup_error = _start_client_setup(rid, setup)
+        except Exception as _setup_e:
+            # The client is whole by now (restaurant, login, modules): only
+            # the provider calls didn't start. Said, and the client kept.
+            _ops.capture(_setup_e, job="create_client_setup_start", context=f"restaurant_id={rid}")
+            job_id, setup_error = None, "the setup job couldn't be queued."
         _audit_admin_action(current_user, "client.created", restaurant_id=rid, target=f"restaurant:{rid}",
                             after={"restaurant_name": setup["restaurant_name"], "owner_email": setup["owner_email"],
                                    "username": data["username"].strip(), "modules": module_names,
