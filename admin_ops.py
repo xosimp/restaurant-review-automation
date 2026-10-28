@@ -3570,6 +3570,7 @@ def overview():
             "request_errors_24h": failures.get("request", 0), "job_kind_basis": facts.get("job_kind_basis"),
             "attention": counts["attention"], "critical": counts["critical"],
             "scheduler_heartbeat_minutes": hb, "jobs_overdue": facts.get("jobs_overdue", 0),
+            "scheduler_state": facts.get("scheduler_state"),
             # The platform's data health, from the daily snapshots (admin only —
             # never an owner or the public status page: intelligence privacy).
             "data_health_median": _median([r["data_health"]["overall"] for r in real
@@ -7382,6 +7383,10 @@ def badges():
     real = _real(recs)
     return {"ok": True, "counts": counts, "attention": counts["attention"], "critical": counts["critical"],
             "kpis": {"scheduler_heartbeat_minutes": facts.get("heartbeat"), "jobs_overdue": facts.get("jobs_overdue", 0),
+                     # The loop's own state (stale | wedged | stalled | ok | unknown,
+                     # admin audit 10/27/26 O1): a tick failing part-way keeps the
+                     # beat fresh, so the beat's age alone read green.
+                     "scheduler_state": facts.get("scheduler_state"),
                      "job_failures_24h": ((facts.get("failures_24h") or {}).get("job", 0)
                                           + facts.get("job_runs_failed_24h", 0)),
                      "jobs_failing": facts.get("jobs_failing", 0), "jobs_partial": facts.get("jobs_partial", 0),

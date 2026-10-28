@@ -720,3 +720,11 @@ def test_p14_an_admin_job_that_finishes_drops_the_memo(db_path):
             break
         _t.sleep(0.02)
     assert admin_ops._fleet_state["gen"] > gen
+
+
+def test_o1_badges_and_overview_carry_the_loops_own_state(db_path, monkeypatch, scheduler_heartbeat):
+    import status_manager
+    monkeypatch.setattr(status_manager, "DB_PATH", db_path)
+    scheduler_heartbeat(1, loop_minutes_ago=90)
+    assert admin_ops.badges()["kpis"]["scheduler_state"] == "stalled"
+    assert admin_ops.overview()["kpis"]["scheduler_state"] == "stalled"
