@@ -1449,8 +1449,12 @@ def _pos_integration(r, name, label, configured, auth):
     # reconnect — the console says so at once, not at the next 3am pull.
     auth_failed = r.get("rpower_auth_failed_at") if name == "rpower" and configured else None
     if auth_failed:
-        err = (f"RPOWER refused this store's token on {_mdy(auth_failed)} — its RPOWER reads are paused until "
-               "the owner reconnects (the owner was told).")
+        # The token is Cavnar AI's partner credential, and connecting RPOWER
+        # is admin-only (rpower_routes): the owner cannot reconnect it, so
+        # the console names the admin's step (admin audit 10/27/26 F6).
+        err = (f"RPOWER refused this store's token on {_mdy(auth_failed)} — its RPOWER reads are paused until an "
+               "admin rotates the partner credential (RPOWER → Rotate token) or re-saves this store's token. The "
+               "owner can't reconnect RPOWER; they were told Cavnar AI is on it.")
     # *_last_synced is an instant with an offset, except rpower_last_synced
     # (naive UTC with a T) — read all four as UTC.
     return {"key": name, "label": label,

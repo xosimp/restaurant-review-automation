@@ -469,3 +469,19 @@ def test_f9_run_now_says_when_the_scheduler_is_not_beating(db_path, monkeypatch,
     job = next(n for n, s in admin_ops.RUNNABLE_JOBS.items() if not s["sends"])
     out = admin_ops.run_job_now(job, "will")
     assert out["queued"] is True and out["scheduler_state"] == "stale" and "expires unstarted" in out["message"]
+
+
+# ── F6: an RPOWER token refusal names the admin's step, not the owner's ────
+
+def test_f6_rpower_refusal_tells_the_admin_to_rotate_and_the_owner_nothing(db_path):
+    import data_health
+    rid = _rest(db_path, "Rpower Room", billing_status="active")
+    _sql(db_path, "UPDATE restaurants SET rpower_token='t', rpower_store_mid='m', rpower_auth_failed_at=? WHERE id=?",
+         (_ago_utc(hours=2), rid))
+    rec = next(r for r in admin_ops.clients()["clients"] if r["id"] == rid)
+    rp = next(i for i in rec["integrations"] if i["key"] == "rpower")
+    assert "Rotate token" in rp["error"] and "until the owner reconnects" not in rp["error"]
+    hint = data_health.fix_hint("pos", {"provider": "rpower", "error_class": "auth"})
+    assert "Reconnect" not in hint and "Nothing to do on your side" in hint
+    # Any other POS's refused token is still the owner's to reconnect.
+    assert data_health.fix_hint("pos", {"provider": "toast", "error_class": "auth"}).startswith("Reconnect Toast")
