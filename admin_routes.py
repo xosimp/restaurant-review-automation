@@ -6361,8 +6361,8 @@ def _submit_admin_job(job_id, fn, *args):
             # (admin audit 10/27/26 P-14).
             try:
                 _admin_ops_c.invalidate_fleet_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[admin job] fleet memo not dropped after {job_id}: {e}")
             try:
                 from models import close_thread_connections
                 close_thread_connections()

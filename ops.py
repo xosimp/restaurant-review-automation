@@ -1937,8 +1937,8 @@ def run_admin_task(kind, restaurant_id, name, fn, *args, context="", **kwargs):
             try:
                 import admin_ops as _admin_ops_done
                 _admin_ops_done.invalidate_fleet_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"fleet memo not dropped after admin task {job_id}: {e}")
     _admin_pool.submit(_go)
     return job_id, False
 
