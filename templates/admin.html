@@ -2933,12 +2933,15 @@ function opsState(o){
 function opsSentence(sys){
   const bad = sys.filter(s => s.tone === 'bad'), warn = sys.filter(s => s.tone === 'warn'), unk = sys.filter(s => s.tone === 'neu');
   if(!bad.length && !warn.length && !unk.length) return '<b>Everything ran.</b> Nothing is degraded.';
-  const line = s => `${esc(s.label)} — ${esc(s.sub || '')}`;
+  // The server's reasons are sentences: their own full stop is dropped here
+  // and the area's sentence ends once ("1 client.." / "pos_sync…." otherwise).
+  const line = s => `${esc(s.label)} — ${esc(String(s.sub || '').replace(/\.+$/, ''))}`;
   const parts = [];
   if(bad.length) parts.push(`<b>${bad.map(line).join(' · ')}</b>`);
   if(warn.length) parts.push(warn.map(line).join(' · '));
   if(unk.length) parts.push(`${unk.map(s => esc(s.label)).join(', ')} couldn't be read`);
-  return parts.join(' · ') + '.';
+  const said = parts.join(' · ');
+  return said + (/…(<\/b>)?$/.test(said) ? '' : '.');
 }
 // A subsystem card: its state is the icon's tone, the border when failing,
 // and the first word of the line under the trend — six fit one row.

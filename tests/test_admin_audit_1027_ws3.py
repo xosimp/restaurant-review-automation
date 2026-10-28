@@ -671,3 +671,16 @@ def test_retention_is_over_accounts_that_ever_paid_and_dash_over_none(page):
     assert "retentionOf(real)" in a and "custCostPer(ai, live)" in a
     assert "t.cost / live.length" not in a and "Math.round(live.length / real.length * 100)" not in a
     assert "perAcct.per == null ? '—'" in a and "kept == null ? '—'" in a
+
+
+def test_the_operations_sentence_ends_once(page):
+    # Lead harness pass (admin audit 10/27/26): the server's reasons end in a
+    # full stop, and the area's sentence read "at 1 client.." and "pos_sync….".
+    js = _page_js(page, ("opsSentence",), ("esc",)) + r"""
+    var sys = [{label: 'Jobs', tone: 'bad', sub: '106 jobs past their SLA: backup_db, pos_sync….'},
+               {label: 'Integrations', tone: 'warn', sub: '1 integration failing at 1 client.'}];
+    console.log(JSON.stringify([opsSentence(sys), opsSentence([sys[0]])]));
+    """
+    out = _node(js)
+    assert out[0] == "<b>Jobs — 106 jobs past their SLA: backup_db, pos_sync…</b> · Integrations — 1 integration failing at 1 client."
+    assert out[1] == "<b>Jobs — 106 jobs past their SLA: backup_db, pos_sync…</b>"
