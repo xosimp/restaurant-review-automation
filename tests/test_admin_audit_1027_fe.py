@@ -477,3 +477,39 @@ def test_the_design_system_and_the_comments_match_the_page():
         assert gone not in sec, gone
     assert "admin console's checks" in ds[ds.index("## 4."):ds.index("## 5.")]
     assert "ES5 on purpose" not in PAGE and "covers dashboard.html only" in PAGE
+
+
+# ── Lead's merge (C10 remainder): the page reads the cut-offs the backend
+# stream now sends — /admin/api/rpower-health `thresholds` and
+# /admin/api/system `http.thresholds` — instead of its own copies; the
+# literals are only an older server's fallback.
+
+def test_rpower_budget_cell_judges_by_the_servers_cut_off():
+    js = (_decl("fmtN") + _fn("rpBudgetCell")
+          + "function stripCell(h, i, tone){ return tone; }\n"
+          + "var c = {utilisation: {lanes: {nightly: {pct: 80}}}};\n"
+          + "console.log(JSON.stringify([rpBudgetCell(c, 75), rpBudgetCell(c), rpBudgetCell(c, 90)]));")
+    assert _node(js) == ["warn", "good", "good"]
+
+
+def test_rpower_strip_and_api_card_read_the_payload_thresholds():
+    assert "rpStrip(f, d.thresholds)" in PAGE
+    rp = _fn("rpStrip")
+    assert "th.rpower_429_share_warn" in rp and "th.rpower_skipped_share_warn" in rp
+    assert "th.rpower_nightly_budget_warn_pct" in rp
+    assert "f.s429_share > 0.01" not in rp and "f.skipped_share > 0.05" not in rp
+
+
+def test_api_card_turns_red_at_the_servers_5xx_cut_off():
+    js = (_decl("esc") + _decl("fmtN") + _decl("CUST") + _fn("engApi")
+          + "function ico(){ return ''; } function unknownV(){ return ''; }\n"
+          + "var S = {http: {now: {by_class: {web: {requests: 30, rpm: 6, p95_ms: 100, server_error_rate: 3}}, inflight: {}},"
+          + " thresholds: {api_5xx_bad_pct: 2, api_5xx_min_requests: 20}}};\n"
+          + "var S2 = {http: {now: S.http.now}};\n"
+          + "console.log(JSON.stringify([/ico bad/.test(engApi(S, null)), /ico good/.test(engApi(S2, null))]));")
+    assert _node(js) == [True, True]
+
+
+def test_the_unchosen_rpower_store_issue_files_under_integration():
+    cat = _decl("ISSUE_CAT")
+    assert "rpower_store_unchosen:'Integration'" in cat

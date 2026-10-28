@@ -1160,7 +1160,7 @@ function growthChart(s, w0){
 }
 // Issue categories from the server's own category (the key's kind).
 const ISSUE_CAT = {billing:'Billing', canceled:'Billing', contract:'Billing', signed_unpaid:'Billing', paused:'Billing', modules_mismatch:'Billing', stripe_mismatch:'Billing',
-  int:'Integration', source:'Data', stale:'Data', nodata:'Data', unconf:'Setup', fetch_behind:'Data', urgent:'Reviews', stalled_reviews:'AI', stalled:'AI',
+  int:'Integration', rpower_store_unchosen:'Integration', source:'Data', stale:'Data', nodata:'Data', unconf:'Setup', fetch_behind:'Data', urgent:'Reviews', stalled_reviews:'AI', stalled:'AI',
   email:'Messages', suppressed:'Messages', push:'Messages', posts:'Messages', onboarding:'Onboarding', inactive:'Account', churn_risk:'Account', dup:'Account',
   ai_spike:'AI', ai_cost:'AI', ai_failures:'AI', ai_budget:'AI', ai_anomaly:'AI', deletion:'Offboarding', cancelled_data:'Offboarding', job:'Platform', job_overdue:'Platform', scheduler:'Platform', platform:'Platform',
   webhook:'Platform', webhook_stale:'Platform', metrics:'Platform', learning:'AI'};
@@ -3800,8 +3800,12 @@ function rpPrev(){ _rp.after.pop(); opsRender(); }
 function rpSearch(ev){ if(ev && ev.key !== 'Enter') return; var el = $('rp-q'); rpFilter('q', el ? el.value : ''); }
 // The fleet strip (admin audit 10/27/26 V01): the six figures the fleet rules
 // page on, in one strip that wraps by width; the other eight under More. No
-// cell links — they would only reopen this page.
-function rpStrip(f){
+// cell links — they would only reopen this page. The 429, held-back and
+// budget cut-offs are the server's (`thresholds`, admin audit 10/27/26 C10);
+// the literals are only an older server's fallback.
+function rpStrip(f, th){
+  th = th || {};
+  var w429 = th.rpower_429_share_warn != null ? th.rpower_429_share_warn : 0.01, wSkip = th.rpower_skipped_share_warn != null ? th.rpower_skipped_share_warn : 0.05;
   var b = f.breaker || {}, used = f.backfill_cap ? fmtN(f.backfill_used) + ' / ' + fmtN(f.backfill_cap) : fmtN(f.backfill_used || 0);
   var top = stripCell('', 'alert', f.failing ? 'bad' : 'good', 'Failing', sharePct(f.failing_share), fmtN(f.failing || 0) + ' stores')
     + stripCell('', 'key', f.auth_failed ? 'bad' : 'good', 'Token refused', fmtN(f.auth_failed || 0), fmtN(f.auth_buckets || 0) + ' tokens')
@@ -3812,9 +3816,9 @@ function rpStrip(f){
   var more = stripCell('', 'plug', 'neu', 'Connected', fmtN(f.connected || 0), 'live stores')
     + stripCell('', 'gauge', 'neu', 'Coverage p50', sharePct(f.coverage_p50), '90 days, p10 ' + sharePct(f.coverage_p10))
     + stripCell('', 'alert', (f.recon_nights_7d || f.pay_gap_nights_7d) ? 'warn' : 'good', 'Recon / pay gaps', fmtN(f.recon_nights_7d || 0) + ' / ' + fmtN(f.pay_gap_nights_7d || 0), 'nights, 7 days')
-    + stripCell('', 'gauge', (f.s429_share > 0.01 || f.skipped_share > 0.05) ? 'warn' : 'good', 'Requests 24h', fmtN(f.requests_24h || 0), '429 ' + sharePct(f.s429_share) + ' · paused ' + sharePct(f.skipped_share))
+    + stripCell('', 'gauge', (f.s429_share > w429 || f.skipped_share > wSkip) ? 'warn' : 'good', 'Requests 24h', fmtN(f.requests_24h || 0), '429 ' + sharePct(f.s429_share) + ' · paused ' + sharePct(f.skipped_share))
     + stripCell('', 'plug', 'neu', 'Backfill slots', used, 'in use')
-    + rpBudgetCell(f.capacity || {})
+    + rpBudgetCell(f.capacity || {}, th.rpower_nightly_budget_warn_pct)
     + stripCell('', 'card', 'neu', 'Unnamed sales types', sharePct(f.unknown_sales_share_7d), '$' + fmtN(Math.round(f.unknown_sales_7d || 0)) + ', 7 days')
     + stripCell('', 'check', 'neu', 'Recipe coverage p50', f.recipe_coverage_p50 == null ? '—' : (Math.round(f.recipe_coverage_p50 * 10) / 10) + '%', fmtN(f.recipe_coverage_stores || 0) + ' stores measured');
   return '<section class="card strip">' + top + '</section>'
@@ -3822,9 +3826,9 @@ function rpStrip(f){
 }
 // The request budget by lane (pos_capacity): the nightly lane's use of its
 // share over 24 hours and whether bulk work is held; "—" where not deployed.
-function rpBudgetCell(c){
-  var u = (c.utilisation || {}).lanes || {}, n = u.nightly || {}, st = c.state || {};
-  var tone = st.shed_bulk ? 'bad' : (n.pct != null && n.pct > 85 ? 'warn' : (n.pct == null ? 'neu' : 'good'));
+function rpBudgetCell(c, warnPct){
+  var u = (c.utilisation || {}).lanes || {}, n = u.nightly || {}, st = c.state || {}, wp = warnPct != null ? warnPct : 85;
+  var tone = st.shed_bulk ? 'bad' : (n.pct != null && n.pct > wp ? 'warn' : (n.pct == null ? 'neu' : 'good'));
   var sub = st.shed_bulk ? 'bulk held tonight' : (n.peak_hour_pct ? 'peak hour ' + n.peak_hour_pct + '%' : 'of the nightly share, 24h');
   return stripCell('', 'gauge', tone, 'Nightly budget', n.pct == null ? '—' : n.pct + '%', sub);
 }
@@ -3884,7 +3888,7 @@ function opsRpower(){
     var total = 0; Object.keys(counts).forEach(function(k){ total += counts[k]; });
     var html = errBanner(d)
       + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span class="muted" style="font-size:12.5px">' + (f.fresh ? 'From the 15-minute rollup' : '<span style="color:var(--amber-t)">The rollup is over an hour old — the rpower_health_rollup job is behind</span>') + (f.as_of ? ' · ' + fmtDT(f.as_of) : '') + '</span>' + asOf(d) + '</div>'
-      + rpStrip(f)
+      + rpStrip(f, d.thresholds)
       + (rules.length ? '<div class="warnbox" style="display:flex;flex-direction:column;gap:6px"><b>' + rules.length + ' fleet rule' + (rules.length === 1 ? '' : 's') + ' firing</b>' + rules.map(function(r){ return '<span>' + pill(r.severity === 'critical' ? 'bad' : 'warn', r.page ? 'pages' : 'console', false) + ' <b>' + esc(r.title) + '</b> <span class="dim">' + esc(r.detail || '') + '</span></span>'; }).join('') + '</div>' : '')
       + '<div class="seg">' + seg.map(function(s){ var n = s[0] ? (counts[s[0]] || 0) : total; return '<button class="' + (_rp.health === s[0] ? 'on' : '') + '" onclick="rpFilter(\'health\',\'' + s[0] + '\')">' + esc(s[1]) + ' <b>' + fmtN(n) + '</b></button>'; }).join('') + '</div>'
       + '<div class="filters" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select onchange="rpFilter(\'type\',this.value)">' + types.map(function(t){ return '<option value="' + esc(t[0]) + '"' + (_rp.type === t[0] ? ' selected' : '') + '>' + esc(t[1]) + '</option>'; }).join('') + '</select>'
@@ -4006,9 +4010,12 @@ function engDeploy(sys, sE, S){
 }
 const CUST = ['web', 'web_api', 'mobile'];
 function engApi(S, sE){
-  const now = ((S.http || {}).now) || {}, bc = now.by_class || {}, inf = now.inflight || {};
-  const row = (k, lbl) => { const c = bc[k]; return c && c.requests ? `<span class="ink2">${lbl}</span><span class="n">${fmtN(c.rpm)}/min · p95 ${c.p95_ms == null ? '—' : fmtN(Math.round(c.p95_ms)) + 'ms'} · <span style="${c.server_error_rate >= 5 ? 'color:var(--red-t)' : ''}">${c.server_error_rate}% 5xx</span></span>` : `<span class="ink2">${lbl}</span><span class="dim">no requests</span>`; };
-  const bad = CUST.some(k => bc[k] && bc[k].requests >= 20 && bc[k].server_error_rate >= 5);
+  // The 5xx cut-offs are the server's (http.thresholds, admin audit 10/27/26
+  // C10); the literals are only an older server's fallback.
+  const now = ((S.http || {}).now) || {}, bc = now.by_class || {}, inf = now.inflight || {}, th = (S.http || {}).thresholds || {};
+  const badPct = th.api_5xx_bad_pct != null ? th.api_5xx_bad_pct : 5, minReq = th.api_5xx_min_requests != null ? th.api_5xx_min_requests : 20;
+  const row = (k, lbl) => { const c = bc[k]; return c && c.requests ? `<span class="ink2">${lbl}</span><span class="n">${fmtN(c.rpm)}/min · p95 ${c.p95_ms == null ? '—' : fmtN(Math.round(c.p95_ms)) + 'ms'} · <span style="${c.server_error_rate >= badPct ? 'color:var(--red-t)' : ''}">${c.server_error_rate}% 5xx</span></span>` : `<span class="ink2">${lbl}</span><span class="dim">no requests</span>`; };
+  const bad = CUST.some(k => bc[k] && bc[k].requests >= minReq && bc[k].server_error_rate >= badPct);
   return `<div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico ${sE ? 'neu' : bad ? 'bad' : 'good'}">${ico('gauge')}</span><span class="lbl">API</span><span class="muted" style="margin-left:auto;font-size:12px">last 5 minutes</span></span>
     ${sE ? unknownV(sE) : `<div class="kv" style="grid-template-columns:90px 1fr;font-size:12.5px">${row('web', 'Web')}${row('web_api', 'Web API')}${row('mobile', 'iOS app')}${row('admin', 'Console')}</div>`}
     <span class="muted" style="font-size:12px">${sE ? '' : `In flight <span class="n">${fmtN(inf.now)}</span> of <span class="n">${fmtN(inf.threads)}</span> threads · peak <span class="n">${fmtN(inf.peak_5m)}</span>${inf.oldest_ms ? ' · oldest ' + fmtN(inf.oldest_ms) + 'ms on ' + esc(inf.oldest_route || '') : ''}`}</span></div>`;
