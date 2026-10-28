@@ -2293,6 +2293,18 @@ def _suppressed_for(r, users, d):
     return out
 
 
+# Suppressions an admin may lift: a bounce (the mailbox, which can be fixed).
+# One the person made — an unsubscribe, a spam complaint — is theirs to
+# undo, and the reinstate route refuses it (WS-2's models.suppression_liftable,
+# PERSON_MADE_SUPPRESSIONS; the lead reconciles the two at merge). An empty
+# reason has always been read as a bounce here.
+_BOUNCE_SUPPRESSIONS = ("", "bounced", "bounce", "hard_bounce", "soft_bounce")
+
+
+def _suppression_reinstatable(reason):
+    return (reason or "").strip().lower() in _BOUNCE_SUPPRESSIONS
+
+
 def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, billing=None, users=None,
                 churn=None, segment=None, deletion=None):
     """Actionable problems for one location, each with severity, age, the
@@ -2519,12 +2531,21 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         all_mail = scope in ("all", "")
         tag = hashlib.sha1(addr.encode()).hexdigest()[:10]
         whom = "Owner" if who == "owner" else "A login's"
-        add(f"suppressed:{tag}", f"{whom} email address is suppressed ({sup.get('reason') or 'bounce'})",
-            "critical" if all_mail else "warning", sup.get("created_at"), "Reinstate address",
-            "/admin/api/suppressions/reinstate",
-            (f"{addr} gets no {'' if all_mail else 'marketing '}email from Cavnar AI"
-             + (" — alerts, briefs and reports included." if all_mail else ".")),
-            zone="UTC", action_payload={"email": addr})
+        reason = (sup.get("reason") or "").strip().lower()
+        detail = (f"{addr} gets no {'' if all_mail else 'marketing '}email from Cavnar AI"
+                  + (" — alerts, briefs and reports included." if all_mail else "."))
+        if _suppression_reinstatable(reason):
+            add(f"suppressed:{tag}", f"{whom} email address is suppressed ({reason or 'bounce'})",
+                "critical" if all_mail else "warning", sup.get("created_at"), "Reinstate address",
+                "/admin/api/suppressions/reinstate", detail, zone="UTC", action_payload={"email": addr})
+        else:
+            # The person opted out or reported spam: only they opt back in,
+            # and Reinstate is refused (409) — so it is not offered (admin
+            # audit 10/27/26, with WS-2's S2 rule).
+            add(f"suppressed:{tag}", f"{whom} email address is suppressed ({reason})",
+                "critical" if all_mail else "warning", sup.get("created_at"), "Open messages", None,
+                detail + " The person opted out themselves, so only they can opt back in.", zone="UTC",
+                action_kind="link", action_href=f"{client}?tab=messages")
     pu = d["pushes"].get(rid, {})
     tk = d["tokens"].get(rid, {})
     if (pu.get("failed_7d") or 0) > 0 or (tk.get("disabled") or 0) > 0:

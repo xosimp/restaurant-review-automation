@@ -374,3 +374,17 @@ def test_k15_a_store_with_unstaged_steps_open_is_finishing_not_live():
                            "days_since_signup": onboarding.ONBOARDING_STUCK_DAYS + 5}])
     assert [x["stage"] for x in b["stuck"]] == ["finishing"]
     assert next(s for s in b["stages"] if s["key"] == "live")["count"] == 0
+
+
+# ── Coordinator addition: Reinstate is offered for a bounce only ───────────
+
+def test_reinstate_is_offered_only_for_a_bounce_suppression(db_path):
+    bounced = _rest(db_path, "Bounce Bar", billing_status="active", owner_email="b@ex.com")
+    opted = _rest(db_path, "Optout Oven", billing_status="active", owner_email="o@ex.com")
+    models.suppress_email("b@ex.com", "bounced", db_path=db_path)
+    models.suppress_email("o@ex.com", "complained", db_path=db_path)
+    recs = {r["id"]: r for r in admin_ops.clients()["clients"]}
+    b = next(i for i in recs[bounced]["issues"] if ":suppressed:" in i["key"])
+    o = next(i for i in recs[opted]["issues"] if ":suppressed:" in i["key"])
+    assert b["action_route"] == "/admin/api/suppressions/reinstate" and b["action_payload"] == {"email": "b@ex.com"}
+    assert o["action_route"] is None and o["action_kind"] == "link" and "opted out" in o["detail"]
