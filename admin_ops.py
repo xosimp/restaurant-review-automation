@@ -2818,6 +2818,36 @@ def _job_failure_kind(f, has_kind):
     return _ops_kind.infer_failure_kind(f.get("job"), f.get("error"))
 
 
+def _run_states_24h():
+    """{"latest": {job: {state, ok, error, finished_at}}, "failed_counts":
+    {job: n}, "ok": bool} — each registry job's newest run that finished
+    in the last 24 hours, read as ops.run_job recorded it (ok 1 clean, 2
+    partial, 0 failed), and how many of its runs failed. One windowed read;
+    `ok` False when it could not be read (the figures then say nothing)."""
+    out = {"latest": {}, "failed_counts": {}, "ok": True}
+    day = _utc_stamp(_utcnow() - timedelta(days=1))
+    conn = get_conn()
+    try:
+        with _collecting() as own:      # its failure still reaches the payload's own scope
+            rows = _rows_dict(conn, "SELECT job, ok, error, finished_at FROM ("
+                                    "  SELECT job, ok, error, finished_at, "
+                                    "         ROW_NUMBER() OVER (PARTITION BY job ORDER BY started_at DESC, id DESC) AS rn "
+                                    "  FROM job_runs WHERE finished_at IS NOT NULL AND started_at >= ?"
+                                    ") t WHERE rn = 1", (day,), label="job_runs")
+            counts = _rows_dict(conn, "SELECT job, COUNT(*) AS n FROM job_runs WHERE ok = 0 AND finished_at IS NOT NULL "
+                                      "AND started_at >= ? GROUP BY job", (day,), label="job_runs")
+        out["ok"] = not own["errors"]
+    finally:
+        conn.close()
+    known = set(_jobs_registry.JOBS)
+    for r in rows:
+        if r["job"] in known:
+            r["state"] = _RUN_STATES.get(r.get("ok"), "failed")
+            out["latest"][r["job"]] = r
+    out["failed_counts"] = {r["job"]: int(r["n"] or 0) for r in counts if r["job"] in known}
+    return out
+
+
 def _platform_issues(recs, d):
     """(issues, facts) for problems that belong to no one restaurant: failed
     jobs (kind='job' only), fleet fetch coverage, jobs past their SLA, the
@@ -2846,8 +2876,26 @@ def _platform_issues(recs, d):
         kinds[kind] = kinds.get(kind, 0) + 1
         if kind == "job":
             by_job.setdefault(f["job"], []).append(f)
+    # What the runs themselves say (admin audit 10/27/26 K-03): ops.run_job
+    # records a job that RETURNED with every attempt failed as job_runs.ok=0
+    # (some failed, or its bound hit: ok=2, partial) and writes no
+    # job_failures row — only a job that raises does. Overview read
+    # job_failures alone, so a job failing every store every night read
+    # "Failed jobs 0 · all on schedule" beside a red row on the Jobs page.
+    runs = _run_states_24h()
+    failed_runs = {j: r for j, r in runs["latest"].items() if r["state"] == "failed" and j not in by_job}
+    facts["jobs_runs_failed"] = sorted(j for j, r in runs["latest"].items() if r["state"] == "failed")
+    facts["jobs_runs_partial"] = sorted(j for j, r in runs["latest"].items() if r["state"] == "partial")
+    facts["jobs_runs_read"] = runs["ok"]
     facts["failures_24h"] = kinds
-    facts["jobs_failing"] = len(by_job)
+    # Jobs failing now: a captured failure in 24h, or a last run that failed.
+    facts["jobs_failing"] = len(set(by_job) | set(facts["jobs_runs_failed"]))
+    # O4's name for what jobs_failing used to count: jobs with a captured failure.
+    facts["jobs_with_failures"] = len(by_job)
+    facts["jobs_partial"] = len([j for j in facts["jobs_runs_partial"] if j not in by_job])
+    # Failed runs that raised nothing are failures too (their job has no
+    # captured row, so nothing is counted twice).
+    facts["job_runs_failed_24h"] = sum(runs["failed_counts"].get(j, 0) for j in runs["failed_counts"] if j not in by_job)
     facts["job_kind_basis"] = "job_failures.kind" if has_kind else "inferred from the job name and error text"
     # A job's failures are critical on the SHARE of stores they hit (Audit #23
     # A6-04): "≥5 in 24h" was permanently critical at 1,500 stores, where a
@@ -2865,6 +2913,13 @@ def _platform_issues(recs, d):
         add(f"job:{job}", f"Job `{job}` failed {len(fs)}× in 24h{where}", "critical" if crit else "warning",
             since=fs[-1]["created_at"], zone="UTC", occurrence=fs[0]["created_at"], occurrence_zone="UTC",
             detail=(fs[0]["error"] or "")[:160], action="Open jobs", action_kind="link",
+            action_href="#operations/jobs")
+    for job, run in sorted(failed_runs.items()):
+        if job == "pos_budget_check":
+            continue
+        add(f"job:{job}", f"Job `{job}` failed its last run", "critical",
+            since=run.get("finished_at"), zone="UTC", occurrence=run.get("finished_at"), occurrence_zone="UTC",
+            detail=(run.get("error") or "Every attempt failed.")[:160], action="Open jobs", action_kind="link",
             action_href="#operations/jobs")
     # The RPOWER fleet rules from the rollup (Audit #23, A6 section 3.6): each
     # one platform issue; the stores it stands for have their own RPOWER rows
@@ -3235,7 +3290,12 @@ def overview():
             "email_delivered_today": int(emails_today.get("delivered") or 0),
             "push_today": push_today.get("sent") or 0, "push_failures_today": push_today.get("failed") or 0,
             "alerts_today": alerts_today.get("n") or 0,
-            "job_failures_24h": failures.get("job", 0), "jobs_failing": facts.get("jobs_failing", 0),
+            # Captured failures plus runs that failed without raising (K-03).
+            "job_failures_24h": failures.get("job", 0) + facts.get("job_runs_failed_24h", 0),
+            "jobs_failing": facts.get("jobs_failing", 0),
+            "jobs_partial": facts.get("jobs_partial", 0), "jobs_with_failures": facts.get("jobs_with_failures", 0),
+            "jobs_runs_failed": facts.get("jobs_runs_failed") or [],
+            "jobs_runs_partial": facts.get("jobs_runs_partial") or [],
             "request_errors_24h": failures.get("request", 0), "job_kind_basis": facts.get("job_kind_basis"),
             "attention": counts["attention"], "critical": counts["critical"],
             "scheduler_heartbeat_minutes": hb, "jobs_overdue": facts.get("jobs_overdue", 0),
@@ -6717,7 +6777,9 @@ def badges():
     real = _real(recs)
     return {"ok": True, "counts": counts, "attention": counts["attention"], "critical": counts["critical"],
             "kpis": {"scheduler_heartbeat_minutes": facts.get("heartbeat"), "jobs_overdue": facts.get("jobs_overdue", 0),
-                     "job_failures_24h": (facts.get("failures_24h") or {}).get("job", 0),
+                     "job_failures_24h": ((facts.get("failures_24h") or {}).get("job", 0)
+                                          + facts.get("job_runs_failed_24h", 0)),
+                     "jobs_failing": facts.get("jobs_failing", 0), "jobs_partial": facts.get("jobs_partial", 0),
                      "past_due": sum(1 for r in real if r["billing"]["status"] == "past_due"),
                      "deletion_requests": sum(1 for r in recs if r.get("deletion")),
                      "clients": len(real)},

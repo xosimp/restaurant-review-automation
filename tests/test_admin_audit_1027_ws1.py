@@ -154,3 +154,24 @@ def test_k02_a_tenant_override_is_the_ceiling_the_watch_reads(db_path):
     model_gateway._budget_memo.clear()
     assert not ai_utils.ai_budget_status(rid, db_path=db_path)["day"]["over"]
     assert not [x for x in admin_ops.budget_watch() if x["restaurant_id"] == rid]
+
+
+# ── K-03: a job run that failed without raising reaches Overview ───────────
+
+def test_k03_a_failed_run_is_a_failed_job_on_overview(db_path):
+    name = "prune_ledgers"
+    ops.run_job(name, lambda: {"attempted": 3, "ok": 0, "failed": 3, "skipped": 0, "hit_bound": False}, db_path=db_path)
+    ov = admin_ops.overview()
+    k = ov["kpis"]
+    row = next(j for j in admin_ops.jobs()["jobs"] if j["job"] == name)
+    assert row["state"] == "failed"
+    assert k["job_failures_24h"] == 1 and k["jobs_failing"] == 1 and k["jobs_runs_failed"] == [name]
+    assert any(i["key"] == f"job:{name}" and i["severity"] == "critical" for i in ov["issues"])
+    assert admin_ops.badges()["kpis"]["job_failures_24h"] == 1
+
+
+def test_k03_a_partial_run_is_counted_apart(db_path):
+    name = "prune_ledgers"
+    ops.run_job(name, lambda: {"attempted": 4, "ok": 3, "failed": 1, "skipped": 0, "hit_bound": False}, db_path=db_path)
+    k = admin_ops.overview()["kpis"]
+    assert k["jobs_partial"] == 1 and k["jobs_runs_partial"] == [name] and k["jobs_failing"] == 0
