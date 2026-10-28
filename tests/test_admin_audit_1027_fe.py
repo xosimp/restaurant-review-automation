@@ -126,3 +126,43 @@ def test_operations_reads_the_series_from_the_payloads_and_labels_the_ai_trend_u
     assert "UTC days" in ops.split("subCard('ai'")[1].split("\n")[0]
     for card in ("subCard('jobs'", "subCard('email'", "subCard('push'"):
         assert "Central days" in ops.split(card)[1].split("\n")[0], card
+
+
+# ── P-11: Undeliverable, a type and Failed read the whole log ───────────────
+
+def test_a_filter_reads_the_light_row_route_newest_answer_only_and_fails_honestly():
+    js = _js(("filteredRows", "readErr", "pulse"), ("STALE", "_rowSeq")) + r"""
+    var answers = {}, calls = [];
+    function api(path){ calls.push(path); return new Promise(function(res){ var a = answers[path]; setTimeout(function(){ res(a[1]); }, a[0]); }); }
+    var draw = function(rows){ return '<table ' + rows.length + '>'; }, pick = function(x){ return x.rows; };
+    mk('em-rows'); mk('em-n');
+    var rows = []; for(var i = 0; i < 200; i++) rows.push({id: i});
+    answers['/slow'] = [40, {ok: true, rows: [{id: 'old'}], limit: 200}];
+    answers['/fast'] = [5, {ok: true, rows: rows, limit: 200}];
+    answers['/bad'] = [5, {ok: false, _status: 404, error: 'Not found'}];
+    (async function(){
+      var p1 = filteredRows('em', 'em-rows', 'em-n', '/slow', 'the undeliverable emails', pick, draw);
+      var reading = _els['em-rows'].innerHTML;
+      var p2 = filteredRows('em', 'em-rows', 'em-n', '/fast', 'the undeliverable emails', pick, draw);
+      await Promise.all([p1, p2]);
+      var drawn = _els['em-rows'].innerHTML, n = _els['em-n'].textContent;
+      await filteredRows('em', 'em-rows', 'em-n', '/bad', 'the undeliverable emails', pick, draw);
+      console.log(JSON.stringify({reading: reading, drawn: drawn, n: n, bad: _els['em-rows'].innerHTML, calls: calls}));
+    })();
+    """
+    out = _node(js)
+    assert "dr-pulse" in out["reading"] and "from the whole log" in out["reading"]   # the house pulse while it reads
+    assert out["drawn"].startswith("<table 200>")                                    # the older, slower answer is dropped
+    assert "The newest 200 that match" in out["drawn"] and out["n"] == "200+"
+    assert "Couldn't read the undeliverable emails — Not found" in out["bad"] and "<table" not in out["bad"]
+
+
+def test_email_and_push_filters_call_the_contract_routes():
+    em, push = _fn("emRowsLoad"), _fn("pushRowsLoad")
+    assert "'/admin/api/emails/rows?' + (f === 'failed' ? 'status=undeliverable' : 'type=' + encodeURIComponent(f)) + '&limit=200'" in em
+    assert "'/admin/api/notifications/pushes?status=failed&limit=200'" in push and "x.pushes" in push
+    ops_em, ops_push = _fn("opsEmail"), _fn("opsPush")
+    # the newest-200 sample is never filtered in the browser any more
+    assert "d.rows.filter(" not in ops_em and "d.pushes.filter(" not in ops_push
+    assert "if(_ef !== 'all') emRowsLoad();" in ops_em and "if(_nf === 'failed') pushRowsLoad();" in ops_push
+    assert "(d.by_type || []).map(x => x.email_type)" in ops_em   # every type sent in 7 days is offered
