@@ -191,6 +191,23 @@ def _since(ts, zone=OPERATOR_TZ):
     return f"{int(d / 7)}w"
 
 
+def _dur(minutes):
+    """A duration in the console's words (admin audit 10/27/26 L1): '12m',
+    '3h', '28d' — never "41020 minutes" or "481.2h". '—' when unknown."""
+    if minutes is None:
+        return "—"
+    try:
+        m = max(0.0, float(minutes))
+    except (TypeError, ValueError):
+        return "—"
+    if m < 60:
+        return f"{int(m)}m"
+    h = m / 60.0
+    if h < 48:
+        return f"{int(h)}h"
+    return f"{int(h / 24)}d"
+
+
 def _stamp(dt):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -2534,7 +2551,7 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
     for f in sorted(((d.get("data_findings") or {}).get(rid) or {}).values(), key=lambda g: g["job"]):
         if rrow and (f["job"].startswith("pos_") or f["job"] in ("dsr_pos_consistency",)):
             continue
-        add(f"data:{f['job']}", f"Data check `{f['job']}` found {f['n']} issue{'s' if f['n'] != 1 else ''} this week",
+        add(f"data:{f['job']}", f"Data check {f['job']} found {f['n']} issue{'s' if f['n'] != 1 else ''} this week",
             "warning", f.get("first_at"), "Open data", None, (f.get("sample") or "")[:200] or None, zone="UTC",
             occurrence=f.get("last_at"), occurrence_zone="UTC", action_kind="link", action_href=data_tab)
     for m in modules:
@@ -3072,14 +3089,14 @@ def _platform_issues(recs, d):
         crit = bare >= JOB_FAIL_CRITICAL or (len(rids) >= JOB_FAIL_MIN_STORES
                                              and len(rids) > JOB_FAIL_STORE_SHARE * fleet_n)
         where = f" at {len(rids)} store{'s' if len(rids) != 1 else ''}" if rids else ""
-        add(f"job:{job}", f"Job `{job}` failed {len(fs)}× in 24h{where}", "critical" if crit else "warning",
+        add(f"job:{job}", f"Job {job} failed {len(fs)}× in 24h{where}", "critical" if crit else "warning",
             since=fs[-1]["created_at"], zone="UTC", occurrence=fs[0]["created_at"], occurrence_zone="UTC",
             detail=(fs[0]["error"] or "")[:160], action="Open jobs", action_kind="link",
             action_href="#operations/jobs")
     for job, run in sorted(failed_runs.items()):
         if job == "pos_budget_check":
             continue
-        add(f"job:{job}", f"Job `{job}` failed its last run", "critical",
+        add(f"job:{job}", f"Job {job} failed its last run", "critical",
             since=run.get("finished_at"), zone="UTC", occurrence=run.get("finished_at"), occurrence_zone="UTC",
             detail=(run.get("error") or "Every attempt failed.")[:160], action="Open jobs", action_kind="link",
             action_href="#operations/jobs")
@@ -3168,9 +3185,14 @@ def _platform_issues(recs, d):
         _note_failure("jobs_overdue", e)
     facts["jobs_overdue"] = len(overdue)
     for j in overdue:
-        add(f"job_overdue:{j['job']}", f"Job `{j['job']}` has not run successfully in {j['hours_since']:g}h",
+        # Durations in the console's words and no backticks (admin audit
+        # 10/27/26 L1: "481.2h" and literal `x` read as written); the key
+        # is unchanged — resolutions match on it.
+        add(f"job_overdue:{j['job']}",
+            f"Job {j['job']} has not run successfully in {_dur((j['hours_since'] or 0) * 60)}",
             "critical", since=j["last_ok_at"], zone="UTC", occurrence=j["last_ok_at"], occurrence_zone="UTC",
-            detail=f"Expected within {j['max_hours']}h. Last success: {j['last_ok_at'] or 'never'}.",
+            detail=(f"Expected within {_dur((j['max_hours'] or 0) * 60)}. Last success: "
+                    f"{_mdy(j['last_ok_at']) if j.get('last_ok_at') else 'never'}."),
             action="Open jobs", action_kind="link", action_href="#operations/jobs")
     # The loop's own heartbeat (status_manager.scheduler_state, the one
     # reading /health, the SLA page and the status page share), from the
@@ -3187,18 +3209,17 @@ def _platform_issues(recs, d):
     facts["scheduler_state"] = sched.get("state")
     if sched.get("state") in ("unknown", "stale", "wedged", "stalled"):
         if sched["state"] == "wedged":
-            title = (f"Scheduler stuck in `{sched.get('running_job')}` for {int(sched.get('running_minutes') or 0)} "
-                     f"minutes (bound {sched.get('running_bound_minutes')})")
+            title = (f"Scheduler stuck in {sched.get('running_job')} for {_dur(sched.get('running_minutes') or 0)} "
+                     f"(its bound is {_dur(sched.get('running_bound_minutes'))})")
         elif sched["state"] == "stalled":
-            title = (f"Scheduler has not completed a tick in {int(sched.get('loop_completed_age_minutes') or 0)} "
-                     "minutes")
+            title = f"Scheduler has not completed a tick in {_dur(sched.get('loop_completed_age_minutes') or 0)}"
         elif hb is not None:
             title = "Scheduler heartbeat is stale"
         else:
             title = "Scheduler heartbeat is unreadable"
-        add("scheduler", title, "critical", detail=f"{int(hb)} minutes since the last beat" if hb is not None else None,
+        add("scheduler", title, "critical", detail=f"{_dur(hb)} since the last beat" if hb is not None else None,
             resolvable=False, action="Check Railway", action_kind="link", action_href="#engineering")
-        out[-1]["since"] = f"{int(hb)}m" if hb is not None else "—"
+        out[-1]["since"] = _dur(hb) if hb is not None else "—"
     # The nightly backup (D, #1, #2): failed, stale, or with no off-site copy.
     # It clears itself on the next good run, so it cannot be resolved.
     try:
@@ -3249,7 +3270,7 @@ def _platform_issues(recs, d):
                         f"Check {p['secret_env']} against the provider's dashboard."),
                 action="Open integrations", action_kind="link", action_href="#operations/integrations")
         elif p.get("stale"):
-            add(f"webhook_stale:{p['provider']}", f"No {p['label']} webhook event in {int(p['age_hours'])}h",
+            add(f"webhook_stale:{p['provider']}", f"No {p['label']} webhook event in {_dur(p['age_hours'] * 60)}",
                 "warning", since=p.get("last_verified_at"), zone="UTC", occurrence=p.get("last_verified_at"),
                 occurrence_zone="UTC",
                 detail="Mail went out, but no delivery event came back: check the webhook's signing secret.",
@@ -7958,22 +7979,40 @@ def _ago_z(minutes):
     return (_utcnow() - timedelta(minutes=float(minutes))).strftime(_ZFMT) if minutes is not None else None
 
 
+@_reports_failures
 def ops_state():
     """{systems: {scheduler, jobs, api, email, sms, push, ai, integrations:
-    {state: ok | warn | bad | unknown, reason, since}}, worst, generated_at}.
-    Each system is read on its own and reads `unknown` (with why) when its
-    source cannot be — never a page failure. Nothing here writes."""
+    {state: ok | warn | bad | unknown, reason, since, ...facts}}, worst,
+    generated_at} — ONE server verdict per system, by the server's own
+    rules, for the Overview ring, the rail and Operations (admin audit
+    10/27/26 O1/K-03/WS-1). Each system is read on its own, inside its own
+    collection scope: a read that fails turns an "ok" into `unknown` (with
+    `read_failed`), never a page failure and never a green it did not
+    check. Durations in reasons are the console's words ("28d", "3h",
+    "12m"). On a request thread the integrations part reads the fleet memo
+    leniently (up to BADGES_MAX_AGE_SECONDS) and never starts a fleet build:
+    the rail polls this. Nothing here writes."""
     path = _current_db_path()
     systems = {}
 
     def guard(name, fn):
         try:
-            systems[name] = fn()
+            with _collecting() as own:
+                res = fn()
         except AdminBusy:
-            systems[name] = _sys("unknown", "The console is building the fleet view — try again in a moment.")
+            res = _sys("unknown", "The console is building the fleet view — try again in a moment.")
+            own = {"errors": []}
         except Exception as e:
             log.warning("ops state %s unreadable: %s", name, e)
-            systems[name] = _sys("unknown", f"unreadable: {str(e)[:120]}")
+            res = _sys("unknown", f"unreadable: {str(e)[:120]}")
+            own = {"errors": []}
+        failed = sorted({e.get("query") for e in own.get("errors") or [] if e.get("query")})
+        if failed:
+            res["read_failed"] = failed
+            if res.get("state") == "ok":
+                res = dict(res, state="unknown",
+                           reason=f"A read failed ({', '.join(failed)}), so this can't be called healthy.")
+        systems[name] = res
 
     providers = {}
     try:
@@ -7999,26 +8038,31 @@ def ops_state():
         st = _sm_state.scheduler_state(path)
         beat = st.get("beat_age_minutes")
         since = _ago_z(beat)
+        facts = {"scheduler_state": st.get("state"), "beat_age_minutes": beat,
+                 "loop_completed_age_minutes": st.get("loop_completed_age_minutes"),
+                 "running_job": st.get("running_job")}
         if st["state"] == "stale":
-            return _sys("bad", f"No heartbeat for {int(beat)} minutes — nothing scheduled is running.", since)
+            return _sys("bad", f"No heartbeat for {_dur(beat)} — nothing scheduled is running.", since, **facts)
         if st["state"] == "wedged":
-            return _sys("bad", f"Stuck in {st.get('running_job')} for {int(st.get('running_minutes') or 0)} minutes "
-                               f"(its bound is {st.get('running_bound_minutes')}).", since)
+            return _sys("bad", f"Stuck in {st.get('running_job')} for {_dur(st.get('running_minutes') or 0)} "
+                               f"(its bound is {_dur(st.get('running_bound_minutes'))}).", since, **facts)
         if st["state"] == "stalled":
-            return _sys("warn", f"No tick has completed in {int(st.get('loop_completed_age_minutes') or 0)} minutes "
-                                "— a tick is failing part-way.", _ago_z(st.get("loop_completed_age_minutes")))
+            # A critical issue on the server's own list (the "scheduler"
+            # issue), so a red verdict here too — one rule, not three.
+            return _sys("bad", f"No tick has completed in {_dur(st.get('loop_completed_age_minutes') or 0)} — a "
+                               "tick is failing part-way.", _ago_z(st.get("loop_completed_age_minutes")), **facts)
         if st["state"] == "unknown":
-            return _sys("unknown", "The heartbeat could not be read.")
-        return _sys("ok", f"Beat {beat:.0f} minute{'s' if round(beat) != 1 else ''} ago.", since)
+            return _sys("unknown", "The heartbeat could not be read.", None, **facts)
+        return _sys("ok", f"Beat {_dur(beat)} ago.", since, **facts)
 
     def jobs():
         import ops as _ops_state
         overdue = _ops_state.jobs_overdue(db_path=path)
-        if overdue:
-            names = ", ".join(j["job"] for j in overdue[:4]) + ("…" if len(overdue) > 4 else "")
-            oldest = min((j["last_ok_at"] for j in overdue if j.get("last_ok_at")), default=None)
-            return _sys("bad", f"{len(overdue)} job{'s' if len(overdue) != 1 else ''} past {'their' if len(overdue) != 1 else 'its'} "
-                               f"SLA: {names}.", _iso_z(oldest, "UTC"), overdue=len(overdue))
+        runs = _run_states_24h()
+        failed_runs = sorted(j for j, r in runs["latest"].items() if r["state"] == "failed")
+        partial_runs = sorted(j for j, r in runs["latest"].items() if r["state"] == "partial")
+        failing = _ops_state.jobs_failing(db_path=path)
+        capped = _ops_state.jobs_bound_capped(db_path=path)
         conn = get_conn(path)
         try:
             kind = " AND COALESCE(kind,'job')='job'" if _has_cols(conn, "job_failures", ("kind",)) else ""
@@ -8027,32 +8071,60 @@ def ops_state():
                             label="job_failures") or {}
         finally:
             conn.close()
+        facts = {"overdue": len(overdue), "runs_failed": failed_runs, "runs_partial": partial_runs,
+                 "failing": [f["job"] for f in failing], "bound_capped": [c["job"] for c in capped],
+                 "captured_failures_24h": int(row.get("n") or 0)}
+
+        def names(xs):
+            return ", ".join(xs[:4]) + ("…" if len(xs) > 4 else "")
+        if overdue:
+            oldest = min((j["last_ok_at"] for j in overdue if j.get("last_ok_at")), default=None)
+            return _sys("bad", f"{len(overdue)} job{'s' if len(overdue) != 1 else ''} past {'their' if len(overdue) != 1 else 'its'} "
+                               f"SLA: {names([j['job'] for j in overdue])}.", _iso_z(oldest, "UTC"), **facts)
+        if failed_runs or failing:
+            bad = sorted(set(failed_runs) | {f["job"] for f in failing})
+            first = min((runs["latest"][j]["finished_at"] for j in failed_runs if runs["latest"][j].get("finished_at")),
+                        default=None)
+            return _sys("bad", f"{len(bad)} job{'s' if len(bad) != 1 else ''} failing: {names(bad)} — the last "
+                               "run failed, or the runs keep failing most of what they attempt.",
+                        _iso_z(first, "UTC"), **facts)
         if row.get("n"):
             return _sys("warn", f"{row['n']} failure{'s' if row['n'] != 1 else ''} in 24 hours across "
-                                f"{row['jobs']} job{'s' if row['jobs'] != 1 else ''}.", _iso_z(row.get("first_at"), "UTC"))
-        return _sys("ok", "Every job ran within its SLA.")
+                                f"{row['jobs']} job{'s' if row['jobs'] != 1 else ''}.",
+                        _iso_z(row.get("first_at"), "UTC"), **facts)
+        if partial_runs:
+            return _sys("warn", f"{len(partial_runs)} job{'s' if len(partial_runs) != 1 else ''} partly failed on "
+                                f"the last run: {names(partial_runs)}.", None, **facts)
+        if capped:
+            return _sys("warn", f"{len(capped)} sweep{'s' if len(capped) != 1 else ''} stopped at the time bound on "
+                                f"every recent run, so not every restaurant is covered: "
+                                f"{names([c['job'] for c in capped])}.", None, **facts)
+        return _sys("ok", "Every job ran within its SLA.", None, **facts)
 
     def api():
         import http_layer
         rm = http_layer.request_metrics()
         win = max(1, rm.get("window_seconds", 300) // 60)
+        facts = {"rpm": rm.get("rpm"), "p95_ms": rm.get("p95_ms"), "server_error_rate": rm.get("server_error_rate"),
+                 "requests": rm.get("requests")}
         if rm["requests"] >= 20 and rm["server_error_rate"] >= 5.0:
             return _sys("bad", f"{rm['server_error_rate']:g}% of customer requests failed (5xx) in the last "
-                               f"{win} minutes.", "now")
+                               f"{_dur(win)}.", "now", **facts)
         try:
             import platform_monitor as _pm_state
             recent = _pm_state.recent_server_errors(hours=1, limit=1, db_path=path)
-        except Exception:
+        except Exception as e:
+            _note_failure("server_errors", e)
             recent = {"total": 0, "latest": []}
         if recent.get("total"):
             latest = (recent.get("latest") or [{}])[0]
             return _sys("warn", f"{recent['total']} server error{'s' if recent['total'] != 1 else ''} in the last hour.",
-                        _iso_z(latest.get("created_at"), "UTC"))
+                        _iso_z(latest.get("created_at"), "UTC"), **facts)
         if rm.get("p95_ms") and rm["p95_ms"] > 2000:
-            return _sys("warn", f"Slow: p95 {rm['p95_ms']:.0f} ms over the last {win} minutes.", "now")
+            return _sys("warn", f"Slow: p95 {rm['p95_ms']:.0f} ms over the last {_dur(win)}.", "now", **facts)
         if not rm["requests"]:
-            return _sys("ok", f"No customer traffic in the last {win} minutes.")
-        return _sys("ok", f"{rm['rpm']:g} requests a minute, p95 {rm['p95_ms']:.0f} ms.")
+            return _sys("ok", f"No customer traffic in the last {_dur(win)}.", None, **facts)
+        return _sys("ok", f"{rm['rpm']:g} requests a minute, p95 {rm['p95_ms']:.0f} ms.", None, **facts)
 
     def email():
         bad = probe_bad("resend")
@@ -8066,21 +8138,25 @@ def ops_state():
                                     "FROM email_log WHERE sent_at >= datetime('now','-1 day')", label="email_log") or {}
         finally:
             conn.close()
+        facts = {"sent_24h": int(today.get("n") or 0), "failed_24h": int(today.get("failed") or 0),
+                 "bounce_rate_7d": rates.get("bounce_rate"), "complaint_rate_7d": rates.get("complaint_rate")}
         if rates.get("enough"):
             for kind, crit in (("bounce", EMAIL_BOUNCE_CRIT_PCT), ("complaint", EMAIL_COMPLAINT_CRIT_PCT)):
                 pct = rates.get(f"{kind}_rate")
                 if pct is not None and pct >= crit:
-                    return _sys("bad", f"Email {kind} rate {pct:g}% this week.", None)
+                    return _sys("bad", f"Email {kind} rate {pct:g}% this week.", None, **facts)
         if mine:
-            return _sys("warn", mine[0])
+            return _sys("warn", mine[0], None, **facts)
         if rates.get("enough"):
             for kind, warn in (("bounce", EMAIL_BOUNCE_WARN_PCT), ("complaint", EMAIL_COMPLAINT_WARN_PCT)):
                 pct = rates.get(f"{kind}_rate")
                 if pct is not None and pct >= warn:
-                    return _sys("warn", f"Email {kind} rate {pct:g}% this week.", None)
+                    return _sys("warn", f"Email {kind} rate {pct:g}% this week.", None, **facts)
         if today.get("failed"):
-            return _sys("warn", f"{today['failed']} of {today['n']} email{'s' if today['n'] != 1 else ''} failed in 24 hours.")
-        return _sys("ok", f"{today.get('n') or 0} email{'s' if (today.get('n') or 0) != 1 else ''} in 24 hours.")
+            return _sys("warn", f"{today['failed']} of {today['n']} email{'s' if today['n'] != 1 else ''} failed in "
+                                "24 hours.", None, **facts)
+        return _sys("ok", f"{today.get('n') or 0} email{'s' if (today.get('n') or 0) != 1 else ''} in 24 hours.",
+                    None, **facts)
 
     def sms():
         bad = probe_bad("twilio")
@@ -8117,7 +8193,7 @@ def ops_state():
         ob = _push_state.outbox_counts(db_path=path)
         oldest = _age_hours(ob.get("oldest_pending_at"), "UTC")
         if oldest is not None and oldest * 60 > 30:
-            return _sys("warn", f"A push has waited {int(oldest * 60)} minutes to go out.",
+            return _sys("warn", f"A push has waited {_dur(oldest * 60)} to go out.",
                         _iso_z(ob.get("oldest_pending_at"), "UTC"))
         if ob.get("failed_24h"):
             return _sys("warn", f"{ob['failed_24h']} push{'es' if ob['failed_24h'] != 1 else ''} failed in 24 hours.")
@@ -8126,9 +8202,41 @@ def ops_state():
     def ai():
         import ai_utils as _ai_state
         h = _ai_state.ai_health(path)
-        state = {"operational": "ok", "degraded": "warn", "outage": "bad"}.get(h.get("status"), "unknown")
-        return _sys(state, h.get("reason") or ("Calls are going through." if state == "ok" else None),
-                    _iso_z((h.get("last_auth_error") or {}).get("at"), "UTC") if state != "ok" else None)
+        a = (h.get("vendors") or {}).get("anthropic") or {}
+        calls, blocked = int(a.get("calls_1h") or 0), int(a.get("blocked_1h") or 0)
+        facts = {"service_status": h.get("status"), "emergency_stop": bool(h.get("emergency_stop")),
+                 "fleet_brake": bool(h.get("fleet_brake")), "key_configured": bool(a.get("key_configured")),
+                 "breaker": a.get("breaker"), "calls_1h": calls, "errors_1h": int(a.get("errors_1h") or 0),
+                 "blocked_1h": blocked, "error_rate_1h": a.get("error_rate_1h")}
+        since = _iso_z((h.get("last_auth_error") or {}).get("created_at") or (h.get("last_auth_error") or {}).get("at"),
+                       "UTC")
+        # The fleet's own stop first: every call is refused (blocked, never an
+        # error row), so a ring counting failures read green through it.
+        if h.get("emergency_stop"):
+            return _sys("bad", "Every AI call is stopped — the emergency stop is armed (Operations → AI clears it).",
+                        None, **facts)
+        status = h.get("status")
+        if status == "outage":
+            # A missing key, the provider rejecting the key, or the breaker
+            # open: calls are blocked before they are sent.
+            return _sys("bad", h.get("reason") or "AI calls are not going through.", since, **facts)
+        brake = h.get("fleet_brake") or {}
+        if brake:
+            return _sys("bad" if brake.get("all") else "warn",
+                        "The fleet brake is on for every unattended AI call." if brake.get("all") else
+                        "The fleet brake is holding some unattended AI calls.", None, **facts)
+        if status == "degraded":
+            return _sys("warn", h.get("reason") or "Some AI calls are failing.", since, **facts)
+        others = [v.get("label") or k for k, v in (h.get("vendors") or {}).items()
+                  if k != "anthropic" and v.get("breaker") == "open"]
+        if others:
+            return _sys("warn", f"{', '.join(others)} paused by the breaker.", None, **facts)
+        if blocked and blocked >= max(_ai_state.AI_STATUS_MIN_CALLS, calls):
+            return _sys("warn", f"{blocked} AI call{'s' if blocked != 1 else ''} refused before sending in the last "
+                                f"hour (budgets, breaker or the readiness gate) against {calls} sent.", None, **facts)
+        if status not in ("operational",):
+            return _sys("unknown", "The AI health could not be read.", None, **facts)
+        return _sys("ok", "Calls are going through.", None, **facts)
 
     def integrations():
         conn = get_conn(path)
@@ -8145,15 +8253,25 @@ def ops_state():
             bad = probe_bad(name)
             if bad:
                 return bad
-        recs, _d, _meta = _records_cached()
+        # The rail polls this: on a request thread it reads the fleet memo
+        # leniently, as badges() does, and never starts a build (WS-3).
+        if _in_request():
+            m = _fleet_memo(max_age=BADGES_MAX_AGE_SECONDS)
+            recs = m["recs"] if m else None
+        else:
+            recs, _d, _meta = _records_cached()
+        if recs is None:
+            return _sys("ok", "Webhooks verify; each client's syncs are checked with the next fleet view.", None,
+                        fleet_checked=False)
         broken = [(r, i) for r in _real(recs) for i in r["integrations"] if i["state"] == "error"]
         if broken:
             clients = len({r["id"] for r, _i in broken})
             first = min((i.get("error_since") or i.get("last_success") for _r, i in broken
                          if i.get("error_since") or i.get("last_success")), default=None)
             return _sys("warn", f"{len(broken)} integration{'s' if len(broken) != 1 else ''} failing at {clients} "
-                                f"client{'s' if clients != 1 else ''}.", first)
-        return _sys("ok", "Every connected integration is syncing.")
+                                f"client{'s' if clients != 1 else ''}.", first, fleet_checked=True,
+                        failing=len(broken))
+        return _sys("ok", "Every connected integration is syncing.", None, fleet_checked=True, failing=0)
 
     for name, fn in (("scheduler", scheduler), ("jobs", jobs), ("api", api), ("email", email), ("sms", sms),
                      ("push", push), ("ai", ai), ("integrations", integrations)):

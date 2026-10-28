@@ -608,3 +608,79 @@ def test_p08_siblings_are_slim_in_the_record_shape(db_path):
     assert isinstance(s["issues"], list) and set(s["onboarding"]) == {"done", "total"}
     assert "score" in s["setup_completeness"] and "level" in s["churn_risk"]
     assert len(json.dumps(s)) < len(json.dumps(next(r for r in admin_ops.clients()["clients"] if r["id"] == b))) / 3
+
+
+# ── L1 (server side): issue titles in the console's duration words ─────────
+
+def test_l1_overdue_and_scheduler_titles_read_humanised_with_their_keys_kept(db_path, monkeypatch, scheduler_heartbeat):
+    monkeypatch.setattr(ops, "jobs_overdue", lambda *a, **k: [
+        {"job": "ai_batch_collect", "max_hours": 26, "last_ok_at": "2026-10-07 03:00:00", "hours_since": 481.2}])
+    scheduler_heartbeat(41020)
+    issues = {i["key"]: i for i in admin_ops.overview()["issues"]}
+    job = issues["job_overdue:ai_batch_collect"]
+    assert job["title"] == "Job ai_batch_collect has not run successfully in 20d"
+    assert job["detail"] == "Expected within 26h. Last success: 10/6/26."
+    sched = issues["scheduler"]
+    assert "`" not in sched["title"] and sched["detail"] == "28d since the last beat" and sched["since"] == "28d"
+    assert admin_ops._dur(12.4) == "12m" and admin_ops._dur(185) == "3h" and admin_ops._dur(None) == "—"
+
+
+# ── /admin/api/ops/state: one complete server verdict per system ───────────
+
+def _state(monkeypatch, db_path):
+    import status_manager
+    monkeypatch.setattr(status_manager, "DB_PATH", db_path)
+    return admin_ops.ops_state()
+
+
+def test_ops_state_scheduler_reasons_are_humanised_and_a_stalled_loop_is_red(db_path, monkeypatch, scheduler_heartbeat):
+    scheduler_heartbeat(41020)
+    s = _state(monkeypatch, db_path)["systems"]["scheduler"]
+    assert s["state"] == "bad" and s["reason"].startswith("No heartbeat for 28d") and s["scheduler_state"] == "stale"
+    scheduler_heartbeat(1, loop_minutes_ago=90)
+    s = _state(monkeypatch, db_path)["systems"]["scheduler"]
+    assert s["state"] == "bad" and "No tick has completed in 1h" in s["reason"]
+
+
+def test_ops_state_jobs_reads_failed_and_partial_runs(db_path, monkeypatch):
+    monkeypatch.setattr(ops, "jobs_overdue", lambda *a, **k: [])
+    ops.run_job("prune_ledgers", lambda: {"attempted": 4, "ok": 3, "failed": 1, "skipped": 0, "hit_bound": False},
+                db_path=db_path)
+    j = _state(monkeypatch, db_path)["systems"]["jobs"]
+    assert j["state"] == "warn" and j["runs_partial"] == ["prune_ledgers"]
+    ops.run_job("prune_ledgers", lambda: {"attempted": 3, "ok": 0, "failed": 3, "skipped": 0, "hit_bound": False},
+                db_path=db_path)
+    j = _state(monkeypatch, db_path)["systems"]["jobs"]
+    assert j["state"] == "bad" and j["runs_failed"] == ["prune_ledgers"] and "prune_ledgers" in j["reason"]
+
+
+def test_ops_state_ai_counts_the_stop_the_missing_key_and_blocked_calls(db_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    a = _state(monkeypatch, db_path)["systems"]["ai"]
+    assert a["state"] == "bad" and a["key_configured"] is False
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    rid = _rest(db_path, "Blocked Bistro", billing_status="active")
+    for _ in range(6):
+        ai_utils.log_blocked(rid, "insights", "claude-sonnet-4-5", "budget", detail="daily budget")
+    a = _state(monkeypatch, db_path)["systems"]["ai"]
+    assert a["state"] == "warn" and a["blocked_1h"] >= 6 and "refused before sending" in a["reason"]
+    monkeypatch.setenv("AI_EMERGENCY_STOP", "1")
+    a = _state(monkeypatch, db_path)["systems"]["ai"]
+    assert a["state"] == "bad" and a["emergency_stop"] is True and "emergency stop" in a["reason"]
+
+
+def test_ops_state_never_starts_a_fleet_build_from_a_request(db_path, monkeypatch):
+    from flask import Flask
+    admin_ops.invalidate_fleet_cache()
+    monkeypatch.setattr(admin_ops, "_records", lambda d=None: (_ for _ in ()).throw(AssertionError("fleet build")))
+    with Flask(__name__).test_request_context("/admin/api/ops/state"):
+        out = _state(monkeypatch, db_path)
+    i = out["systems"]["integrations"]
+    assert i["state"] in ("ok", "bad") and i.get("fleet_checked") is False
+    assert set(out["systems"]) == set(admin_ops.OPS_SYSTEMS)
+
+
+def test_ops_state_a_failed_read_is_unknown_not_ok(db_path, monkeypatch):
+    _fail_label(monkeypatch, "email_log")
+    e = _state(monkeypatch, db_path)["systems"]["email"]
+    assert e["state"] == "unknown" and "email_log" in e["read_failed"]
