@@ -783,14 +783,15 @@ def _load_with(conn):
     sent_only = f" AND {_OUTCOME_SQL} <> 'blocked'" if "outcome" in ai_cols else ""
     owner_sum = (', SUM(CASE WHEN "trigger"=\'owner\' THEN 1 ELSE 0 END) AS owner_calls'
                  if "trigger" in ai_cols else "")
+    failed_sql = _failed_call_sql(ai_cols)
     ai_month = per_rid(f"""SELECT restaurant_id, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost,
                                  SUM(input_tokens)+SUM(output_tokens) AS tokens, MAX(created_at) AS last_at,
-                                 SUM(CASE WHEN COALESCE(status,'ok')='error' THEN 1 ELSE 0 END) AS failed
+                                 SUM(CASE WHEN {failed_sql} THEN 1 ELSE 0 END) AS failed
                           FROM ai_usage WHERE created_at >= ?{sent_only} GROUP BY restaurant_id""", (w["month"],),
                        label="ai_usage", optional=True)
     ai_failed_week = {}
     for row in _rows_dict(conn, "SELECT restaurant_id, created_at, error FROM ai_usage WHERE created_at >= ? "
-                                f"AND COALESCE(status,'ok')='error'{llm_only}{sent_only} ORDER BY id", (w["week"],),
+                                f"AND {failed_sql}{llm_only}{sent_only} ORDER BY id", (w["week"],),
                           label="ai_usage", optional=True):
         f = ai_failed_week.setdefault(row["restaurant_id"], {"n": 0, "last_at": None, "sample": None})
         f["n"] += 1
@@ -2042,7 +2043,8 @@ def location_record(r, d):
                "calls_prev_7d": (d["ai_prev"].get(rid) or {}).get("calls") or 0,
                "owner_calls_7d": ((d["ai_week"].get(rid) or {}).get("owner_calls") if d.get("ai_owner_trigger") else None),
                "last_at": _iso_z(ai.get("last_at"), "UTC"),
-               "failed_30d": ai.get("failed") or 0, "failed_7d": (d["ai_failed_week"].get(rid) or {}).get("n") or 0},
+               "failed_30d": ai.get("failed") or 0, "failed_7d": (d["ai_failed_week"].get(rid) or {}).get("n") or 0,
+               "failed_scope": AI_FAILED_SCOPE},
         "email": {"sent_7d": em.get("sent_7d") or 0, "failed_7d": em.get("failed_7d") or 0,
                   "bounced_7d": em.get("bounced_7d") or 0, "complained_7d": em.get("complained_7d") or 0,
                   "last_failed_at": _iso_z(em.get("last_failed_at"), "UTC"),
@@ -3311,7 +3313,7 @@ def overview():
             ai_today = _one_dict(conn, "SELECT COUNT(*) AS n, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage "
                                        f"WHERE created_at >= ?{sent}", (w["today"],), optional=True) or {}
             ai_failed_24h = _one_dict(conn, "SELECT COUNT(*) AS n FROM ai_usage WHERE created_at >= ? "
-                                            f"AND COALESCE(status,'ok')='error'{llm}{sent}", (w["day"],),
+                                            f"AND {_failed_call_sql(ai_cols)}{llm}{sent}", (w["day"],),
                                       optional=True) or {}
             # A bounce or a complaint is not a delivery (#59); "today" is
             # midnight Central against email_log's UTC stamps (#89).
@@ -3365,6 +3367,7 @@ def overview():
             "integrations_failing": sum(1 for r in real for i in r["integrations"] if i["state"] == "error"),
             "ai_calls_today": ai_today.get("n") or 0, "ai_cost_today": float(ai_today.get("cost") or 0),
             "ai_failures_24h": ai_failed_24h.get("n") or 0,
+            "ai_failed_scope": AI_FAILED_SCOPE, "ai_failed_label": AI_FAILED_LABEL,
             # AI-quality findings are reported apart from failed jobs (#58).
             "ai_quality_24h": ((ai_quality or {}).get("n") or 0) + failures.get("ai_quality", 0),
             "emails_today": int(emails_today.get("n") or 0) - undeliverable,
@@ -3761,6 +3764,31 @@ _OUTCOME_SQL = ("COALESCE(outcome, CASE WHEN COALESCE(status,'ok')='ok' THEN 'ok
 _VENDOR_SQL = ("COALESCE(vendor, CASE WHEN COALESCE(model,'') LIKE 'google-places%' THEN 'google_places' "
                "WHEN COALESCE(model,'') LIKE 'perplexity%' OR COALESCE(model,'') LIKE 'sonar%' THEN 'perplexity' "
                "ELSE 'anthropic' END)")
+# THE failed AI call (admin audit 10/27/26 K-08) — one definition for
+# Overview, the AI page and the client page, which counted four different
+# things: a Claude call that reached the provider and failed (outcome
+# 'error'), once per call — a stream cut part-way and retried leaves a
+# 'stream_cut' row beside the call's own final row, so a call that retried
+# and succeeded read as a failure. Refused, truncated and unparseable replies
+# are "not ok" (status 'error' too), counted apart; Places and Perplexity are
+# data APIs with their own rows on the AI page.
+AI_FAILED_SCOPE = "Claude"
+AI_FAILED_LABEL = ("Claude calls that reached the provider and failed; refused, truncated and unparseable replies "
+                   "are counted apart as not ok, and a stream cut part-way and retried counts once")
+_FAILED_CALL_SQL = (f"({_OUTCOME_SQL} = 'error' AND COALESCE(reason,'') NOT LIKE 'stream_cut%' "
+                    f"AND {_VENDOR_SQL} = 'anthropic')")
+_NOT_OK_CALL_SQL = f"({_OUTCOME_SQL} IN ('refused','truncated','unparseable') AND {_VENDOR_SQL} = 'anthropic')"
+
+
+def _failed_call_sql(ai_cols):
+    """_FAILED_CALL_SQL where the ledger has its columns, else the closest
+    reading an older ledger allows (status 'error', not a Places row)."""
+    if {"outcome", "reason", "vendor"} <= set(ai_cols or ()):
+        return _FAILED_CALL_SQL
+    return ("(COALESCE(status,'ok')='error' AND COALESCE(model,'') NOT LIKE 'google-places%' "
+            "AND COALESCE(model,'') NOT LIKE 'sonar%' AND COALESCE(model,'') NOT LIKE 'perplexity%')")
+
+
 # A blocked row stands for every refusal coalesced into it (attempts).
 _WEIGHT_SQL = f"(CASE WHEN {_OUTCOME_SQL}='blocked' THEN COALESCE(attempts,1) ELSE 1 END)"
 _PROVIDER_LABELS = {"anthropic": "Claude", "perplexity": "Perplexity", "google_places": "Google Places"}
@@ -4095,7 +4123,11 @@ def ai_ops(days=30):
                                        FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL} NOT IN ('ok','blocked')
                                        GROUP BY 1, 2, 3) g
                                    JOIN ai_usage b ON b.id = g.last_id ORDER BY g.n DESC""", (since,))
-    failed_total = _one_dict(conn, f"SELECT COUNT(*) AS n, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS n_24h FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL}='error'", (_utc_since(1), since)) or {}
+    failed_total = _one_dict(conn, f"SELECT SUM(CASE WHEN {_FAILED_CALL_SQL} THEN 1 ELSE 0 END) AS n, "
+                                   f"SUM(CASE WHEN {_FAILED_CALL_SQL} AND created_at >= ? THEN 1 ELSE 0 END) AS n_24h, "
+                                   f"SUM(CASE WHEN {_NOT_OK_CALL_SQL} THEN 1 ELSE 0 END) AS not_ok, "
+                                   f"SUM(CASE WHEN {_NOT_OK_CALL_SQL} AND created_at >= ? THEN 1 ELSE 0 END) AS not_ok_24h "
+                                   f"FROM ai_usage WHERE created_at >= ?", (_utc_since(1), _utc_since(1), since)) or {}
     recent = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name, a.action, a.model, {_VENDOR_SQL} AS vendor, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, "
                               f"COALESCE(a.status,'ok') AS status, {_OUTCOME_SQL} AS outcome, a.stop_reason, a.reason, a.attempts, a.latency_ms, a.\"trigger\" AS \"trigger\", a.call_id, a.correlation_id, a.error "
                               f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
@@ -4146,7 +4178,9 @@ def ai_ops(days=30):
             "outcomes": outcomes, "blocked": blocked, "rate_limit_hits": rate_hits,
             "failures": failures, "recent": recent, "anomalies": anomalies,
             "budget": budget, "budget_watch": watch, "health": health, "quality": quality, "memory": memory,
-            "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0},
+            "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0,
+                       "not_ok": failed_total.get("not_ok") or 0, "not_ok_24h": failed_total.get("not_ok_24h") or 0,
+                       "scope": AI_FAILED_SCOPE, "label": AI_FAILED_LABEL},
             "recent_failed": recent_failed}
 
 

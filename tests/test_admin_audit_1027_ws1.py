@@ -265,3 +265,23 @@ def test_k07_paying_accounts_is_one_figure_everywhere(db_path):
     assert k["paying_accounts"] == snap["paying_accounts"] == 2      # one group payer + the past-due store
     assert k["covered_locations"] == 2 and k["accounts_live"] == 4
     assert k["active"] == 3                                           # the per-location status count is unchanged
+
+
+# ── K-08: one "failed AI call" ──────────────────────────────────────────────
+
+def test_k08_failed_ai_calls_mean_one_thing_on_every_screen(db_path):
+    rid = _rest(db_path, "Fail Grill", billing_status="active")
+    ai_utils.log_ai_usage(rid, "insights", "claude-sonnet-4-5", 0, 0, db_path=db_path, status="error", error="boom")
+    for _ in range(3):
+        ai_utils.log_ai_usage(rid, "draft_reply", "claude-sonnet-4-5", 10, 10, db_path=db_path, outcome="refused")
+    ai_utils.log_ai_usage(rid, "places_details", "google-places-details", 0, 0, db_path=db_path, status="error",
+                          error="timeout", vendor="google_places")
+    ai_utils.log_ai_usage(rid, "visibility", "sonar", 0, 0, db_path=db_path, status="error", error="x", vendor="perplexity")
+    # A stream cut part-way and retried: its own row, not a second failure.
+    ai_utils.log_ai_usage(rid, "insights", "claude-sonnet-4-5", 5, 5, db_path=db_path, status="error", outcome="error",
+                          reason="stream_cut")
+    ov = admin_ops.overview()["kpis"]
+    tab = admin_ops.ai_ops(30)["failed"]
+    rec = next(r for r in admin_ops.clients()["clients"] if r["id"] == rid)["ai"]
+    assert ov["ai_failures_24h"] == tab["n_24h"] == rec["failed_7d"] == rec["failed_30d"] == 1
+    assert tab["not_ok_24h"] == 3 and tab["scope"] == ov["ai_failed_scope"] == rec["failed_scope"] == "Claude"
