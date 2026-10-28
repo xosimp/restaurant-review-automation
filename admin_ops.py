@@ -4621,22 +4621,64 @@ def billing():
             _note_failure("admin_events", e)
             events = []
         totals = _mrr_totals(recs)
+        # Inside the scope: a failed vendor-cost read is in `errors` and
+        # reads unknown, never $0 (K-04).
+        fixed = vendor_costs_month(_now_ct().strftime("%Y-%m"))
+        platform_cost = _unattributed_cost_30d((d.get("windows") or _windows())["month"])
     customers = [x for x in rows if x["segment"] == "customer"]
-    fixed = vendor_costs_month(_now_ct().strftime("%Y-%m"))
-    variable = round(sum(x["margin"]["variable_cost_30d"] for x in rows), 2)
+    # One consistent sum (admin audit 10/27/26 K-04): customer accounts'
+    # metered AI + SMS against customer-only MRR, plus what the platform ran
+    # attributed to no restaurant (sales audits, admin AI, platform jobs) —
+    # internal and demo accounts are their own line, never subtracted from
+    # customer revenue; an entered invoice for a vendor the platform already
+    # meters is shown, never subtracted a second time.
+    variable_customer = round(sum(x["margin"]["variable_cost_30d"] for x in customers), 2)
+    variable_internal = round(sum(x["margin"]["variable_cost_30d"] for x in rows if x["segment"] != "customer"), 2)
+    variable_platform = None if platform_cost is None else round(platform_cost, 2)
+    variable = (None if variable_platform is None else round(variable_customer + variable_platform, 2))
+    entered_metered = {k: v for k, v in fixed["by_vendor"].items() if k in METERED_VENDORS}
+    fixed_total = (None if fixed["total"] is None else
+                   round(sum(v for k, v in fixed["by_vendor"].items() if k not in METERED_VENDORS), 2))
+    gross = (None if variable is None or fixed_total is None else round(totals["mrr"] - variable - fixed_total, 2))
     payers = [x for x in customers if x["monthly"]]
     return {"ok": True, "rows": rows, "events": events, "stripe_live": bool(os.getenv("STRIPE_SECRET_KEY", "")),
             "stripe_error": None, "live_source": "mirror", "mirror_available": bool(d.get("mirror_available")),
             "live_route": "/admin/api/client/<id>/billing/live",
             "mrr": totals["mrr"], "totals": totals,
-            "margin": {"mrr": totals["mrr"], "variable_cost_30d": variable, "fixed_cost_month": fixed["total"],
-                       "gross_margin": round(totals["mrr"] - variable - fixed["total"], 2),
-                       "gross_margin_pct": (round(100.0 * (totals["mrr"] - variable - fixed["total"]) / totals["mrr"], 1)
-                                            if totals["mrr"] else None),
+            "margin": {"mrr": totals["mrr"], "variable_cost_30d": variable, "fixed_cost_month": fixed_total,
+                       "variable_customer_30d": variable_customer, "variable_platform_30d": variable_platform,
+                       "variable_internal_30d": variable_internal, "entered_metered": entered_metered,
+                       "fixed_read_failed": fixed["read_failed"],
+                       "gross_margin": gross,
+                       "gross_margin_pct": (round(100.0 * gross / totals["mrr"], 1)
+                                            if totals["mrr"] and gross is not None else None),
                        "arpa": round(totals["mrr"] / len(payers), 2) if payers else None,
                        "fixed_by_vendor": fixed["by_vendor"],
-                       "basis": "MRR less 30 days of AI and SMS cost less this month's entered vendor costs"},
+                       "basis": ("Customer MRR less 30 days of customer accounts' AI and SMS cost and the AI and "
+                                 "texts the platform ran for no restaurant, less this month's entered vendor costs. "
+                                 "Internal and demo accounts' costs are shown apart, not subtracted; an entered "
+                                 "invoice for a metered vendor (" + ", ".join(METERED_VENDORS) + ") is the metered "
+                                 "cost already counted, so it is not subtracted again.")},
             **_payload_meta(meta, bucket)}
+
+
+def _unattributed_cost_30d(since):
+    """AI and paid-API cost plus SMS cost attributed to no restaurant since
+    `since` (UTC) — what the platform itself ran — or None when unreadable."""
+    conn = get_conn()
+    try:
+        with _collecting() as own:
+            ai = _one_dict(conn, "SELECT ROUND(COALESCE(SUM(cost_usd),0),4) AS c FROM ai_usage "
+                                 "WHERE restaurant_id IS NULL AND created_at >= ?", (since,), label="ai_usage",
+                           optional=True) or {}
+            sms = _one_dict(conn, "SELECT ROUND(COALESCE(SUM(COALESCE(cost_usd,0)),0),4) AS c FROM sms_log "
+                                  "WHERE restaurant_id IS NULL AND created_at >= ?", (since,), label="sms_log",
+                            optional=True) or {}
+    finally:
+        conn.close()
+    if own["errors"]:
+        return None
+    return float(ai.get("c") or 0) + float(sms.get("c") or 0)
 
 
 # The scheduler's jobs, by the name ops.run_job records them under, so the
@@ -6525,16 +6567,28 @@ VENDORS = ("railway", "resend", "twilio", "stripe_fees", "docusign", "anthropic"
            "apple", "domain", "other")
 
 
+# Vendors whose usage the platform already meters (ai_usage): an entered
+# invoice for one is the same money as the metered figure, never a second
+# cost (admin audit 10/27/26 K-04). "twilio" is the numbers' rental (the
+# _BOOT_SQL comment: costs the ledgers cannot see); texts are metered apart.
+METERED_VENDORS = ("anthropic", "google_places", "perplexity")
+
+
 def vendor_costs_month(month):
-    """{total, by_vendor} of the costs entered for one 'YYYY-MM'."""
+    """{total, by_vendor, read_failed} of the costs entered for one
+    'YYYY-MM'. A failed read is recorded in the caller's scope and says so
+    (`read_failed`, total None) — never an entered total of $0 (K-04)."""
     conn = get_conn()
     try:
-        rows = _rows_dict(conn, "SELECT vendor, amount_usd FROM vendor_costs WHERE month=?", (month,),
-                          label="vendor_costs", optional=True)
+        with _collecting() as own:
+            rows = _rows_dict(conn, "SELECT vendor, amount_usd FROM vendor_costs WHERE month=?", (month,),
+                              label="vendor_costs", optional=True)
     finally:
         conn.close()
     by = {r["vendor"]: round(float(r["amount_usd"] or 0), 2) for r in rows}
-    return {"month": month, "total": round(sum(by.values()), 2), "by_vendor": by}
+    failed = bool(own["errors"])
+    return {"month": month, "total": None if failed else round(sum(by.values()), 2), "by_vendor": by,
+            "read_failed": failed}
 
 
 def _ai_cost_by_vendor(conn, since, until=None):

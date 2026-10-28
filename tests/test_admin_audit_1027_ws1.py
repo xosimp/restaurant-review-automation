@@ -175,3 +175,38 @@ def test_k03_a_partial_run_is_counted_apart(db_path):
     ops.run_job(name, lambda: {"attempted": 4, "ok": 3, "failed": 1, "skipped": 0, "hit_bound": False}, db_path=db_path)
     k = admin_ops.overview()["kpis"]
     assert k["jobs_partial"] == 1 and k["jobs_runs_partial"] == [name] and k["jobs_failing"] == 0
+
+
+# ── K-04: gross margin is one consistent sum ────────────────────────────────
+
+def test_k04_gross_margin_counts_each_cost_once_and_only_the_customers(db_path):
+    rid = _rest(db_path, "Margin Bistro", billing_status="active")
+    demo = _rest(db_path, "Showcase Demo", billing_status="trial", is_demo=1)
+    ai_utils.log_ai_usage(rid, "insights", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=2.0)
+    ai_utils.log_ai_usage(demo, "insights", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=5.0)
+    ai_utils.log_ai_usage(None, "sales_audit", "claude-sonnet-4-5", 0, 0, db_path=db_path, cost_usd=3.0)
+    month = admin_ops._now_ct().strftime("%Y-%m")
+    _sql(db_path, "INSERT INTO vendor_costs (vendor, month, amount_usd) VALUES ('anthropic', ?, 10)", (month,))
+    _sql(db_path, "INSERT INTO vendor_costs (vendor, month, amount_usd) VALUES ('railway', ?, 20)", (month,))
+    b = admin_ops.billing()
+    m = b["margin"]
+    assert m["variable_customer_30d"] == 2.0 and m["variable_platform_30d"] == 3.0
+    assert m["variable_internal_30d"] == 5.0 and m["variable_cost_30d"] == 5.0
+    assert m["fixed_cost_month"] == 20.0 and m["entered_metered"] == {"anthropic": 10.0}
+    assert m["gross_margin"] == pytest.approx(b["mrr"] - 5.0 - 20.0)
+
+
+def test_k04_a_failed_vendor_cost_read_is_unknown_not_zero(db_path, monkeypatch):
+    _rest(db_path, "Margin Bistro", billing_status="active")
+    real = admin_ops._rows_dict
+
+    def flaky(conn, sql, args=(), label=None, optional=False):
+        if label == "vendor_costs":
+            admin_ops._note_failure("vendor_costs", RuntimeError("database is locked"))
+            return []
+        return real(conn, sql, args, label=label, optional=optional)
+    monkeypatch.setattr(admin_ops, "_rows_dict", flaky)
+    b = admin_ops.billing()
+    assert b["margin"]["fixed_cost_month"] is None and b["margin"]["gross_margin"] is None
+    assert b["margin"]["fixed_read_failed"] is True
+    assert any(e["query"] == "vendor_costs" for e in b["errors"])
