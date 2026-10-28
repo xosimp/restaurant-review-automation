@@ -1202,13 +1202,41 @@ function issuesTable(issues, opts){
 }
 // An issue's POST action (#62): the confirm names the client (and the address
 // a payload carries, e.g. a suppression to reinstate), and the toast is the
-// server's own answer — its error on any non-2xx (#109).
+// server's own answer — its error on any non-2xx (#109). A payload with an
+// empty `note` (Lift hold) asks for the note the route requires BEFORE the
+// password step — it was posted empty and refused after the password
+// (admin audit 10/27/26, W1). An action that starts a job (Sync now, Refresh
+// token) is followed to its end and says how it went, then the page reloads
+// if the admin is still on it (W5) — it used to reload at once, with the
+// issue still there and a failure never shown.
 async function issueAction(path, label, where, payload){
   if(path.startsWith('/admin/view-as/') || path.startsWith('/admin/client-settings/')){ location.href = path; return; }
   let body = {}; if(payload){ try{ body = JSON.parse(payload) || {}; }catch(e){ body = {}; } }
   if(!confirm(label + (where ? ' — ' + where : '') + (body.email ? ' (' + body.email + ')' : '') + '?')) return;
+  if(!issueNote(body, label, where)) return;
+  var here = location.hash;
   const d = await post(path, body);
+  if(okRes(d) && d.job_id){ toast(d.message || (label + ' — started'), ''); return followJob(d.job_id, label, here); }
   if(say(d, label + ' — done')){ _clients = null; route(); badges(); } }
+// The note an action's payload asks for (an empty `note`), asked for here:
+// false when the admin cancels or leaves it blank — nothing is sent.
+function issueNote(body, label, where){
+  if(!body || !Object.prototype.hasOwnProperty.call(body, 'note') || String(body.note || '').trim()) return true;
+  var n = prompt(label + (where ? ' — ' + where : '') + '\n\nSay why (the note is the record):', '');
+  if(n === null) return false;
+  if(!n.trim()){ toast('A note is required — nothing was changed', 'bad'); return false; }
+  body.note = n.trim();
+  return true;
+}
+// A job an action started, followed through pollJob and said (jobSaid);
+// the page reloads only if the admin is still where it was started.
+function followJob(jobId, label, here){
+  return pollJob(jobUrl(jobId)).then(function(r){
+    jobSaid(r, label); _clients = null; badges();
+    if(location.hash === here){ if(here.indexOf('#operations') === 0) _opsFresh = true; route(); }
+    return r;
+  });
+}
 // Resolve holds for the occurrence the console saw (#24): a newer one reopens
 // the issue. Without an occurrence (a platform view that didn't carry one)
 // the server resolves the one open now.
@@ -1217,8 +1245,24 @@ function resolveOpen(key, title, occurrenceAt){ _resolve = {key: key, occurrence
   $('r-scope').textContent = occurrenceAt ? 'For this occurrence (' + fmtDT(occurrenceAt) + ') — it reopens if it happens again.' : 'For as long as this condition lasts — it reopens once it clears and comes back.'; openModal('m-resolve'); }
 let _capRid = null;
 function capOpen(rid, name, current){ _capRid = rid; $('cap-name').textContent = name || ('#'+rid); $('cap-n').value = current||0; openModal('m-cap'); $('cap-n').focus(); }
+// One request at a time per control (admin audit 10/27/26, C11/W15-f): a
+// second click while the first is out does nothing, and the button is off
+// until the answer is in — whatever it was, a lost answer included.
+var _inflight = {};
+function oneAtATime(key, btn, run){
+  if(_inflight[key]) return Promise.resolve(null);
+  _inflight[key] = true; if(btn) btn.disabled = true;
+  function done(){ _inflight[key] = false; if(btn) btn.disabled = false; }
+  var p; try{ p = Promise.resolve(run()); }catch(e){ p = Promise.reject(e); }
+  return p.then(function(v){ done(); return v; }, function(e){ done(); throw e; });
+}
+// The button in `within` (an element or its id) that calls fn(…).
+function goBtn(within, fn){ var el = typeof within === 'string' ? $(within) : within; return el ? el.querySelector('button[onclick^="' + fn + '("]') : null; }
+// A cap changed from Operations redraws Operations from fresh reads (W7):
+// the 60-second cache still offered "Cap alerts" on the capped storm.
 async function capSubmit(){ const n = parseInt($('cap-n').value,10); if(isNaN(n)||n<0){ toast('Enter 0 or a positive number','bad'); return; }
-  const d = await post('/admin/api/client/'+_capRid+'/alert-cap', {max_per_day:n}); if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ closeModal('m-cap'); _clients=null; route(); } }
+  const d = await oneAtATime('cap', goBtn('m-cap', 'capSubmit'), function(){ return post('/admin/api/client/'+_capRid+'/alert-cap', {max_per_day:n}); }); if(!d) return;
+  if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ closeModal('m-cap'); _clients=null; _opsFresh = true; route(); } }
 // Run now (#95, #9, #64): the job is handed to the scheduler, which starts it
 // on its next tick; one that sends is refused on a server that may not
 // schedule, and the toast is the server's own sentence. The page then
@@ -1233,8 +1277,10 @@ async function runJob(job, sends, label){
   const here = location.hash;
   setTimeout(() => { if(location.hash === here && onJobsPage()){ _opsFresh = true; route(); } }, 2500);
 }
-async function capSet(rid, n, name){ if(!n && !confirm('Remove the daily alert cap' + (name ? ' for ' + name : '') + '? Every alert sends again.')) return; const d = await post('/admin/api/client/'+rid+'/alert-cap', {max_per_day:n}); if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ _clients=null; route(); } }
-async function resolveSubmit(){ if(!_resolve) return; const d = await post('/admin/api/issues/resolve', {key:_resolve.key, note:$('r-note').value, occurrence_at:_resolve.occurrence_at}); closeModal('m-resolve');
+async function capSet(rid, n, name){ if(!n && !confirm('Remove the daily alert cap' + (name ? ' for ' + name : '') + '? Every alert sends again.')) return; const d = await post('/admin/api/client/'+rid+'/alert-cap', {max_per_day:n}); if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ _clients=null; _opsFresh = true; route(); } }
+async function resolveSubmit(){ if(!_resolve) return;
+  const d = await oneAtATime('resolve', goBtn('m-resolve', 'resolveSubmit'), function(){ return post('/admin/api/issues/resolve', {key:_resolve.key, note:$('r-note').value, occurrence_at:_resolve.occurrence_at}); }); if(!d) return;
+  closeModal('m-resolve');
   // 409: this one can't be resolved — it clears itself, or closes another way.
   if(d && (d._status === 409 || d.resolvable === false)){ toast(d.error || "This issue can't be marked resolved — it clears itself.", 'bad'); return; }
   if(say(d, d && d.scope === 'condition' ? 'Resolved while the condition lasts' : 'Resolved for this occurrence')){ route(); badges(); } }
@@ -1846,7 +1892,7 @@ function actionsMenu(c, d){
   // The legacy settings and data pages refuse support logins (INT-2): hidden
   // from support like every write control.
   const aw = (label, href) => `<a data-a class="w" href="${href}">${label}</a>`;
-  const login = c.logins.find(l=>l.is_active && (l.role==='client'||l.role==='owner')) || c.logins.find(l=>l.is_active) || {};
+  const login = principalLogin(c.logins) || {};
   const n = jsq(c.name), em = jsq((c.owner||{}).email || c.owner_email || '');
   const status = (c.billing||{}).status || 'trial';
   return `<div class="menu" id="cl-actions" style="width:320px">
@@ -1863,6 +1909,15 @@ function actionsMenu(c, d){
     ${b(c.is_demo ? 'Mark as real client…' : 'Mark as demo…', `setDemo(${c.id},${c.is_demo?0:1},'${n}')`)}
     <hr><span class="lbl" style="color:var(--red-t)">Danger zone</span>${b('Freeze account (takeover response)…', `freezeAccount(${c.id},'${n}')`, 'dz')}${a('Close this account (offboarding)…', '#client/'+c.id+'?tab=offboarding')}${c.is_demo?`<button data-a class="dz w" data-name="${esc(c.name)}" onclick="menusClose();deleteDemo(${c.id},this.dataset.name)">Delete this demo account</button>`:''}
     <span class="dim" style="padding:8px 10px 4px;white-space:normal;line-height:1.4">Plan, holds and contract changes are on the Billing tab. A real restaurant is deleted only through the offboarding checklist on Access. Each action confirms first.</span></div>`;
+}
+// The login "Send a password-reset link" goes to: the account holder as the
+// server picks it (admin_routes._principal_login_id, W15-e) — an active
+// client or owner login, a blank role counting as client, never a staff PIN
+// identity, oldest first; else the oldest active non-staff console login.
+function principalLogin(logins){
+  var l = (logins || []).filter(function(x){ return x && x.is_active && !/@staff\.invalid$/.test(x.email || ''); }).sort(function(a, b){ return (a.id || 0) - (b.id || 0); });
+  var own = l.filter(function(x){ var r = x.role || 'client'; return r === 'client' || r === 'owner'; })[0];
+  return own || l.filter(function(x){ return ['employee', 'support'].indexOf(x.role || '') < 0; })[0] || null;
 }
 function stripDiv(label, value, sub, tone){ return `<div><span class="lbl">${label}</span><span class="v" style="${tone||''}">${value}</span><span class="s">${sub}</span></div>`; }
 function setupRing(sc){
@@ -2177,11 +2232,15 @@ function staffNotesHtml(c, notes){
     <div style="display:flex;gap:6px;flex-wrap:wrap"><input id="sn-name" placeholder="Employee name" style="flex:1;min-width:110px"><input id="sn-notes" placeholder="e.g. no Sundays; off by 4pm" style="flex:2;min-width:150px"><button class="btn s w" onclick="staffNoteAdd(${c.id},'${jsq(c.name)}')">Add</button></div>
     <span class="dim">A note for someone who already has one is added to theirs, never written over it.</span>`;
 }
-async function staffNoteAdd(id, name, who, text){
+async function staffNoteAdd(id, name, who, text, expires){
   const nm = who || $('sn-name').value.trim(), nt = text || $('sn-notes').value.trim();
   if(!nm || !nt){ toast('Enter the employee and the note', 'bad'); return; }
   const fd = new FormData(); fd.append('employee_name', nm); fd.append('notes', nt);
-  const d = await api('/admin/staff-notes/' + id, {method:'POST', body: fd});
+  // Undo puts the note back with its end date when the delete returned one (W15-h).
+  if(expires) fd.append('expires_on', expires);
+  // Sent once however often Add is clicked (C11/W15-f): it appends.
+  const d = await oneAtATime('staff-note:' + id, goBtn('cd-staff', 'staffNoteAdd'), function(){ return api('/admin/staff-notes/' + id, {method:'POST', body: fd}); });
+  if(!d) return;
   if(say(d, d.appended ? ('Added to ' + nm + "'s notes") : ('Note saved for ' + nm))) route();
 }
 async function staffNoteDelete(id, nid, who, name){
@@ -2190,7 +2249,7 @@ async function staffNoteDelete(id, nid, who, name){
   if(!say(d, who + "'s notes removed")) return;
   const gone = d.deleted || {};
   route();
-  if(gone.notes && confirm('Removed ' + who + '’s notes. Undo — put them back?')) staffNoteAdd(id, name, gone.employee_name || who, gone.notes);
+  if(gone.notes && confirm('Removed ' + who + '’s notes. Undo — put them back?')) staffNoteAdd(id, name, gone.employee_name || who, gone.notes, gone.expires_on || null);
 }
 // Menu (#73, #142, #153). The menu notes the AI writes from, edited here: read
 // from the client's settings (INT-2's GET …/settings) and saved under B1's
@@ -2538,13 +2597,18 @@ async function reactivateLogin(uid, username, rname){
 // integrations clears every stored credential), withdraw, and delete —
 // unlocked only when the checklist is finished.
 const STEP_TONE = {done:'good', skipped:'neu', not_needed:'neu', pending:'warn'};
+// Steps whose "done" acted outside: setting them back to pending only marks
+// the step — nothing is undone (W15-g), so the button doesn't say Undo.
+var OFF_DONE_STAYS = {stripe: 'Only marks the step pending — the Stripe subscription stays cancelled.',
+  docusign: 'Only marks the step pending — the envelope stays voided.',
+  integrations: 'Only marks the step pending — the connections stay revoked; the owner would reconnect them.'};
 async function offboardHtml(c){
   const d = await need('/admin/api/client/' + c.id + '/offboarding');
   const rq = d.request, n = jsq(c.name), open = (d.steps||[]).filter(s=>s.status==='pending').length;
   const conn = Object.keys(d.connected||{}).filter(k=>d.connected[k]);
   const body = `${rq ? `<span class="ink2" style="font-size:13px">The owner asked to close the account on ${esc(rq.requested_on)}. Finish the checklist and delete it by ${esc(rq.due_on)}, or withdraw the request with them.</span>` : '<span class="muted" style="font-size:13px">No deletion request is open. The checklist is here for a client you are closing yourself.</span>'}
     <div class="lst">${(d.steps||[]).map(s=>`<div class="li" style="padding:12px 0"><span style="width:92px;flex-shrink:0">${pill(STEP_TONE[s.status]||'neu', esc((s.status||'').replace('_',' ')), false)}</span><div class="tt"><b>${esc(s.label)}</b><span>${esc(s.note || s.hint || '')}${s.actor?' · '+esc(s.actor)+' '+fmtD(s.updated_at):''}${s.step==='integrations'&&conn.length&&s.status==='pending'?' · connected now: '+esc(conn.join(', ')):''}</span></div>
-      ${s.status==='pending' ? `<button class="btn s w" onclick="offStep(${c.id},'${jsq(s.step)}','done','${jsq(s.label)}','${n}')">Mark done</button><button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','skipped','${jsq(s.label)}','${n}')">Skip…</button>` : (s.status==='not_needed' ? '' : `<button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','pending','${jsq(s.label)}','${n}')">Undo</button>`)}</div>`).join('')}</div>
+      ${s.status==='pending' ? `<button class="btn s w" onclick="offStep(${c.id},'${jsq(s.step)}','done','${jsq(s.label)}','${n}')">Mark done</button><button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','skipped','${jsq(s.label)}','${n}')">Skip…</button>` : (s.status==='not_needed' ? '' : `<button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','pending','${jsq(s.label)}','${n}')"${OFF_DONE_STAYS[s.step] && s.status === 'done' ? ` title="${esc(OFF_DONE_STAYS[s.step])}"` : ''}>${OFF_DONE_STAYS[s.step] && s.status === 'done' ? 'Mark pending' : 'Undo'}</button>`)}</div>`).join('')}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn s w" onclick="posExport(${c.id})">POS archive (CSV zip)…</button><span class="dim" id="posx-${c.id}"></span></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${rq?`<button class="btn s w" onclick="withdrawDeletion(${c.id},'${n}')">Withdraw the request…</button>`:''}<button class="btn s d w" ${d.ready_to_delete?'':'disabled'} title="${d.ready_to_delete?'Permanently delete this restaurant':esc('Finish the checklist first: ' + (d.outstanding||[]).join(', '))}" onclick="deleteRestaurant(${c.id},'${n}')">Delete permanently…</button><span class="dim">${d.ready_to_delete ? 'The checklist is finished. The audit trail and this checklist are kept after the delete.' : open + ' step' + (open===1?'':'s') + ' left before it can be deleted.'}</span></div>`;
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>${rq ? 'Close this account' : 'Offboarding'}</h2>${rq ? pill(rq.overdue ? 'bad' : 'warn', rq.overdue ? 'overdue' : 'due ' + esc(rq.due_on), false) : ''}</div>` + (rq ? body : `<details class="more-d" style="margin:0 -18px -18px"><summary>The checklist, withdraw and delete</summary><div style="padding:0 18px 16px;display:flex;flex-direction:column;gap:12px">${body}</div></details>`);
@@ -2644,7 +2708,9 @@ async function notesHtml(c, before){
 }
 async function noteAdd(id, name){
   const body = ($('note-body').value || '').trim(); if(!body){ toast('Write the note first', 'bad'); return; }
-  const d = await post('/admin/api/client/' + id + '/notes', {body});
+  // Notes are append-only: a double click wrote two (C11/W15-f).
+  const d = await oneAtATime('note:' + id, goBtn('cs-notes', 'noteAdd'), function(){ return post('/admin/api/client/' + id + '/notes', {body}); });
+  if(!d) return;
   if(say(d, 'Note added to ' + name)) lazy('cs-notes', () => notesHtml({id:id, name:name}), id);
 }
 async function timelineHtml(c, before, keep){
@@ -2873,7 +2939,7 @@ async function opsEvents(){
           <td><input data-f="broadcast" data-o="${esc(e.broadcast || '')}" value="${esc(e.broadcast || '')}" size="7" aria-label="Broadcast"></td>
           <td><select data-f="status" data-o="${esc(e.status || '')}" aria-label="Status">${st}</select></td>
           <td><input data-f="result" data-o="${esc(e.result || '')}" value="${esc(e.result || '')}" size="8" placeholder="W 24-20" aria-label="Result"></td>
-          <td style="white-space:nowrap"><button class="btn p s" onclick="evSave(${e.id},this)">Save</button>${over.length ? ` <button class="btn g s" title="Hand ${esc(over.join(', '))} back to the season file" onclick="evRevert(${e.id},this)">Revert</button>` : ''}</td>
+          <td style="white-space:nowrap"><button class="btn p s w" onclick="evSave(${e.id},this)">Save</button>${over.length ? ` <button class="btn g s w" title="Hand ${esc(over.join(', '))} back to the season file" onclick="evRevert(${e.id},this)">Revert</button>` : ''}</td>
         </tr>`; }).join('')}
       </tbody></table></div></section>`; }).join('');
 }
@@ -3142,7 +3208,7 @@ function supLoad(){
 async function supReinstate(email, scope){
   const reason = prompt(`Reinstate ${email}? Mail to it (${scope} scope) starts again, and it is recorded with your name.\n\nWhy (for the record):`, '');
   if(reason === null) return;
-  await opsWrite('/admin/api/suppressions/reinstate', {email: email, reason: reason}, null, () => { supLoad(); }, 'Reinstated ' + email + ' — mail to it resumes');
+  await opsWrite('/admin/api/suppressions/reinstate', {email: email, reason: reason}, null, () => { _opsFresh = true; supLoad(); }, 'Reinstated ' + email + ' — mail to it resumes');
 }
 
 // Which channels an alert really went out on (#14) — alert_log.channels,
@@ -4829,6 +4895,9 @@ async function act(path, label, dangerous, body){
     const said = d.message || d.msg || (d.new_reviews != null ? d.new_reviews + ' new review' + (d.new_reviews === 1 ? '' : 's') + ' fetched' : label + ' — done');
     toast(said + (errs.length ? ' — but: ' + errs.join('; ') : ''), errs.length ? 'bad' : 'good');
   }
+  // From Operations (Integrations' Sync / Fetch / Refresh), the redraw reads
+  // fresh — the 60-second cache showed the state before the action (W7).
+  if(location.hash.indexOf('#operations') === 0) _opsFresh = true;
   _clients = null; badges(); route();
   return d;
 }
@@ -4924,8 +4993,26 @@ function changePlan(rid, name, current, live){
     submit: v => { if(!v.modules.length) return {ok:false, error:'Pick at least one module.'}; if(!confirm('Change ' + name + ' to ' + v.modules.map(m=>(MODULE_KEYS.find(x=>x[0]===m)||[m,m])[1]).join(', ') + '?' + (live ? ' Stripe is charged or credited as chosen.' : ''))) return false; return post('/admin/api/billing/' + rid + '/change-plan', {modules: v.modules, proration: v.proration}); }});
 }
 // Mark signed (offline) (#78): a contract signed on paper; the note is the record.
+// Its answer says what each owed send did (admin audit 10/27/26, W6) — the
+// route returns `sends` [{kind, state, error}] — and a welcome that was
+// ticked but not sent (the owner has signed in before) is said too.
+var SEND_KIND = {payment_link: 'payment link', welcome: 'welcome', card_update: 'card-update link'};
+var SEND_STATE = {sent: 'sent', retry: 'not sent yet — it is retried', skipped: 'skipped', held: 'held — this server does not send'};
+function markSignedSaid(d, asked){
+  var sends = (d && d.sends) || [], parts = [], bad = false, kinds = {}, i, x, k;
+  for(i = 0; i < sends.length; i++){
+    x = sends[i]; k = SEND_KIND[x.kind] || String(x.kind || 'email').replace(/_/g, ' '); kinds[x.kind] = 1;
+    if(x.state !== 'sent') bad = true;
+    parts.push(k + ' ' + (SEND_STATE[x.state] || x.state || 'unknown') + (x.error && x.state !== 'sent' ? ' (' + x.error + ')' : ''));
+  }
+  if(asked && asked.send_payment_link && !kinds.payment_link){ bad = true; parts.push('payment link not queued'); }
+  if(asked && asked.send_welcome && !kinds.welcome){ bad = true; parts.push('welcome not sent — the owner has signed in before, or has no login'); }
+  return {text: 'Contract marked signed' + (parts.length ? ' — ' + parts.join(' · ') : ''), bad: bad};
+}
 function markSigned(rid, name, email){
+  var asked = null;
   formOpen({title:'Mark signed (offline) — ' + name, go:'Mark signed', done:'Contract marked signed',
+    after: function(d){ var m = markSignedSaid(d, asked); toast(m.text, m.bad ? 'bad' : 'good'); route(); },
     sub:'For a contract signed outside DocuSign. The pay-link reminders count from the signing date.',
     fields:[{id:'note', label:'How it was signed', placeholder:'e.g. Signed on paper at the 9/28 meeting'},
             {id:'signed_on', label:'Signed on (M/D/YY — blank is today)', placeholder:'9/28/26'},
@@ -4933,10 +5020,19 @@ function markSigned(rid, name, email){
             {id:'send_welcome', label:'Email the welcome (set-password link) — only if the owner has never signed in', type:'checkbox', value:false}],
     submit: v => { if(!v.note) return {ok:false, error:'Say how it was signed — the note is the record.'}; const sends = [v.send_payment_link ? 'the payment link' : '', v.send_welcome ? 'the welcome' : ''].filter(Boolean);
       if(!confirm('Mark ' + name + '\'s contract signed' + (sends.length ? ' and email ' + (email || 'the owner') + ' ' + sends.join(' and ') : '') + '?')) return false;
-      return post('/admin/api/billing/' + rid + '/mark-signed', v); }});
+      asked = v; return post('/admin/api/billing/' + rid + '/mark-signed', v); }});
+}
+// The reconcile run after an attach is said (W15-d): its error, or the
+// mismatches it found with Stripe — not only "attached".
+function attachSaid(d){
+  var mm = (d && Array.isArray(d.mismatches)) ? d.mismatches : [];
+  if(d && d.error) return {text: 'Stripe customer attached — but the check against Stripe failed: ' + d.error, bad: true};
+  if(mm.length) return {text: 'Stripe customer attached — ' + mm.length + ' mismatch' + (mm.length === 1 ? '' : 'es') + ' with Stripe: ' + mm.map(function(m){ return (m && (m.detail || m.kind)) || String(m); }).join('; '), bad: true};
+  return {text: 'Stripe customer attached', bad: false};
 }
 function attachCustomer(rid, name, stored){
   formOpen({title:(stored ? 'Replace the Stripe customer — ' : 'Attach a Stripe customer — ') + name, go:'Attach', done:'Stripe customer attached',
+    after: function(d){ var m = attachSaid(d); toast(m.text, m.bad ? 'bad' : 'good'); route(); },
     sub: stored ? 'Now attached: <span class="mono">' + esc(stored) + '</span>. Replacing it changes where this client\'s payments are matched.' : 'Links this client to a customer that already exists in Stripe (checked with Stripe, read-only).',
     fields:[{id:'customer_id', label:'Stripe customer id', placeholder:'cus_…'}].concat(stored ? [{id:'replace', label:'Yes, replace ' + stored, type:'checkbox', value:false}] : []),
     submit: v => { if(!confirm('Attach ' + (v.customer_id || 'that customer') + ' to ' + name + '?' + (stored ? ' It replaces ' + stored + '.' : ''))) return false; return post('/admin/api/billing/' + rid + '/attach-stripe-customer', v); }});
@@ -4966,7 +5062,18 @@ async function valueRecap(rid, name, email){
 let _tRid=null, _tName='';
 async function toastOpen(rid, name){ _tRid=rid; _tName=name||''; $('m-toast-title').textContent='Toast POS — '+name; $('m-toast-status').textContent='Loading…'; ['t-cid','t-sec','t-guid'].forEach(i=>$(i).value=''); openModal('m-toast'); let d; try{ d = await api('/admin/toast/status/'+rid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; } $('m-toast-status').textContent = !okRes(d) && !d.connected ? errText(d, 'Toast status couldn\'t be read') : (d.connected ? ('Connected · GUID '+(d.guid_masked||'')+' · last sync '+ago(d.last_synced)+(d.sync_error?' · error: '+d.sync_error:'')) : 'Not connected — enter credentials below.'); }
 async function toastSave(){ const d = await post('/admin/toast/save/'+_tRid, {client_id:$('t-cid').value.trim(), client_secret:$('t-sec').value.trim(), restaurant_guid:$('t-guid').value.trim(), test:true}); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Saved and tested')) : ('✕ '+errText(d)); if(okRes(d)){ _clients=null; } }
-async function toastSync(){ const d = await post('/admin/toast/sync/'+_tRid); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Synced')) : ('✕ '+errText(d, 'Sync failed')); }
+async function toastSync(){ const rid = _tRid, d = await post('/admin/toast/sync/'+rid); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Synced')) : ('✕ '+errText(d, 'Sync failed')); if(okRes(d) && d.job_id) return posSyncFollow(d.job_id, 'Toast', rid, function(){ return _tRid; }, 'm-toast-status'); }
+// A POS "Sync now" followed to its end (admin audit 10/27/26, W5): the
+// modal's line says how it went while that client's modal is still open,
+// and the toast says it wherever the admin is — a refused sync used to
+// stay "✓ Sync started" for good.
+function posSyncFollow(jobId, provider, rid, openRid, lineId){
+  return pollJob(jobUrl(jobId)).then(function(r){
+    var ok = jobSaid(r, provider + ' sync'), line = $(lineId);
+    if(line && openRid() === rid) line.textContent = ok ? '✓ ' + provider + ' sync finished' : '✕ ' + errText(r && !r.error && r.result && r.result.error ? {error: r.result.error} : r, provider + ' sync failed');
+    return r;
+  });
+}
 async function toastDisconnect(){ if(!confirm('Disconnect Toast for ' + (_tName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/toast/disconnect/'+_tRid); $('m-toast-status').textContent = okRes(d)?'Disconnected':errText(d); _clients=null; }
 // RPOWER
 let _rpRid=null, _rpName='';
@@ -4996,7 +5103,7 @@ async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ $('m-rp
 async function rpowerBind(){ const d = await post('/admin/rpower/bootstrap/'+_rpRid, {store_mid:$('rp-store').value});
   $('m-rpower-status').textContent = okRes(d) ? ('✓ Bound to '+(d.store&&d.store.name||'store')) : ('✕ '+errText(d));
   if(okRes(d)){ $('rp-stores').style.display='none'; _clients=null; } }
-async function rpowerSync(){ const d = await post('/admin/rpower/sync/'+_rpRid); $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Sync started')) : ('✕ '+errText(d, 'Sync failed')); }
+async function rpowerSync(){ const rid = _rpRid, d = await post('/admin/rpower/sync/'+rid); $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Sync started')) : ('✕ '+errText(d, 'Sync failed')); if(okRes(d) && d.job_id) return posSyncFollow(d.job_id, 'RPOWER', rid, function(){ return _rpRid; }, 'm-rpower-status'); }
 async function rpowerDisconnect(){ if(!confirm('Disconnect RPOWER for ' + (_rpName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/rpower/disconnect/'+_rpRid); $('m-rpower-status').textContent = okRes(d)?'Disconnected':errText(d); _clients=null; }
 // Brand (#23): the form is this client's own stored values; only what the
 // admin changed is sent, with the version it was loaded at; an emptied field
@@ -5068,7 +5175,9 @@ async function brandSave(){
   if(lov !== lov0){ body.learning_override = lov; if(lov === 'include') body.learning_history = $('b-lhist').checked; }
   if(clear.length) body.clear = clear;
   if(Object.keys(body).length === 1){ $('b-status').textContent = 'Nothing changed.'; return; }
-  const d = await post('/admin/api/brand/'+_bRid, body);
+  // Once per click (C11/W15-f): a second Save while the first was out got the first one's 409.
+  const d = await oneAtATime('brand', $('b-save'), function(){ return post('/admin/api/brand/'+_bRid, body); });
+  if(!d) return;
   if(okRes(d)){ brandFill(d); $('b-status').textContent = '✓ Saved'; return; }
   if(d && d._status === 409 && d.current){ brandFill(d.current); $('b-status').textContent = '✕ Changed by someone else since this opened — the form now shows what is stored. Make your change again.'; return; }
   $('b-status').textContent = '✕ ' + errText(d);

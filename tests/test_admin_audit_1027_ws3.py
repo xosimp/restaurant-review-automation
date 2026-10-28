@@ -449,3 +449,144 @@ def test_the_pos_archive_downloads_after_navigation_and_asks_for_the_password_on
     out = _node(js)
     assert out["clicks"] == 1 and out["reauths"] == 1 and out["fetches"] == ["POST", "POST"]
     assert out["toasts"] == [["POS archive for #5: Downloaded 20 KB. Send it to the owner and note where in the export step.", "good"]]
+
+
+# ── W1: Lift hold asks for its note before the password step ────────────────
+
+def test_an_issue_action_that_needs_a_note_asks_for_it_before_sending(page):
+    js = _page_js(page, ("okRes", "errText", "say", "issueNote", "issueAction")) + r"""
+    var posted = [], prompts = [], answer = null;
+    function prompt(q){ prompts.push(q); return answer; }
+    function post(path, body){ posted.push([path, JSON.parse(JSON.stringify(body))]); return Promise.resolve({ok: true, _status: 200}); }
+    function badges(){} var _clients = null;
+    (async function(){
+      var pay = JSON.stringify({note: ''});
+      answer = null; await issueAction('/admin/api/billing/5/lift-hold', 'Lift hold', "Simple EJ's", pay);     // cancelled
+      answer = '   '; await issueAction('/admin/api/billing/5/lift-hold', 'Lift hold', "Simple EJ's", pay);    // blank
+      answer = 'Dispute won'; await issueAction('/admin/api/billing/5/lift-hold', 'Lift hold', "Simple EJ's", pay);
+      await issueAction('/admin/api/suppressions/reinstate', 'Reinstate', "Simple EJ's", JSON.stringify({email: 'a@b.c'}));
+      console.log(JSON.stringify({posted: posted, prompts: prompts.length, toasts: _toasts}));
+    })();
+    """
+    out = _node(js)
+    assert out["posted"] == [["/admin/api/billing/5/lift-hold", {"note": "Dispute won"}],
+                             ["/admin/api/suppressions/reinstate", {"email": "a@b.c"}]]   # no note asked for here
+    assert out["prompts"] == 3
+    assert ["A note is required — nothing was changed", "bad"] in out["toasts"]
+
+
+# ── W5: jobs started from Needs-you and the POS modals are followed ─────────
+
+def test_a_job_started_from_needs_you_is_followed_and_its_failure_said(page):
+    js = _page_js(page, ("okRes", "errText", "say", "jobSaid", "issueNote", "issueAction", "followJob", "jobUrl")) + r"""
+    var polled = []; function badges(){} var _clients = null, _opsFresh = false;
+    function post(){ return Promise.resolve({ok: true, _status: 200, job_id: 'j9', message: 'Fetching — new reviews in a minute'}); }
+    function pollJob(url){ polled.push(url); return Promise.resolve({ok: false, state: 'failed', result: {error: 'Google refused the token'}, status: 'error', _status: 200}); }
+    (async function(){
+      location.hash = '#overview';
+      await issueAction('/admin/fetch-reviews/5', 'Sync now', "Simple EJ's", '');
+      console.log(JSON.stringify({polled: polled, toasts: _toasts, routed: _routed}));
+    })();
+    """
+    out = _node(js)
+    assert out["polled"] == ["/admin/api/admin-jobs/j9"]
+    assert out["toasts"][0] == ["Fetching — new reviews in a minute", ""]
+    assert out["toasts"][1] == ["Google refused the token", "bad"]
+    assert out["routed"] == 1                                      # reloaded once, after the job — not at once
+
+
+def test_pos_sync_now_is_followed_and_the_modal_says_how_it_went(page):
+    js = _page_js(page, ("okRes", "errText", "say", "jobSaid", "jobUrl", "posSyncFollow", "toastSync", "rpowerSync")) + r"""
+    var _tRid = 5, _rpRid = 6; mk('m-toast-status'); mk('m-rpower-status');
+    function post(path){ return Promise.resolve({ok: true, _status: 200, job_id: path.indexOf('toast') >= 0 ? 't1' : 'r1', message: 'Sync started.'}); }
+    function pollJob(url){ return Promise.resolve(url.indexOf('t1') >= 0 ? {ok: true, state: 'ok', status: 'done', _status: 200}
+                                                             : {ok: false, state: 'failed', result: {error: 'RPOWER: store offline'}, status: 'error', _status: 200}); }
+    (async function(){
+      await toastSync(); await rpowerSync();
+      console.log(JSON.stringify({t: $('m-toast-status').textContent, r: $('m-rpower-status').textContent, toasts: _toasts}));
+    })();
+    """
+    out = _node(js)
+    assert out["t"] == "✓ Toast sync finished"
+    assert out["r"] == "✕ RPOWER: store offline"
+    assert ["RPOWER: store offline", "bad"] in out["toasts"]
+
+
+# ── W7: Operations reads fresh after a cap, a reinstate or an action ────────
+
+def test_operations_redraws_from_fresh_reads_after_its_writes(page):
+    assert "_opsFresh = true; route();" in _fn(page, "capSubmit")
+    assert "_opsFresh = true; route();" in _fn(page, "capSet")
+    assert "_opsFresh = true; supLoad();" in _fn(page, "supReinstate")
+    a = _fn(page, "act")
+    assert "location.hash.indexOf('#operations') === 0) _opsFresh = true" in a
+    assert a.index("_opsFresh = true") < a.rindex("route()")
+
+
+# ── C11/W15-f: modal forms and append-only notes send once ──────────────────
+
+def test_a_double_click_sends_once_and_the_button_comes_back(page):
+    js = _page_js(page, ("oneAtATime", "goBtn"), ("_inflight",)) + r"""
+    var sent = 0, btn = {disabled: false}, release;
+    function slow(){ sent++; return new Promise(function(res){ release = res; }); }
+    (async function(){
+      var a = oneAtATime('note:5', btn, slow), b = oneAtATime('note:5', btn, slow);
+      var during = btn.disabled, second = await b;
+      release({ok: true}); var first = await a;
+      var c = await oneAtATime('note:5', btn, function(){ sent++; return Promise.reject(new Error('x')); }).then(null, function(e){ return e.message; });
+      console.log(JSON.stringify({sent: sent, during: during, second: second, first: first.ok, after: btn.disabled, threw: c, free: !_inflight['note:5']}));
+    })();
+    """
+    out = _node(js)
+    assert out == {"sent": 2, "during": True, "second": None, "first": True, "after": False, "threw": "x", "free": True}
+    for fn, key in (("capSubmit", "'cap'"), ("resolveSubmit", "'resolve'"), ("noteAdd", "'note:' + id"),
+                    ("staffNoteAdd", "'staff-note:' + id"), ("brandSave", "'brand'")):
+        assert "oneAtATime(" + key in _fn(page, fn), fn
+    assert "occurrence_at:_resolve.occurrence_at" in _fn(page, "resolveSubmit")
+
+
+# ── W6 / W15-d: what a billing write really did ─────────────────────────────
+
+def test_mark_signed_says_what_each_send_did_and_a_skipped_welcome(page):
+    js = _page_js(page, ("markSignedSaid",), ("SEND_KIND", "SEND_STATE")) + r"""
+    console.log(JSON.stringify([
+      markSignedSaid({sends: [{kind: 'payment_link', state: 'sent'}]}, {send_payment_link: true, send_welcome: true}),
+      markSignedSaid({sends: [{kind: 'payment_link', state: 'retry', error: 'Resend 502'}, {kind: 'welcome', state: 'sent'}]}, {send_payment_link: true, send_welcome: true}),
+      markSignedSaid({sends: []}, {send_payment_link: false, send_welcome: false})]));
+    """
+    out = _node(js)
+    assert out[0] == {"text": "Contract marked signed — payment link sent · welcome not sent — the owner has signed in before, or has no login", "bad": True}
+    assert out[1] == {"text": "Contract marked signed — payment link not sent yet — it is retried (Resend 502) · welcome sent", "bad": True}
+    assert out[2] == {"text": "Contract marked signed", "bad": False}
+    ms = _fn(page, "markSigned")
+    assert "after: function(d){ var m = markSignedSaid(d, asked)" in ms and "asked = v;" in ms
+
+
+def test_attaching_a_stripe_customer_says_the_reconcile_result(page):
+    js = _page_js(page, ("attachSaid",)) + r"""
+    console.log(JSON.stringify([attachSaid({ok: true, error: 'Stripe timed out'}), attachSaid({ok: true, mismatches: [{kind: 'status', detail: 'Stripe says past_due'}]}), attachSaid({ok: true, mismatches: []})]));
+    """
+    out = _node(js)
+    assert out[0]["bad"] and "Stripe timed out" in out[0]["text"]
+    assert out[1] == {"text": "Stripe customer attached — 1 mismatch with Stripe: Stripe says past_due", "bad": True}
+    assert out[2] == {"text": "Stripe customer attached", "bad": False}
+    assert "attachSaid(d)" in _fn(page, "attachCustomer")
+
+
+# ── W15 client-side: a, e, g, h ─────────────────────────────────────────────
+
+def test_the_small_wiring_defects(page):
+    ev = _fn(page, "opsEvents")
+    assert 'class="btn p s w" onclick="evSave(' in ev and 'class="btn g s w" title=' in ev       # W15-a: support never sees them
+    js = _page_js(page, ("principalLogin",)) + r"""
+    console.log(JSON.stringify([
+      principalLogin([{id: 3, is_active: 1, role: 'manager', email: 'm@x'}, {id: 7, is_active: 1, role: null, email: 'o@x'}]).id,
+      principalLogin([{id: 2, is_active: 1, role: 'owner', email: '12@staff.invalid'}, {id: 9, is_active: 1, role: 'manager', email: 'm@x'}]).id,
+      principalLogin([{id: 1, is_active: 0, role: 'owner', email: 'o@x'}])]));
+    """
+    assert _node(js) == [7, 9, None]                     # W15-e: a blank role is the owner, never the manager first
+    assert "principalLogin(c.logins)" in _fn(page, "actionsMenu")
+    off = _fn(page, "offboardHtml")
+    assert "'Mark pending' : 'Undo'" in off and "OFF_DONE_STAYS[s.step]" in off                     # W15-g
+    assert "gone.expires_on" in _fn(page, "staffNoteDelete")                                         # W15-h
+    assert "fd.append('expires_on', expires)" in _fn(page, "staffNoteAdd")
