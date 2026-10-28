@@ -460,3 +460,20 @@ def test_the_settings_page_test_sends_confirm_name_the_recipient_and_can_go_to_m
     assert out["mine"] == "Test digest sent to will@cavnar.test"
     # resetPassword() stays (dead; on the deletion list — traced in the round's report)
     assert "async function resetPassword()" in cs and "resetPassword()" not in cs.replace("async function resetPassword()", "")
+
+
+# ── C9: the comments and the design system say what the page does now ───────
+
+def test_the_design_system_and_the_comments_match_the_page():
+    with open(os.path.join(ROOT, "DESIGN_SYSTEM.md"), encoding="utf-8") as f:
+        ds = f.read()
+    sec = ds[ds.index("## 12c."):ds.index("## 12d.")]
+    for key in ("Reads go two at a time, through one queue", "READ_MAX", "ADMIN_READ_CONCURRENCY", "`GET /admin/api/ops/state`",
+                "heartbeat.stale_after_minutes", "daySeries", "filteredRows", "INT_HEAD", "_fleetDataCell",
+                "supervisor.release", "`.dot`", "`.cv-ok`", 'class="card pad"', "AI & data APIs", "Only\n  Operations shares"):
+        assert key in sec, key
+    for gone in ("Reads go three at a time", "apiAll(paths, 3)", "green / amber / red by their own thresholds",
+                 "support queue, AI spend, API latency"):
+        assert gone not in sec, gone
+    assert "admin console's checks" in ds[ds.index("## 4."):ds.index("## 5.")]
+    assert "ES5 on purpose" not in PAGE and "covers dashboard.html only" in PAGE
