@@ -6468,6 +6468,13 @@ def _submit_admin_job(job_id, fn, *args):
         finally:
             with _admin_job_lock:
                 _admin_jobs_waiting -= 1
+            # The job finished after the POST that started it dropped the
+            # memo: a memo built meanwhile shows the state from before it
+            # (admin audit 10/27/26 P-14).
+            try:
+                _admin_ops_c.invalidate_fleet_cache()
+            except Exception as e:
+                print(f"[admin job] fleet memo not dropped after {job_id}: {e}")
             try:
                 from models import close_thread_connections
                 close_thread_connections()
@@ -6748,11 +6755,13 @@ def _admin_busy(e):
 
 @admin_bp.after_app_request
 def _admin_fleet_invalidate(resp):
-    """Every write under /admin — on any blueprint — and every billing
-    webhook drops the console's fleet memo, so the next read is fresh."""
+    """A write under /admin — on any blueprint — that succeeded and can
+    change fleet state, and every billing webhook the server took, drops the
+    console's fleet memo, so the next read is fresh. A refused request, a
+    re-auth, a 2FA code or a support note no longer does (admin audit
+    10/27/26 C1/P-14: admin_ops.fleet_write_changes_state)."""
     try:
-        if request.method not in ("GET", "HEAD", "OPTIONS") and (
-                (request.path or "").startswith(("/admin", "/stripe-webhook", "/docusign/webhook"))):
+        if _admin_ops_c.fleet_write_changes_state(request.method, request.path, resp.status_code):
             _admin_ops_c.invalidate_fleet_cache()
     except Exception:
         pass

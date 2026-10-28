@@ -162,6 +162,34 @@ def connected_provider(restaurant_id):
         return _connected_provider(restaurant_id)
 
 
+def connected_provider_for(restaurant):
+    """connected_provider for a restaurant the caller already holds — the
+    Restaurant from get_all_restaurants — without reading its row again
+    (admin audit 10/27/26 P-06): the DSR sweep's nights_missing asked by id
+    and paid one full restaurants read per store (1,530 statements for one
+    Jobs page at 1,500 stores). The row is handed to this unit of work's
+    memo, where every provider's is_connected reads it through
+    get_restaurant; anything else (a dict, no id) asks by id as before."""
+    import models as _m
+    rid = None if isinstance(restaurant, dict) else getattr(restaurant, "id", None)
+    if rid is None:
+        rid = restaurant.get("id") if isinstance(restaurant, dict) else None
+        return connected_provider(rid) if rid is not None else (None, None)
+    with _m.read_scope():
+        try:
+            cache = _m._request_cache()
+            if cache is not None:
+                # get_restaurant's own key: (kind, id, its default db_path) —
+                # read through its signature (it is a wrapped function).
+                import inspect
+                default_path = inspect.signature(_m.get_restaurant).parameters["db_path"].default
+                cache.setdefault(("restaurant", int(rid), default_path), restaurant)
+        except Exception as e:
+            log.warning(f"could not hand restaurant {rid} to the read memo: {e}")
+        # Through connected_provider (it shares this scope): one rule, one seam.
+        return connected_provider(rid)
+
+
 def _connected_provider(restaurant_id):
     connected = []
     for name, mod in get_providers().items():

@@ -190,7 +190,8 @@ def test_the_ops_state_names_every_system_and_says_why(db_path, monkeypatch, sch
     for s in out["systems"].values():
         assert s["state"] in ("ok", "warn", "bad", "unknown") and "reason" in s and "since" in s
     sched = out["systems"]["scheduler"]
-    assert sched["state"] == "bad" and "No heartbeat for 60 minutes" in sched["reason"] and out["worst"] == "bad"
+    # Durations in the console's words (admin audit 10/27/26 L1, server side).
+    assert sched["state"] == "bad" and "No heartbeat for 1h" in sched["reason"] and out["worst"] == "bad"
     scheduler_heartbeat(1)
     assert admin_ops.ops_state()["systems"]["scheduler"]["state"] == "ok"
 

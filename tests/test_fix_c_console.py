@@ -115,8 +115,10 @@ def test_the_nightly_false_alarm_is_gone(db_path, monkeypatch):
     monkeypatch.setattr(admin_ops, "_now_ct", lambda: now)
     rids = [_mk(db_path, f"Fetch {i}", module_reviews=1, billing_status="active") for i in range(4)]
     for rid in rids:
-        _sql(db_path, "UPDATE restaurants SET last_fetched_at='2026-09-21T20:05:00', created_at='2026-08-01T09:00:00' "
-                      "WHERE id=?", (rid,))
+        # reviews_live: the fetch covers them (admin audit 10/27/26 K-01 — a
+        # restaurant the scheduled fetch never covers is never "behind").
+        _sql(db_path, "UPDATE restaurants SET last_fetched_at='2026-09-21T20:05:00', created_at='2026-08-01T09:00:00', "
+                      "reviews_live=1 WHERE id=?", (rid,))
     keys = {i["key"] for i in admin_ops.overview()["issues"]}
     assert "fleet:fetch_coverage" not in keys
     assert not any(k.endswith(":fetch_behind") for k in keys)

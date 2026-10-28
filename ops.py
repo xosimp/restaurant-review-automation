@@ -1931,6 +1931,14 @@ def run_admin_task(kind, restaurant_id, name, fn, *args, context="", **kwargs):
                               "result": res})
         except Exception as e:
             finish_async_job(job_id, "error", {"ok": False, "error": str(e)[:300]})
+        finally:
+            # Finished after the POST that started it dropped the console's
+            # fleet memo (admin audit 10/27/26 P-14): drop it again.
+            try:
+                import admin_ops as _admin_ops_done
+                _admin_ops_done.invalidate_fleet_cache()
+            except Exception as e:
+                log.warning(f"fleet memo not dropped after admin task {job_id}: {e}")
     _admin_pool.submit(_go)
     return job_id, False
 

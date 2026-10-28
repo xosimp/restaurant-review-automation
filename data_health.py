@@ -495,6 +495,11 @@ def fix_hint(key, s=None) -> str:
     prov = {"rpower": "RPOWER"}.get(s.get("provider"), str(s.get("provider") or "your POS").title()
                                      if s.get("provider") else "your POS")
     auth = s.get("error_class") == "auth"
+    if auth and (s.get("provider") or "").lower() == "rpower":
+        # RPOWER's token is Cavnar AI's partner credential and connecting it
+        # is admin-only (rpower_routes): the owner has no reconnect to make
+        # (admin audit 10/27/26 F6).
+        return "Nothing to do on your side — Cavnar AI has been alerted and is reconnecting RPOWER"
     return {"pos": (f"Reconnect {prov} in Account → Connections" if auth else
                     f"Open Account → Connections and tap Sync now on {prov}"),
             "labor": "Open Account → Connections and tap Sync now, or upload shifts on Labor",
