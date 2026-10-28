@@ -937,6 +937,9 @@ def refused_list(before_id=None, limit=50, db_path=None):
 SUPPORT_NOTE_MAX = 4000
 
 
+SUPPORT_NOTE_REPEAT_SECONDS = 60
+
+
 def add_support_note(restaurant_id, author, body, db_path=None):
     """Append one note. Returns the stored note, or None for an empty body.
     Append-only on purpose: nothing edits or deletes a note."""
@@ -947,6 +950,16 @@ def add_support_note(restaurant_id, author, body, db_path=None):
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
+        # A double-clicked Add wrote the same append-only note twice (admin
+        # audit 10/27/26 W15-f): the same text from the same author on the
+        # same client inside a minute is the note already written.
+        same = conn.execute(
+            "SELECT * FROM support_notes WHERE restaurant_id=? AND body=? AND COALESCE(author,'')=? "
+            "AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (int(restaurant_id), text[:SUPPORT_NOTE_MAX], name or "",
+             f"-{SUPPORT_NOTE_REPEAT_SECONDS} seconds")).fetchone()
+        if same:
+            return dict(same, duplicate=True)
         cur = conn.execute("INSERT INTO support_notes (restaurant_id, author, author_id, body) VALUES (?,?,?,?)",
                            (int(restaurant_id), name, uid, text[:SUPPORT_NOTE_MAX]))
         conn.commit()

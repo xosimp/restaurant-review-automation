@@ -6061,6 +6061,9 @@ def admin_api_add_support_note(restaurant_id, current_user):
     note = admin_events.add_support_note(restaurant_id, current_user, body or "")
     if not note:
         return jsonify(ok=False, error="Write something first."), 400
+    if note.get("duplicate"):
+        # The same note a moment ago (a double click): not written twice.
+        return jsonify(ok=True, note=note, duplicate=True)
     admin_events.record_admin_action(current_user, "support_note.added", restaurant_id=restaurant_id,
                                      target=f"note:{note['id']}", after={"length": len(note["body"])})
     return jsonify(ok=True, note=note)
