@@ -7658,9 +7658,15 @@ def admin_api_intake_store(restaurant_id, current_user):
     except (TypeError, ValueError):
         return jsonify(ok=False, error="Which restaurant?"), 400
     if target != restaurant_id:
-        t = get_restaurant(target)
+        # The group resolved the way every tenant boundary is
+        # (models.get_location_group: the organisation, else the name AND the
+        # owner) and the target checked by id — the bare name compare is what
+        # made two unrelated clients one tenant (admin audit 10/27/26 S9).
+        import models as _m_intake
         group = (getattr(r, "location_group", None) or "").strip()
-        if not t or not group or (getattr(t, "location_group", None) or "").strip() != group:
+        members = _m_intake.get_location_group(group, owner_email=getattr(r, "owner_email", None) or "") \
+            if group else []
+        if not any(int(g.get("id") or 0) == target for g in members):
             return jsonify(ok=False, error="A store can only go to this restaurant or another location in its "
                                            "group."), 400
     before = fintech_invoices.location_map(restaurant_id)
