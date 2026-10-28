@@ -4637,14 +4637,24 @@ def admin_api_rollout_list(current_user):
 @admin_required
 def admin_api_rollout_set(current_user):
     """Set one feature's cohort: {feature, percent 0-100, allow: [rid],
-    deny: [rid], note}. Audited with the before and after state; refused
-    (and audited) when the setting is malformed."""
+    deny: [rid], note}. `feature` is one of rollout.FEATURES and `percent`
+    is required. Audited with the before and after state; refused (and
+    audited) when the setting is malformed."""
     import admin_events
     import rollout
     data = request.get_json(silent=True) or {}
     feature = str(data.get("feature") or "").strip().lower()
     try:
-        before, after = rollout.set_flag(feature, data.get("percent", 0), allow=data.get("allow") or (),
+        # A body without `percent` stored 0% — switching a default-on control
+        # (the staff-docs plan gate, the minimum app build) off for the whole
+        # fleet — and a misspelt name stored a flag nothing reads. Both are
+        # refused now (admin audit 10/27/26 F8).
+        if data.get("percent") is None or isinstance(data.get("percent"), bool):
+            raise rollout.RolloutError("say the percent (0 to 100) — nothing was changed")
+        if feature not in rollout.FEATURES:
+            raise rollout.RolloutError("no feature by that name reads a rollout flag — pick one of "
+                                       + ", ".join(sorted(rollout.FEATURES)))
+        before, after = rollout.set_flag(feature, data.get("percent"), allow=data.get("allow") or (),
                                          deny=data.get("deny") or (), note=data.get("note"),
                                          by=current_user.get("username"))
     except rollout.RolloutError as e:
