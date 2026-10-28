@@ -3833,21 +3833,24 @@ def _client_messaging(rid):
     return out
 
 
-def _client_job_rows(conn, rid, d):
+def _client_job_rows(conn, rid, d, before=None):
     """(job failures, job runs, AI-quality findings) for one restaurant — by
     job_failures.restaurant_id / job_runs.restaurant_id (workstream D) when
     the columns exist; before that, the context text matched exactly
-    ('restaurant_id=5' or 'rid=5', never 'rid=50'), never by name (#67)."""
+    ('restaurant_id=5' or 'rid=5', never 'rid=50'), never by name (#67).
+    `before` (a UTC 'YYYY-MM-DD HH:MM:SS') keeps the failures and findings
+    older than it, in the SQL — the timeline's older pages (P-18)."""
     rx = re.compile(r"\b(?:restaurant_id|rid)=%d\b" % int(rid))
+    b_sql, b_args = (" AND created_at < ?", (before,)) if before else ("", ())
     jf_cols = _columns(conn, "job_failures")
     kind_col = ", kind" if "kind" in jf_cols else ""
     if "restaurant_id" in jf_cols:
         rows = _rows_dict(conn, f"SELECT job, error, context, created_at{kind_col} FROM job_failures "
-                                "WHERE restaurant_id=? ORDER BY id DESC LIMIT 80", (rid,))
+                                f"WHERE restaurant_id=?{b_sql} ORDER BY id DESC LIMIT 80", (rid, *b_args))
     else:
         rows = [j for j in _rows_dict(conn, "SELECT job, error, context, created_at FROM job_failures "
-                                            "WHERE context LIKE ? OR context LIKE ? ORDER BY id DESC LIMIT 400",
-                                      (f"%restaurant_id={rid}%", f"%rid={rid}%"))
+                                            f"WHERE (context LIKE ? OR context LIKE ?){b_sql} ORDER BY id DESC LIMIT 400",
+                                      (f"%restaurant_id={rid}%", f"%rid={rid}%", *b_args))
                 if rx.search(j.get("context") or "")][:80]
     has_kind = "kind" in jf_cols
     jobs = [j for j in rows if _job_failure_kind(j, has_kind) == "job"][:40]
@@ -3857,7 +3860,7 @@ def _client_job_rows(conn, rid, d):
     # Shaped like a failure row (job = the surface, error = the detail) so
     # every reader of this list keeps working.
     for e in _rows_dict(conn, "SELECT surface, kind, action, detail, n, call_id, created_at FROM ai_quality_events "
-                              "WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,), optional=True):
+                              f"WHERE restaurant_id=?{b_sql} ORDER BY id DESC LIMIT 40", (rid, *b_args), optional=True):
         quality.append({"job": e["surface"], "error": e["detail"], "created_at": e["created_at"], "kind": "ai_quality",
                         "finding": e["kind"], "action": e["action"], "n": e["n"], "call_id": e["call_id"],
                         "source": "ai_quality_events"})
@@ -8117,6 +8120,19 @@ def client_timeline(rid, types=None, limit=100, before=None):
     want = {t for t in (types or TIMELINE_TYPES) if t in TIMELINE_TYPES}
     limit = max(1, min(int(limit or 100), 500))
     cut = _parse_utc(before, "UTC") if before else None
+    # `before` goes into each source's own SQL (admin audit 10/27/26 P-18):
+    # it was applied in Python after each source's newest 2×limit rows, so
+    # an "older" page ran dry past the newest ~200 rows of a source. The
+    # UTC ledgers compare in their own form ("YYYY-MM-DD HH:MM:SS");
+    # activity_log is Chicago wall time with a 'T'. The Python check in add()
+    # stays, exact.
+    ut = _utc_stamp(cut) if cut else None
+    ct_cut = _ct(cut).strftime("%Y-%m-%dT%H:%M:%S") if cut else None
+
+    def older(col, bound=None):
+        """(' AND col < ?', (bound,)) on an older page, ('', ()) on the first."""
+        b = ut if bound is None else bound
+        return (f" AND {col} < ?", (b,)) if b else ("", ())
     ev = []
     with _collecting() as bucket:
         conn = get_conn()
@@ -8130,64 +8146,76 @@ def client_timeline(rid, types=None, limit=100, before=None):
                 if z and (cut is None or (_parse_utc(z, "UTC") or cut) < cut):
                     ev.append({"at": z, "type": kind, "label": label, "tone": tone, "detail": detail, **extra})
             if "email" in want:
+                w_sql, w_args = older("sent_at")
                 for e in _rows_dict(conn, "SELECT email_type, to_email, subject, sent_at, status, error FROM email_log "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     bad = e["status"] in ("failed", "bounced", "complained")
                     add(e["sent_at"], "UTC", "email", f"Email {e['status'] or 'sent'} · {e['email_type']}",
                         "bad" if bad else "neutral", e["error"] if bad else e["subject"], to=e["to_email"])
             if "sms" in want:
+                w_sql, w_args = older("created_at")
                 for s in _rows_dict(conn, "SELECT use_case, to_last4, status, error, created_at FROM sms_log "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n), optional=True):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n),
+                                    optional=True):
                     bad = (s.get("status") or "") in ("failed", "undelivered", "error")
                     add(s["created_at"], "UTC", "sms", f"Text {s.get('status') or 'sent'} · {s.get('use_case') or 'sms'}",
                         "bad" if bad else "neutral", s.get("error"), to_last4=s.get("to_last4"))
             if "push" in want:
-                for p in _rows_dict(conn, "SELECT alert_type, ok, error, created_at FROM push_deliveries WHERE restaurant_id=? "
-                                          "ORDER BY id DESC LIMIT ?", (rid, n)):
+                w_sql, w_args = older("created_at")
+                for p in _rows_dict(conn, "SELECT alert_type, ok, error, created_at FROM push_deliveries WHERE restaurant_id=?"
+                                          f"{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     add(p["created_at"], "UTC", "push", f"Push {'delivered' if p['ok'] else 'failed'} · {p['alert_type']}",
                         "neutral" if p["ok"] else "bad", p["error"])
             if "alert" in want:
-                for a in _rows_dict(conn, "SELECT alert_type, fired_at FROM alert_log WHERE restaurant_id=? "
-                                          "ORDER BY id DESC LIMIT ?", (rid, n)):
+                w_sql, w_args = older("fired_at")
+                for a in _rows_dict(conn, "SELECT alert_type, fired_at FROM alert_log WHERE restaurant_id=?"
+                                          f"{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     add(a["fired_at"], "UTC", "alert", f"Alert fired · {a['alert_type']}", "warn")
             if "login" in want:
+                w_sql, w_args = older("created_at")
                 for l in _rows_dict(conn, "SELECT event, device_type, ip_address, created_at FROM login_history "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     add(l["created_at"], "UTC", "login", _login_label(l.get("event"), l.get("device_type")),
                         _LOGIN_TONE.get(l.get("event"), "neutral"), None, event=l.get("event") or "login",
                         ip_address=l.get("ip_address"))
             if want & {"billing", "admin"}:
+                w_sql, w_args = older("created_at")
                 for e in _rows_dict(conn, "SELECT source, event_type, amount, summary, created_at FROM admin_events "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     kind = "billing" if e["source"] in ("stripe", "docusign") else "admin"
                     if kind in want:
                         bad = any(x in (e["event_type"] or "") for x in ("failed", "deleted", "canceled", "dispute"))
                         add(e["created_at"], "UTC", kind, f"{e['source'].capitalize()} · {e['summary'] or e['event_type']}",
                             "bad" if bad else "neutral", amount=e.get("amount"))
             if "job" in want:
-                jobs, _runs, quality = _client_job_rows(conn, rid, None)
+                jobs, _runs, quality = _client_job_rows(conn, rid, None, before=ut)
                 for j in jobs:
                     add(j["created_at"], "UTC", "job", f"Job failed · {j['job']}", "bad", (j["error"] or "")[:200])
                 for j in quality:
                     add(j["created_at"], "UTC", "ai", f"AI output check · {j['job']}", "warn", (j["error"] or "")[:200])
             if "ai" in want:
+                w_sql, w_args = older("created_at")
                 for a in _rows_dict(conn, "SELECT action, model, error, created_at FROM ai_usage WHERE restaurant_id=? "
-                                          "AND COALESCE(status,'ok')='error' ORDER BY id DESC LIMIT ?", (rid, n),
-                                    optional=True):
+                                          f"AND COALESCE(status,'ok')='error'{w_sql} ORDER BY id DESC LIMIT ?",
+                                    (rid, *w_args, n), optional=True):
                     add(a["created_at"], "UTC", "ai", f"AI call failed · {a['action']}", "bad", (a["error"] or "")[:200])
             if "webhook" in want:
+                w_sql, w_args = older("created_at")
                 for h in _rows_dict(conn, "SELECT event_type, ok, error, created_at FROM webhook_deliveries "
-                                          "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"WHERE restaurant_id=?{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n)):
                     add(h["created_at"], "UTC", "webhook", f"Webhook {'delivered' if h['ok'] else 'failed'} · {h['event_type']}",
                         "neutral" if h["ok"] else "bad", h["error"])
             if "note" in want:
-                for s in _rows_dict(conn, "SELECT author, body, created_at FROM support_notes WHERE restaurant_id=? "
-                                          "ORDER BY id DESC LIMIT ?", (rid, n), optional=True):
+                w_sql, w_args = older("created_at")
+                for s in _rows_dict(conn, "SELECT author, body, created_at FROM support_notes WHERE restaurant_id=?"
+                                          f"{w_sql} ORDER BY id DESC LIMIT ?", (rid, *w_args, n), optional=True):
                     add(s["created_at"], "UTC", "note", f"Note by {s.get('author') or 'admin'}", "neutral",
                         (s.get("body") or "")[:300])
             if "activity" in want:
+                w_sql, w_args = older("created_at", ct_cut)
                 for a in _rows_dict(conn, "SELECT event_type, created_at FROM activity_log WHERE restaurant_id=? "
-                                          "AND event_type != 'tab_view' ORDER BY id DESC LIMIT ?", (rid, n)):
+                                          f"AND event_type != 'tab_view'{w_sql} ORDER BY id DESC LIMIT ?",
+                                    (rid, *w_args, n)):
                     label = _ACTIVITY_LABELS.get(a["event_type"]) or (a["event_type"] or "").replace("_", " ").capitalize()
                     add(a["created_at"], OPERATOR_TZ, "activity", label)
         finally:

@@ -512,3 +512,30 @@ def test_p17_a_number_matches_ids_exactly_and_is_labelled(db_path):
     assert sum(1 for r in locs if r["match"] == "restaurant id") == 1, "id = ?, never id LIKE"
     other = next((r for r in locs if r["id"] == 1), None)
     assert other is None or other["match"] == "name or owner"
+
+
+# ── P-18: the client timeline's older pages never run dry ────────────────────
+
+def test_p18_paging_back_reaches_every_row_not_the_newest_two_hundred(db_path):
+    rid = _rid(db_path, "History Grill")
+    now = utc_now()
+    _many(db_path, "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at, status) "
+                   "VALUES (?,?,?,?,?,?)",
+          [(rid, "brief", "o@ex.com", f"Brief {i}", _utc(now - timedelta(minutes=i + 1)), "delivered")
+           for i in range(299, -1, -1)])         # written oldest first, as a ledger is
+    _many(db_path, "INSERT INTO activity_log (restaurant_id, event_type, created_at) VALUES (?,?,?)",
+          [(rid, "login", (restaurant_now() - timedelta(minutes=i + 1, seconds=30)).strftime("%Y-%m-%dT%H:%M:%S"))
+           for i in range(299, -1, -1)])
+    got, before, pages = [], None, 0
+    while pages < 40:
+        out = admin_ops.client_timeline(rid, types=["email", "activity"], limit=50, before=before)
+        assert out["ok"]
+        got += out["events"]
+        pages += 1
+        before = out["next_before"]
+        if not before:
+            break
+    assert sum(1 for e in got if e["type"] == "email") == 300, "every email, page after page"
+    assert sum(1 for e in got if e["type"] == "activity") == 300, "the Chicago-clock ledger pages too"
+    ats = [e["at"] for e in got]
+    assert ats == sorted(ats, reverse=True), "newest first across pages"
