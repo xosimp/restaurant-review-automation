@@ -4775,6 +4775,99 @@ def ai_call_detail(call_id):
     return {"ok": True, "call": call, "usage": usage, "validation": validation, "quality": quality, "related": related}
 
 
+_EMAIL_ROW_SQL = ("SELECT e.id, e.restaurant_id, r.name AS restaurant, r.location_group AS brand, e.email_type, "
+                  "e.to_email, e.subject, e.sent_at, e.status, e.error FROM email_log e "
+                  "LEFT JOIN restaurants r ON r.id=e.restaurant_id")
+_PUSH_ROW_SQL = ("SELECT p.id, p.restaurant_id, r.name AS restaurant, p.device_token_id, d.user_id, u.username, "
+                 "p.alert_type, p.status, p.ok, p.attempts, p.error, p.created_at FROM push_deliveries p "
+                 "LEFT JOIN restaurants r ON r.id=p.restaurant_id LEFT JOIN device_tokens d ON d.id=p.device_token_id "
+                 "LEFT JOIN users u ON u.id=d.user_id")
+# The light filtered row reads (admin audit 10/27/26 P-11): the Email page's
+# "Undeliverable" and type filters and the Push page's "Failed" ran in the
+# browser over the newest 200 rows — about ten minutes of mail at 1,500
+# restaurants, so "Undeliverable 0" could show while bounces sat just
+# outside the sample. Filtered by the database, the LIMIT after the WHERE,
+# over the same 30-day window the pages' other figures use (the indexed
+# sent_at / created_at bounds the scan when nothing matches).
+ROW_READ_DEFAULT_LIMIT = 200
+ROW_READ_MAX_LIMIT = 500
+# `undeliverable` is the page's Undeliverable filter exactly: failed (never
+# accepted by Resend), bounced or complained. The rest are one status each;
+# '' is every row.
+EMAIL_ROW_STATUSES = {"undeliverable": ("failed", "bounced", "complained"), "failed": ("failed",),
+                      "bounced": ("bounced",), "complained": ("complained",), "sent": ("sent",),
+                      "delayed": ("delayed",), "delivered": ("delivered",), "": ()}
+PUSH_ROW_STATUSES = ("failed", "")
+
+
+class RowFilterError(ValueError):
+    """A row read asked for a filter it does not have: the route answers 400."""
+
+
+def _row_limit(limit):
+    try:
+        n = int(limit) if limit not in (None, "") else ROW_READ_DEFAULT_LIMIT
+    except (TypeError, ValueError):
+        n = ROW_READ_DEFAULT_LIMIT
+    return max(1, min(n, ROW_READ_MAX_LIMIT))
+
+
+@_reports_failures
+def email_rows(status="", email_type="", limit=ROW_READ_DEFAULT_LIMIT):
+    """email_log rows in the shape of emails().rows, newest first, filtered
+    in SQL: `status` one of EMAIL_ROW_STATUSES ('undeliverable' = failed,
+    bounced or complained), `email_type` one type exactly ('' every type),
+    over the last 30 days, at most ROW_READ_MAX_LIMIT. Raises RowFilterError
+    for a status it does not know."""
+    status = (status or "").strip().lower()
+    email_type = (email_type or "").strip()[:80]
+    if status not in EMAIL_ROW_STATUSES:
+        raise RowFilterError(f"Unknown status {status!r} — one of: "
+                             + ", ".join(s for s in EMAIL_ROW_STATUSES if s) + ", or none.")
+    n = _row_limit(limit)
+    where, args = ["e.sent_at >= ?"], [_windows()["month"]]
+    wanted = EMAIL_ROW_STATUSES[status]
+    if wanted == ("sent",):
+        where.append("COALESCE(e.status, 'sent') = 'sent'")
+    elif wanted:
+        where.append("e.status IN (" + ",".join("?" * len(wanted)) + ")")
+        args.extend(wanted)
+    if email_type:
+        where.append("e.email_type = ?")
+        args.append(email_type)
+    conn = get_conn()
+    try:
+        rows = _rows_dict(conn, f"{_EMAIL_ROW_SQL} WHERE {' AND '.join(where)} ORDER BY e.id DESC LIMIT ?",
+                          tuple(args) + (n,), label="email_log")
+    finally:
+        conn.close()
+    return {"ok": True, "rows": rows, "filter": {"status": status, "type": email_type}, "limit": n,
+            "window": WINDOW_LABELS["month"], "generated_at": _utcnow().strftime(_ZFMT)}
+
+
+@_reports_failures
+def push_rows(status="", limit=ROW_READ_DEFAULT_LIMIT):
+    """push_deliveries rows in the shape of notifications().pushes, newest
+    first, filtered in SQL: `status` 'failed' (ok=0) or '' (every delivery),
+    over the last 30 days, at most ROW_READ_MAX_LIMIT. Raises
+    RowFilterError for a status it does not know."""
+    status = (status or "").strip().lower()
+    if status not in PUSH_ROW_STATUSES:
+        raise RowFilterError(f"Unknown status {status!r} — 'failed', or none.")
+    n = _row_limit(limit)
+    where, args = ["p.created_at >= ?"], [_windows()["month"]]
+    if status == "failed":
+        where.append("p.ok = 0")
+    conn = get_conn()
+    try:
+        rows = _rows_dict(conn, f"{_PUSH_ROW_SQL} WHERE {' AND '.join(where)} ORDER BY p.id DESC LIMIT ?",
+                          tuple(args) + (n,), label="push_deliveries")
+    finally:
+        conn.close()
+    return {"ok": True, "pushes": rows, "filter": {"status": status}, "limit": n,
+            "window": WINDOW_LABELS["month"], "generated_at": _utcnow().strftime(_ZFMT)}
+
+
 def emails(limit=200):
     """The Email page. email_log.sent_at is UTC; "today" is midnight Central
     (#89). A bounce or a complaint counts against delivery, with 7- and
@@ -4785,7 +4878,7 @@ def emails(limit=200):
         w = _windows()
         conn = get_conn()
         try:
-            rows = _rows_dict(conn, "SELECT e.id, e.restaurant_id, r.name AS restaurant, r.location_group AS brand, e.email_type, e.to_email, e.subject, e.sent_at, e.status, e.error FROM email_log e LEFT JOIN restaurants r ON r.id=e.restaurant_id ORDER BY e.id DESC LIMIT ?", (limit,))
+            rows = _rows_dict(conn, f"{_EMAIL_ROW_SQL} ORDER BY e.id DESC LIMIT ?", (limit,))
             by_type = _rows_dict(conn, "SELECT email_type, COUNT(*) AS n, "
                                        "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
                                        "SUM(CASE WHEN status='bounced' THEN 1 ELSE 0 END) AS bounced, "
@@ -4851,6 +4944,19 @@ def emails(limit=200):
             "windows": _window_meta(), **_merge_problems(bucket)}
 
 
+# The Operations cards' 7-day sparklines (jobs().failures_daily,
+# notifications().push_daily): Chicago days, oldest first, zero-filled.
+TREND_DAYS = 7
+
+
+def _ct_days_floor(days):
+    """The UTC stamp of midnight Central `days - 1` days back — the start of
+    a `days`-long run of Chicago days ending today, for a WHERE on a UTC
+    ledger. Chicago midnight is a whole UTC hour, so per-hour counts from
+    here bucket into Chicago days exactly (_days_from_hours)."""
+    return _utc_stamp(_today_start() - timedelta(days=max(1, int(days)) - 1))
+
+
 def _days_from_hours(hours, days):
     """[{day, n, failed}] for every Chicago day of the window, zero-filled,
     from per-UTC-hour counts ({hr: 'YYYY-MM-DD HH', n, bad})."""
@@ -4907,7 +5013,7 @@ def notifications(limit=200):
         w = _windows()
         conn = get_conn()
         try:
-            pushes = _rows_dict(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.device_token_id, d.user_id, u.username, p.alert_type, p.status, p.ok, p.attempts, p.error, p.created_at FROM push_deliveries p LEFT JOIN restaurants r ON r.id=p.restaurant_id LEFT JOIN device_tokens d ON d.id=p.device_token_id LEFT JOIN users u ON u.id=d.user_id ORDER BY p.id DESC LIMIT ?", (limit,))
+            pushes = _rows_dict(conn, f"{_PUSH_ROW_SQL} ORDER BY p.id DESC LIMIT ?", (limit,))
             devices = _rows_dict(conn, "SELECT d.id, d.restaurant_id, r.name AS restaurant, u.username, d.environment, d.created_at, d.last_success_at, d.consecutive_failures, d.disabled_reason FROM device_tokens d LEFT JOIN restaurants r ON r.id=d.restaurant_id LEFT JOIN users u ON u.id=d.user_id ORDER BY d.id DESC LIMIT 500")
             devices_total = (_one_dict(conn, "SELECT COUNT(*) AS n FROM device_tokens") or {}).get("n") or 0
             # channels (fix round E, #14): "sms,email,push" as they went
@@ -4940,24 +5046,40 @@ def notifications(limit=200):
                                           "SUM(CASE WHEN status IN ('scheduled','pending','publishing') THEN 1 ELSE 0 END) AS scheduled, "
                                           "COUNT(*) AS n FROM marketing_scheduled_posts") or {}
             today_push = _one_dict(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (w["today"],)) or {}
+            # The 7-day push trend counted by the database (admin audit
+            # 10/27/26 O6/P-11): the page bucketed the newest 200 deliveries
+            # — minutes of traffic at fleet volume, so every bar was "today".
+            # Per UTC hour, bucketed into Chicago days as emails() does (P-03).
+            push_hours = _rows_dict(conn, "SELECT substr(created_at, 1, 13) AS hr, COUNT(*) AS n, "
+                                          "SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS bad FROM push_deliveries "
+                                          "WHERE created_at >= ? GROUP BY substr(created_at, 1, 13)",
+                                    (_ct_days_floor(TREND_DAYS),), label="push_deliveries")
             # Whether any of it was worth sending. Thirty days rather than
             # seven: several of these types fire weekly. The denominator is
             # pushes DELIVERED of that type (a push per device), the numerator
             # the opens recorded for that type — both per device, both push.
+            # One grouped read of each ledger, joined by type (admin audit
+            # 10/27/26 P-15): two correlated subqueries per alert type scanned
+            # 30 days of push_deliveries and notification_opens again for
+            # every type — about fifteen scans a load.
             engagement = _rows_dict(conn,
-                "SELECT a.alert_type, COUNT(*) AS alerts, "
-                "(SELECT COUNT(*) FROM push_deliveries p WHERE p.alert_type=a.alert_type AND p.ok=1 "
-                " AND p.created_at >= ?) AS delivered, "
-                "(SELECT COUNT(*) FROM notification_opens o WHERE o.alert_type=a.alert_type "
-                " AND o.opened_at >= ?) AS opened "
-                "FROM alert_log a WHERE a.fired_at >= ? GROUP BY a.alert_type ORDER BY alerts DESC",
-                (w["month"], w["month"], w["month"]))
+                "SELECT a.alert_type, a.alerts, COALESCE(p.delivered, 0) AS delivered, "
+                "COALESCE(o.opened, 0) AS opened "
+                "FROM (SELECT alert_type, COUNT(*) AS alerts FROM alert_log WHERE fired_at >= ? "
+                "      GROUP BY alert_type) a "
+                "LEFT JOIN (SELECT alert_type, COUNT(*) AS delivered FROM push_deliveries "
+                "           WHERE ok=1 AND created_at >= ? GROUP BY alert_type) p ON p.alert_type=a.alert_type "
+                "LEFT JOIN (SELECT alert_type, COUNT(*) AS opened FROM notification_opens "
+                "           WHERE opened_at >= ? GROUP BY alert_type) o ON o.alert_type=a.alert_type "
+                "ORDER BY a.alerts DESC",
+                (w["month"], w["month"], w["month"]), label="alert_log")
         finally:
             conn.close()
     for row in engagement:
         row["open_rate"] = (round(100.0 * row["opened"] / row["delivered"], 1) if row["delivered"] else None)
     ignored = [r for r in engagement if (r["delivered"] or 0) >= 20 and not r["opened"]]
     return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "pushes": pushes, "devices": devices,
+            "push_daily": _days_from_hours(push_hours, TREND_DAYS),
             "devices_total": devices_total, "alerts": alerts,
             "by_type": by_type, "storms": storms, "caps": caps,
             "storm_counts": {"today": len(storms), "storm_days_7d": len(storm_days),
@@ -5388,6 +5510,17 @@ def jobs():
                                        "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') GROUP BY f.job ORDER BY n DESC")
             for g in grouped:
                 g["kind"] = _job_failure_kind({"job": g["job"], "error": g["sample"]}, False)
+        # The 7-day failure trend counted by the database (admin audit
+        # 10/27/26 O6/P-11): the Operations sparkline bucketed the newest
+        # hundred rows in the browser, so at fleet volume every bar landed
+        # "today". Kind 'job' only — an AI finding or a console request error
+        # is not a failed job (the page's `(f.kind || 'job') === 'job'`) — per
+        # UTC hour, bucketed into Chicago days, zero-filled.
+        kind_sql = (" AND COALESCE(NULLIF(kind,''),'job')='job'" if _has_cols(conn, "job_failures", ("kind",))
+                    else "")
+        fail_hours = _rows_dict(conn, "SELECT substr(created_at, 1, 13) AS hr, COUNT(*) AS n FROM job_failures "
+                                      f"WHERE created_at >= ?{kind_sql} GROUP BY substr(created_at, 1, 13)",
+                                (_ct_days_floor(TREND_DAYS),), label="job_failures")
         runs = _rows_dict(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
         last_ok = _rows_dict(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs "
                                    "FROM job_runs WHERE ok IN (1, 2) AND started_at >= datetime('now', '-7 days') GROUP BY job")
@@ -5443,6 +5576,7 @@ def jobs():
                  "what": j["what"]} for j in job_rows]
     requests, request_counts = _run_requests_view(_ops)
     return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "heartbeat_minutes": hb, "failures": failures,
+            "failures_daily": [{"day": x["day"], "n": x["n"]} for x in _days_from_hours(fail_hours, TREND_DAYS)],
             "grouped": grouped, "runs": runs, "last_ok": last_ok,
             "stuck": stuck, "scheduled_posts": posts, "inflight": inflight, "schedule": schedule,
             # Fix round D (#40, #121, #1, #27, #153, #131, #17): one row per

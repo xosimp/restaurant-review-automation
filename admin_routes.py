@@ -4476,11 +4476,46 @@ def admin_api_emails(current_user):
     return jsonify(**admin_ops.emails())
 
 
+@admin_bp.route("/admin/api/emails/rows")
+@admin_required
+def admin_api_email_rows(current_user):
+    """The Email page's filtered rows, filtered by the database (admin audit
+    10/27/26 P-11): ?status=undeliverable|failed|bounced|complained|sent|
+    delayed|delivered (or none) &type=<email_type> &limit=<=500, default 200>.
+    {ok, rows (emails().rows' shape), filter: {status, type}, limit, window}.
+    `undeliverable` is failed, bounced or complained — the page's own filter.
+    The last 30 days. Read by admins and support (the support masking
+    applies, as on /admin/api/emails)."""
+    import admin_ops
+    a = request.args
+    try:
+        out = admin_ops.email_rows(status=a.get("status", ""), email_type=a.get("type", ""), limit=a.get("limit"))
+    except admin_ops.RowFilterError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(**out)
+
+
 @admin_bp.route("/admin/api/notifications")
 @admin_required
 def admin_api_notifications(current_user):
     import admin_ops
     return jsonify(**admin_ops.notifications())
+
+
+@admin_bp.route("/admin/api/notifications/pushes")
+@admin_required
+def admin_api_push_rows(current_user):
+    """The Push page's filtered deliveries, filtered by the database (admin
+    audit 10/27/26 P-11): ?status=failed (or none) &limit=<=500, default
+    200>. {ok, pushes (notifications().pushes' shape), filter: {status},
+    limit, window}. The last 30 days. Admins and support."""
+    import admin_ops
+    a = request.args
+    try:
+        out = admin_ops.push_rows(status=a.get("status", ""), limit=a.get("limit"))
+    except admin_ops.RowFilterError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(**out)
 
 
 @admin_bp.route("/admin/api/billing")
