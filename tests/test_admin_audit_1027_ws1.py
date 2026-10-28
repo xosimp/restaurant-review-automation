@@ -684,3 +684,39 @@ def test_ops_state_a_failed_read_is_unknown_not_ok(db_path, monkeypatch):
     _fail_label(monkeypatch, "email_log")
     e = _state(monkeypatch, db_path)["systems"]["email"]
     assert e["state"] == "unknown" and "email_log" in e["read_failed"]
+
+
+# ── C1 / P-14: the memo drops only for writes that can change fleet state ──
+
+def test_c1_only_successful_fleet_writes_drop_the_memo():
+    f = admin_ops.fleet_write_changes_state
+    assert f("POST", "/admin/api/client/5/alert-cap", 200) is True
+    assert f("POST", "/admin/api/client/5/alert-cap", 400) is False          # refused: nothing changed
+    assert f("GET", "/admin/api/overview", 200) is False
+    for neutral in ("/admin/api/reauth", "/admin/two-factor/send", "/admin/api/client/5/notes",
+                    "/admin/api/changelog", "/admin/api/bug-reports/3/status", "/admin/api/vendor-costs",
+                    "/admin/view-as/5", "/admin/api/audits/2/status"):
+        assert f("POST", neutral, 200) is False, neutral
+    assert f("POST", "/stripe-webhook", 200) is True
+    assert f("POST", "/stripe-webhook", 400) is False                        # a refused delivery
+
+
+def test_p14_an_admin_job_that_finishes_drops_the_memo(db_path):
+    import time as _t
+    import admin_routes
+    gen = admin_ops._fleet_state["gen"]
+    done = []
+    assert admin_routes._submit_admin_job("t-job", lambda: done.append(1)) is None
+    for _ in range(100):
+        if done and admin_ops._fleet_state["gen"] > gen:
+            break
+        _t.sleep(0.02)
+    assert done and admin_ops._fleet_state["gen"] > gen
+    gen = admin_ops._fleet_state["gen"]
+    job_id, joined = ops.run_admin_task("t_task", 1, "t_task", lambda: {"attempted": 1, "ok": 1, "failed": 0,
+                                                                         "skipped": 0, "hit_bound": False})
+    for _ in range(100):
+        if admin_ops._fleet_state["gen"] > gen:
+            break
+        _t.sleep(0.02)
+    assert admin_ops._fleet_state["gen"] > gen

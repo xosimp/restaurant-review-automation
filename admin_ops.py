@@ -647,6 +647,45 @@ def invalidate_fleet_cache():
         log.warning("the shared fleet generation was not moved: %s", e)
 
 
+# Writes under /admin that change nothing the fleet records read (admin
+# audit 10/27/26 C1/P-14): every non-GET under /admin dropped the memo — a
+# 2FA code, a re-auth, a support note, a changelog entry, a refused request
+# — and each drop forced the next read into a full rebuild (28-30 s at
+# 5,000 restaurants). Only a 2xx write that can change fleet state drops it
+# now; anything not listed here still does (a missed drop is a stale page
+# for up to FLEET_TTL_SECONDS; a spurious one is a rebuild).
+_FLEET_NEUTRAL_WRITES = re.compile(
+    r"^/admin/(?:"
+    r"api/reauth$|two-factor/|api/me/username$|view-as/|stop-viewing$|"
+    r"api/changelog|api/bug-reports/|api/vendor-costs$|api/ai-costs/invoices$|"
+    r"api/client/\d+/notes$|api/client/\d+/pos-export|api/audits|audits/new$|status/|"
+    r"api/ai-routes/|api/schedule-experiments/|api/rollout$|api/onboarding/provision/dry-run$|"
+    r"test-digest/|test-urgent/|alert-contacts/test/"
+    r")")
+_FLEET_WEBHOOKS = ("/stripe-webhook", "/docusign/webhook")
+
+
+def fleet_write_changes_state(method, path, status):
+    """Whether this answered request should drop the fleet memo: a write
+    (not GET/HEAD/OPTIONS) that succeeded (2xx) — a refused one changed
+    nothing — under /admin, unless it is a write that cannot change fleet
+    state (_FLEET_NEUTRAL_WRITES); or a billing webhook the server took
+    (2xx — a refused delivery, or a junk-POST flood, no longer keeps the
+    console permanently cold)."""
+    if (method or "GET").upper() in ("GET", "HEAD", "OPTIONS"):
+        return False
+    try:
+        ok = 200 <= int(status) < 300
+    except (TypeError, ValueError):
+        ok = False
+    if not ok:
+        return False
+    path = path or ""
+    if path.startswith(_FLEET_WEBHOOKS):
+        return True
+    return path.startswith("/admin") and not _FLEET_NEUTRAL_WRITES.match(path)
+
+
 def _fleet_memo(max_age=None):
     m = _fleet_state["memo"]
     if not m or m["key"] != _memo_key() or m["gen"] != _fleet_state["gen"]:
