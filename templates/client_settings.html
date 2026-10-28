@@ -579,8 +579,12 @@ textarea{resize:vertical;min-height:60px}
     <div class="section-hdr"><div class="section-title">Test email triggers</div></div>
     <div class="section-body">
       <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
-        Send a test email to this client's address to verify delivery and appearance.
+        Send a test email to check delivery and appearance — to yourself, or to this client's owner. Each send asks first.
       </p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <label for="test-to" style="font-size:13px;color:var(--ink2)">Test digest and urgent alert go to</label>
+        <select id="test-to"><option value="me" selected>Me — my own address</option><option value="owner">The owner{% if restaurant.owner_email %} — {{ restaurant.owner_email }}{% endif %}</option></select>
+      </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn-save" style="padding:9px 16px;background:#2d6a4f" onclick="sendTestDigest()">
           Send test digest email
@@ -887,25 +891,39 @@ async function resendWelcome(){
   btn.textContent = 'Resend welcome email'; btn.disabled = false;
 }
 
-async function sendTestDigest() {
-  const status = document.getElementById('test-email-status');
-  status.style.display = 'block';
-  status.style.color = 'var(--ink3)';
-  status.textContent = 'Sending digest…';
-  const res = await fetch('/admin/test-digest/{{ restaurant.id }}', {method:'POST'});
-  const data = await res.json();
-  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
-  status.textContent = data.ok ? '✓ Digest sent to ' + data.email : 'Error: ' + (data.error || 'failed');
+// Test sends confirm first and say who receives them (admin audit 10/27/26,
+// F14): one click used to mail the restaurant's real owner. "Me" is the
+// default, as on the console's testSend; the routes take {to: "me"} and
+// answer with the address they used (sent_to). ES5.
+var TEST_OWNER = {{ (restaurant.owner_email or '')|tojson }}, TEST_NAME = {{ (restaurant.name or '')|tojson }};
+function testTarget(what) {
+  var sel = document.getElementById('test-to'), to = sel && sel.value === 'owner' ? 'owner' : 'me';
+  var q = to === 'owner'
+    ? 'Send a [TEST] ' + what + ' to ' + (TEST_OWNER || 'the owner') + ', the real owner of ' + TEST_NAME + '?'
+    : 'Send a [TEST] ' + what + ' for ' + TEST_NAME + ' to your own address (not the owner)?';
+  return confirm(q) ? to : null;
 }
-async function sendTestUrgent() {
-  const status = document.getElementById('test-email-status');
+function testSendTo(path, what, to) {
+  var status = document.getElementById('test-email-status');
   status.style.display = 'block';
   status.style.color = 'var(--ink3)';
-  status.textContent = 'Sending urgent alert…';
-  const res = await fetch('/admin/test-urgent/{{ restaurant.id }}', {method:'POST'});
-  const data = await res.json();
-  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
-  status.textContent = data.ok ? '✓ Urgent alert sent to ' + data.email : 'Error: ' + (data.error || 'failed');
+  status.textContent = 'Sending the test ' + what + (to === 'me' ? ' to you…' : ' to the owner…');
+  return fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(to === 'me' ? {to: 'me'} : {})})
+    .then(function (res) { return res.json().then(null, function () { return {ok: false, error: 'HTTP ' + res.status}; }); })
+    .then(null, function () { return {ok: false, error: 'No answer from the server — the outcome is unknown.'}; })
+    .then(function (data) {
+      status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
+      status.textContent = data.ok ? 'Test ' + what + ' sent to ' + (data.sent_to || data.email || (to === 'me' ? 'you' : 'the owner'))
+                                   : 'Not sent: ' + (data.error || 'failed');
+    });
+}
+function sendTestDigest() {
+  var to = testTarget('digest'); if (!to) return;
+  return testSendTo('/admin/test-digest/{{ restaurant.id }}', 'digest', to);
+}
+function sendTestUrgent() {
+  var to = testTarget('urgent alert'); if (!to) return;
+  return testSendTo('/admin/test-urgent/{{ restaurant.id }}', 'urgent alert', to);
 }
 async function refreshIgToken() {
   // A job on the admin pool now (#153): the answer is a job id, and the

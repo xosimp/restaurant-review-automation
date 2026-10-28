@@ -428,3 +428,35 @@ def test_the_integrations_list_has_a_labelled_header_on_fixed_columns():
     assert "${rows.length ? INT_HEAD : ''}" in ig
     for w in ("width:190px;flex-shrink:0", "width:56px;flex-shrink:0", "width:180px;flex-shrink:0"):
         assert w in ig, w                                        # each row uses the header's widths
+
+
+# ── F14: the legacy settings page's test sends ask first and say who gets them
+
+def test_the_settings_page_test_sends_confirm_name_the_recipient_and_can_go_to_me():
+    cs = _read("client_settings.html")
+    assert '<select id="test-to"><option value="me" selected>Me — my own address</option><option value="owner">' in cs
+    js = (STUBS + "var TEST_OWNER = 'erik@ejs.test', TEST_NAME = \"Simple EJ's\";\n"
+          + _fn("testTarget", cs) + _fn("testSendTo", cs) + _fn("sendTestDigest", cs) + _fn("sendTestUrgent", cs)) + r"""
+    document.getElementById = $;
+    var asked = [], answer = true, posted = [];
+    confirm = function(q){ asked.push(q); return answer; };
+    var fetch = function(path, o){ posted.push([path, JSON.parse(o.body)]);
+      return Promise.resolve({status: 200, json: function(){ return Promise.resolve({ok: true, sent_to: 'will@cavnar.test'}); }}); };
+    mk('test-email-status'); mk('test-to').value = 'me';
+    (async function(){
+      await sendTestDigest();
+      var mine = _els['test-email-status'].textContent;
+      _els['test-to'].value = 'owner'; await sendTestUrgent();
+      answer = false; await sendTestDigest();                // a No sends nothing
+      console.log(JSON.stringify({asked: asked, posted: posted, mine: mine}));
+    })();
+    """
+    out = _node(js)
+    assert out["asked"][0] == "Send a [TEST] digest for Simple EJ's to your own address (not the owner)?"
+    assert out["asked"][1] == "Send a [TEST] urgent alert to erik@ejs.test, the real owner of Simple EJ's?"
+    assert len(out["asked"]) == 3 and len(out["posted"]) == 2
+    assert out["posted"][0] == ["/admin/test-digest/{{ restaurant.id }}", {"to": "me"}]
+    assert out["posted"][1] == ["/admin/test-urgent/{{ restaurant.id }}", {}]
+    assert out["mine"] == "Test digest sent to will@cavnar.test"
+    # resetPassword() stays (dead; on the deletion list — traced in the round's report)
+    assert "async function resetPassword()" in cs and "resetPassword()" not in cs.replace("async function resetPassword()", "")
