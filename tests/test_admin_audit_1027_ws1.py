@@ -556,3 +556,17 @@ def test_p04_calibration_reads_are_bounded(db_path, monkeypatch):
                     fn(days=365)
     finally:
         admin_ops._heavy_slots.release()
+
+
+# ── P-06: the DSR sweep asks about the restaurant row it already holds ─────
+
+def test_p06_connected_provider_for_reads_the_row_in_hand(db_path):
+    import pos
+    rid = _rest(db_path, "Row In Hand", billing_status="active")
+    r = models.get_restaurant(rid)
+    r.toast_restaurant_guid, r.toast_client_id, r.toast_client_secret = "g", "c", "s"
+    assert pos.connected_provider(rid) == (None, None)            # the stored row has no credentials
+    assert pos.connected_provider_for(r)[0] == "toast"             # the row in hand is what was read
+    assert pos.connected_provider_for({"id": rid}) == (None, None)
+    from dsr import pipeline
+    assert "connected_provider_for(r)" in open(pipeline.__file__).read()
