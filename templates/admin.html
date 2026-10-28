@@ -3777,8 +3777,9 @@ function dsHtml(x){
 // row opening its drawer (a 90-day archive calendar, each data type's last
 // good read, its queue rows, 7 days of requests, punch issues, data findings
 // and the binding). Written in ES5, like the console's newer helpers — the
-// console as a whole is ES2015+ (its floor is no ?. or ??, for an older iPad
-// at an on-site audit: tests/test_edge_client_web_admin.py); the house ES5
+// console as a whole is ES2015+ (its floor: no optional chaining or nullish
+// coalescing, for an older iPad at an on-site audit —
+// tests/test_edge_client_web_admin.py); the house ES5
 // rule tests/test_frontend_rules.py enforces covers dashboard.html only.
 var _rp = {health: '', type: '', anomaly: false, q: '', after: [], open: null};
 var RP_TONE = {auth: 'bad', failing: 'bad', stale: 'warn', watch: 'warn', onboarding: 'neu', ok: 'good'};
