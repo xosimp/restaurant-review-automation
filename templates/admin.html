@@ -37,7 +37,7 @@
      ember's text tone and press, the ink on an ember button, the selected
      control, three white fills, the red / amber hairlines — and a figure scale */
   --ember-t:#f0a57f;--ember-press:#c24c30;--on-ember:#fff;--raised2:#2a2622;
-  --fill-1:rgba(255,255,255,.035);--fill:rgba(255,255,255,.06);--fill-2:rgba(255,255,255,.075);
+  --fill-1:rgba(255,255,255,.035);--fill:rgba(255,255,255,.06);--fill-2:rgba(255,255,255,.075);--fill-3:rgba(255,255,255,.2);
   --line-red:rgba(227,51,63,.35);--line-amber:rgba(212,160,48,.35);
   --elev-float:0 16px 40px -10px rgba(0,0,0,.7);
   --fig-xl:40px;--fig-l:28px;--fig-m:22px;--fig-s:16px;
@@ -989,7 +989,7 @@ function palRender(results, note){
     return `<a href="${fn ? '#' : esc(r.href)}" class="${i===_palSel?'act':''}" onclick="palClose();${fn ? fn + '();return false' : ''}"><span class="t">${esc(r.t)}</span><b>${esc(r.title)}</b>${r.m?`<span class="chip" title="What this result matched">${esc(r.m)}</span>`:''}<span class="d">${esc(r.d)}</span></a>`; }).join('') : (note ? '' : '<div class="empty">No matches.</div>'));
 }
 $('q').addEventListener('input', () => { clearTimeout(_qt); _palSel = 0; _qSeq++; const q = $('q').value.trim(); if(q.length<2){ palRender([]); return; }
-  palRender([], palNote('Searching the fleet…'));
+  palRender([], '<div style="padding:12px 14px">' + pulse('Searching the fleet') + '</div>');
   _qt = setTimeout(function(){ palSearch(q); }, 200); });
 $('q').addEventListener('keydown', e => {
   const links = $('q-res').querySelectorAll('a'); if(!links.length) return;
@@ -1053,7 +1053,7 @@ function figOr(d, tables, html){ const f = readFailed(d, tables); return f ? unk
 // used to judge them here with thresholds of its own and showed "All systems
 // healthy" through an AI outage), or unknown (grey, never green) when that
 // read failed or hasn't answered yet (#128).
-const SYS_COLOR = {ok:'var(--green)', warn:'var(--amber)', bad:'var(--red)', unk:'rgba(255,255,255,.2)', neu:'rgba(255,255,255,.2)'};
+const SYS_COLOR = {ok:'var(--green)', warn:'var(--amber)', bad:'var(--red)', unk:'var(--fill-3)', neu:'var(--fill-3)'};
 const SYS_TEXT = {ok:'var(--green-t)', warn:'var(--amber-t)', bad:'var(--red-t)', unk:'var(--ink4)', neu:'var(--ink4)'};
 // [name, ok|warn|bad|unk, the server's reason] for healthRing/healthCard.
 var RING_TONE = {ok: 'ok', warn: 'warn', bad: 'bad', unknown: 'unk'};
@@ -1063,18 +1063,18 @@ function platformSystems(st){
 function healthRing(sys){
   const n = sys.length, ok = sys.filter(s=>s[1]==='ok' || s[1]==='neu').length, r = 46, c = 2*Math.PI*r, seg = c/n;
   const arcs = sys.map((s,i)=>`<circle cx="59" cy="59" r="${r}" fill="none" stroke="${SYS_COLOR[s[1]]||SYS_COLOR.unk}" stroke-width="9" stroke-dasharray="${(seg-4).toFixed(2)} ${(c-seg+4).toFixed(2)}" stroke-dashoffset="${(-seg*i).toFixed(2)}"><title>${esc(s[0])}: ${esc(s[2])}</title></circle>`).join('');
-  return `<svg width="118" height="118" viewBox="0 0 118 118" role="img" aria-label="${ok} of ${n} systems healthy" style="flex-shrink:0"><g transform="rotate(-90 59 59)"><circle cx="59" cy="59" r="${r}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="9"/>${arcs}</g><text x="59" y="58" text-anchor="middle" fill="var(--ink)" style="font-family:var(--num);font-size:26px;font-weight:600">${ok}/${n}</text><text x="59" y="77" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--sans);font-size:10.5px;font-weight:700;letter-spacing:.1em">HEALTHY</text></svg>`;
+  return `<svg width="118" height="118" viewBox="0 0 118 118" role="img" aria-label="${ok} of ${n} systems healthy" style="flex-shrink:0"><g transform="rotate(-90 59 59)"><circle cx="59" cy="59" r="${r}" fill="none" stroke="var(--fill)" stroke-width="9"/>${arcs}</g><text x="59" y="58" text-anchor="middle" fill="var(--ink)" style="font-family:var(--num);font-size:26px;font-weight:600">${ok}/${n}</text><text x="59" y="77" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--sans);font-size:10.5px;font-weight:700;letter-spacing:.1em">HEALTHY</text></svg>`;
 }
 function healthCard(st){
   const sys = platformSystems(st), down = sys.filter(s => s[1] === 'bad' || s[1] === 'warn'), unk = sys.filter(s => s[1] === 'unk' && s[2] !== 'reading…');
   // Nothing is said healthy before the server has answered.
   var pending = sys.filter(function(s){ return s[2] === 'reading…'; }).length;
-  const said = pending ? 'Reading the platform state…' : (down.length ? down.map(s=>s[0]).join(' and ') + (down.some(s=>s[1]==='bad') ? ' failing' : ' degraded') : (unk.length === sys.length ? 'Platform state unknown' : (unk.length ? unk.map(s=>s[0]).join(' and ') + ' unknown' : 'All systems healthy')));
+  const said = pending ? 'Reading the platform state' : (down.length ? down.map(s=>s[0]).join(' and ') + (down.some(s=>s[1]==='bad') ? ' failing' : ' degraded') : (unk.length === sys.length ? 'Platform state unknown' : (unk.length ? unk.map(s=>s[0]).join(' and ') + ' unknown' : 'All systems healthy')));
   const show = (down.length ? down : (unk.length ? unk : sys.slice(0,2))).slice(0,3);
   return `${healthRing(sys)}
     <div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span class="lbl">Platform health</span>
     <span style="font-size:15px;font-weight:700;line-height:1.3">${esc(said)}</span>
-    <span style="display:flex;flex-direction:column;gap:4px;font-size:12px" class="muted">${show.map(s=>`<span><span style="color:${SYS_TEXT[s[1]]||SYS_TEXT.unk}">●</span> ${esc(s[0])} · ${esc(s[2])}</span>`).join('')}</span></div>`;
+    ${pending ? pulse('Reading the platform state') : ''}<span style="display:flex;flex-direction:column;gap:4px;font-size:12px" class="muted">${pending ? '' : show.map(s=>`<span><span style="color:${SYS_TEXT[s[1]]||SYS_TEXT.unk}">●</span> ${esc(s[0])} · ${esc(s[2])}</span>`).join('')}</span></div>`;
 }
 // Accounts by week (paying, from the daily snapshots — or labelled as a
 // reconstruction) and signups by week, both from overview.series. An empty
@@ -1688,7 +1688,7 @@ async function bulkApply(){
     partner_id: $('bulk-partner').value || null, send_welcome: $('bulk-welcome').checked});
   if(!d.ok){ toast(d.error || 'The list was not applied', 'bad'); $('bulk-apply').disabled = false; return; }
   $('bulk-token').value = '';
-  $('bulk-out').innerHTML = `<div class="sub">Creating ${d.rows} row${d.rows===1?'':'s'}…</div>`;
+  $('bulk-out').innerHTML = pulse('Creating the restaurants', 'Creating ' + d.rows + ' row' + (d.rows === 1 ? '' : 's'));
   return bulkFollow(d.job_id);
 }
 // The provisioning job followed through pollJob (admin audit 10/27/26,
@@ -2713,7 +2713,7 @@ async function offStep(id, step, status, label, name){
 async function posExport(id){
   const el = $('posx-'+id); const d = await post('/admin/api/client/'+id+'/pos-export', {});
   if(!okRes(d)){ if(el) el.textContent = errText(d); return; }
-  if(el) el.textContent = 'Building…';
+  if(el) el.innerHTML = pulse('Building the POS archive', 'Building the archive');
   return posExportFollow(id, d.job_id);
 }
 // The build followed through pollJob (admin audit 10/27/26, C3/W15-j): a

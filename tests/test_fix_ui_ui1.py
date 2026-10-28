@@ -99,7 +99,8 @@ def test_a_system_whose_read_failed_is_grey_never_green(page):
     assert "systemsOf(st)" in ps and "RING_TONE" in ps and "unknown: 'unk'" in page
     ring = _fn(page, "healthRing")
     assert "s[1]==='ok'" in ring            # only an ok reading counts as healthy
-    assert "unk:'rgba(255,255,255,.2)'" in page.replace(" ", "")  or "unk: 'rgba(255,255,255,.2)'" in page
+    # Grey is a token since the V31 follow-up (admin audit 10/27/26).
+    assert "unk:'var(--fill-3)'" in page.replace(" ", "") and "--fill-3:rgba(255,255,255,.2)" in page
     # SMS is one of the systems (#14), from the same server reading.
     assert "['sms', 'SMS']" in page and "opsStateRead(" in _fn(page, "overview")
 

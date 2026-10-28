@@ -2100,8 +2100,9 @@ never with text: the rebuild cut the visible text across its screens by 69%
   screen and the kickers; green / amber / red only for state. Every colour in
   the rules is a variable — the named literals are `--ember-t` (ember as text,
   a link's hover), `--ember-press`, `--on-ember`, `--raised2` (a selected
-  control), the white fills `--fill-1` / `--fill` / `--fill-2` and the
-  hairlines `--line-red` / `--line-amber` (admin audit 10/27/26).
+  control), the white fills `--fill-1` / `--fill` / `--fill-2` (and `--fill-3`,
+  the grey of an unknown or neutral health-ring arc) and the hairlines
+  `--line-red` / `--line-amber` (admin audit 10/27/26).
 - **Area header** — kicker, title, and one sentence written by rules from the
   page's own payload ("1 job is failing · 14 jobs are overdue.") — no model on
   load. The kicker shows only when it differs from the title (`head()`): never

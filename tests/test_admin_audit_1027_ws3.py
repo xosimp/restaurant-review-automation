@@ -212,7 +212,7 @@ def _st(**states):
 
 VERDICT_FNS = ("okRes", "errText", "parseTs", "mdy", "fmtT", "fmtDT", "durMin", "ago", "agoWord", "esc_", "sysLabel",
                "systemsOf", "sysOf", "railHealth", "platformSystems", "healthRing", "healthCard", "opsStateKeep",
-               "opsStateCached", "opsStateRead")
+               "opsStateCached", "opsStateRead", "pulse")
 
 
 def _verdict_js(page):
@@ -247,9 +247,21 @@ def test_overview_never_says_all_systems_healthy_through_an_ai_outage(page):
     out = _node(js)
     assert out[0] == "AI failing"
     assert out[1] == "All systems healthy"
-    assert out[2] == "Reading the platform state…"              # nothing is healthy before the server answers
+    assert out[2] == "Reading the platform state"               # nothing is healthy before the server answers
     assert out[3] == "Platform state unknown"
     assert out[4] == 8
+
+
+def test_the_ring_reads_with_the_pulse_bar_and_its_colours_are_tokens(page):
+    # Lead follow-up (admin audit 10/27/26, V13/V31 after the WS-3 + WS-4 merge):
+    # the ring waiting on the server shows the house pulse, never "…" text, and
+    # its unknown arcs and track are tokens, not white literals.
+    js = _verdict_js(page) + "console.log(JSON.stringify([healthCard(undefined)]));"
+    pending = _node(js)[0]
+    assert '<span class="dr-pulse"><i></i></span>' in pending and "…" not in pending.split("</svg>")[1]
+    ring = _fn(page, "healthRing")
+    assert 'stroke="var(--fill)"' in ring and "rgba(" not in ring
+    assert "rgba(" not in _decl(page, "SYS_COLOR")
 
 
 def test_the_rail_pill_is_the_servers_scheduler_verdict_in_words(page):

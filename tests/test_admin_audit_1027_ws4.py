@@ -205,7 +205,8 @@ def test_loading_is_the_house_pulse_never_dots():
     assert '<span class="dr-pulse"><i></i></span>' in out[0] and 'role="status"' in out[0] and 'aria-label="Saving"' in out[0]
     assert out[1].endswith("up to two minutes</span>")
     for gone in ("'Working…'", "'Loading…'", "'Verifying…'", "'Uploading…'", "'Adding…'", "'Creating…'", "'Saving…'",
-                 "'Starting…'", "'Loading what is stored…'", "Reading the menu… this can take a minute."):
+                 "'Starting…'", "'Loading what is stored…'", "Reading the menu… this can take a minute.",
+                 "'Building…'", "palNote('Searching the fleet…')", "row${d.rows===1?'':'s'}…", "'Reading the platform state…'"):
         assert gone not in BODY, gone
     assert "busyBtn(btn, true)" in _fn("formSubmit") and "busyBtn(btn, false)" in _fn("formSubmit")
 
