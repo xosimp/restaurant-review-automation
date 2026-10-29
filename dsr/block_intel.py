@@ -56,7 +56,7 @@ def _weather(ctx):
                       "note": "No forecast on file for this date — the observed weather is added once the "
                               "nearest station's observations are in."}
     temp = use.get("high_f") if day else use.get("low_f")
-    bits = [str(use.get("short_forecast") or "").strip()]
+    bits = [weather.plain_line(use.get("short_forecast"))]
     if temp is not None:
         bits.append(f"{'high' if day else 'low'} {int(temp)}°")
     if use.get("precip_pct"):

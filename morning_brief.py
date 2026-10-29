@@ -435,6 +435,11 @@ def _carry_today_line(carry, today, show_forecast=True, skip_event=None):
             continue
         if not show_forecast and i.get("kind") == "event":
             i = dict(i, text=i.get("plain"), has_effect=False)
+        if i.get("kind") == "weather" and i.get("text"):
+            # A report stored with the Weather Service's own Title Case
+            # ("Slight Chance Showers And Thunderstorms") reads in plain words.
+            import weather as _wx_words
+            i = dict(i, text=_wx_words.plain_line(i["text"]))
         if i.get("text"):
             shown.append(i)
     items = [i["text"] for i in shown]

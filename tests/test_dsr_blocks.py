@@ -470,7 +470,7 @@ def test_intel_ready_with_the_forecast_events_and_measured_traffic(db):
     b = block_intel.collect(_ctx(db, rid))
     m, d = b["metrics"], b["detail"]
     assert b["status"] == dsr.READY
-    assert d["weather"]["summary"] == "Chance Rain Showers · high 84° · 60% rain"
+    assert d["weather"]["summary"] == "Chance of rain showers · high 84° · 60% rain"
     assert d["weather"]["basis"] == "forecast" and "not observed" in d["weather"]["note"]
     assert (m["weather_high_f"], m["weather_low_f"], m["weather_precip_pct"]) == (84, 70, 60)
     assert d["events"]["summary"] == "Cubs home game"
@@ -499,7 +499,7 @@ def test_intel_uses_tonight_when_the_days_forecast_is_gone(db):
     rid = _rid(db)
     _forecast(db, rid, _periods((DAY, "Tonight", False, 61, "Mostly Clear", 0)))
     b = block_intel.collect(_ctx(db, rid))
-    assert b["detail"]["weather"]["summary"] == "Mostly Clear · low 61°"
+    assert b["detail"]["weather"]["summary"] == "Mostly clear · low 61°"
     assert b["metrics"]["weather_high_f"] is None and b["metrics"]["weather_low_f"] == 61
 
 
@@ -510,7 +510,7 @@ def test_a_refresh_after_dark_keeps_the_days_forecast_from_the_older_copy(db, mo
     monkeypatch.setattr(weather, "_fetch_periods_ex", lambda lat, lon: (
         _periods((DAY, "Tonight", False, 61, "Clear", 0), ("2026-09-23", "Wednesday", True, 80, "Sunny", 0)), None))
     got = weather.forecast_for_day(models.get_restaurant(rid, db_path=db), DAY, db_path=db)
-    assert got["day"]["short_forecast"] == "Sunny" and got["night"]["low_f"] == 61
+    assert got["day"]["short_forecast"] == "sunny" and got["night"]["low_f"] == 61
 
 
 def test_intel_competitor_moves_are_only_seen_on_a_night_a_check_ran(db, monkeypatch):

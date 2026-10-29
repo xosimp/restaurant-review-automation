@@ -11,15 +11,16 @@ need to be able to put a count for ALL drinks, not just beer and seltzer").
   an old count.
 - A counts-only login counts without ever seeing a cost or a value.
 """
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 
 import bar.count_items as bci
 import bar.counts as bcn
+from tests.clock import restaurant_today
 from tests.test_bar_routes import MOBILE, _app, _as, _invoice, _rid, db  # noqa: F401
 
-TODAY = date.today()
+TODAY = restaurant_today()
 
 
 def _stock(db, rid, price_scale=1.0, day=None):

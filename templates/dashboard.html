@@ -9952,7 +9952,7 @@ svg:hover .hb-xh{opacity:1}
       return h;},
     intel:function(b){
       var m=b.metrics||{},d=b.detail||{},w=d.weather||{},t='';
-      if(isNum(m.weather_high_f))t+=tile('High / low',esc(Math.round(m.weather_high_f)+'°')+(isNum(m.weather_low_f)?' / '+esc(Math.round(m.weather_low_f)+'°'):''),esc(w.short_forecast||''));
+      if(isNum(m.weather_high_f))t+=tile('High / low',esc(Math.round(m.weather_high_f)+'°')+(isNum(m.weather_low_f)?' / '+esc(Math.round(m.weather_low_f)+'°'):''),esc(cap(w.short_forecast||'')));
       if(isNum(m.weather_precip_pct))t+=tile('Rain',esc(pct(m.weather_precip_pct,0)),'chance');
       // The weather that happened, beside the forecast (dsr.access overlays
       // detail.weather.observed from the nearest station, memory round

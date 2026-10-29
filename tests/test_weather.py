@@ -171,10 +171,10 @@ def test_forecast_fetches_and_matches_week_dates(db_path, monkeypatch):
     night_keys = ("night_precip_pct", "low_f", "night_short_forecast")
     assert {k: v for k, v in rows[0].items() if k not in ("as_of", "age_hours", "stale") + night_keys} == {
         "date": "2026-07-13", "day_name": "Monday", "high_f": 89,
-        "short_forecast": "Sunny", "precip_pct": 5}
+        "short_forecast": "sunny", "precip_pct": 5}
     assert all(k in rows[0] for k in night_keys)
     assert rows[0]["as_of"] and rows[0]["stale"] is False and rows[0]["age_hours"] < 1
-    assert rows[1]["short_forecast"] == "Rain Showers"
+    assert rows[1]["short_forecast"] == "rain showers"
     assert rows[1]["precip_pct"] == 80
 
 
@@ -220,7 +220,7 @@ def test_forecast_uses_cache_within_ttl_without_new_api_calls(db_path, monkeypat
     monkeypatch.setattr(weather.requests, "get", fail_if_called)
 
     rows = weather.get_forecast_for_week(r, ["2026-07-13"], db_path=db_path)
-    assert rows[0]["short_forecast"] == "Sunny"
+    assert rows[0]["short_forecast"] == "sunny"
 
 
 def test_forecast_refetches_when_cache_is_stale(db_path, monkeypatch):
@@ -237,4 +237,4 @@ def test_forecast_refetches_when_cache_is_stale(db_path, monkeypatch):
     ))
 
     rows = weather.get_forecast_for_week(r, ["2026-07-13"], db_path=db_path)
-    assert rows[0]["short_forecast"] == "Sunny"  # refetched, not the stale cached value
+    assert rows[0]["short_forecast"] == "sunny"  # refetched, not the stale cached value
