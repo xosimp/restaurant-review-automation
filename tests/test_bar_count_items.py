@@ -147,3 +147,27 @@ def test_a_bottle_bought_elsewhere_is_counted_at_the_owners_price(db):
     assert row["product_key"] == key and row["unit"] == "bottle" and row["unit_cost"] == 32.0
     out = bci.save_item(rid, TODAY.isoformat(), key, "1.5", db_path=db, today=TODAY)
     assert out["value"] == 48.0 and out["category_total"] == 48.0
+
+
+def test_a_bottle_is_counted_as_full_bottles_and_each_opened_ones_level(db):
+    # Owner, 10/29/26: ".3 for a bottle that's open — closer to 1, the fuller".
+    rid = _rid(db)
+    _stock(db, rid)
+    day = TODAY.isoformat()
+    key = _row(bci.sheet(rid, day, db_path=db, today=TODAY), "tito")[1]["product_key"]
+    out = bci.save_item(rid, day, key, full="3", opens=[".3", "0.9", ""], db_path=db, today=TODAY)
+    assert out["qty"] == 4.2 and out["full"] == 3 and out["open"] == [0.3, 0.9] and out["value"] == 105.0
+    row = _row(bci.sheet(rid, day, db_path=db, today=TODAY), "tito")[1]
+    assert row["qty"] == 4.2 and row["full"] == 3 and row["open"] == [0.3, 0.9]
+    # Only open bottles, no full one.
+    assert bci.save_item(rid, day, key, full="", opens=[".1"], db_path=db, today=TODAY)["qty"] == 0.1
+    for full, opens, said in (("2.5", [], "whole bottles"), ("1", ["1.2"], "between .1 and .9"),
+                              ("1", ["0"], "between .1 and .9"), ("1", ["half"], "part of one")):
+        with pytest.raises(ValueError, match=said):
+            bci.save_item(rid, day, key, full=full, opens=opens, db_path=db, today=TODAY)
+    # Every box blank clears it.
+    assert bci.save_item(rid, day, key, full="", opens=["", ""], db_path=db, today=TODAY)["qty"] is None
+    # A count saved as one number reads back split: 2.5 is 2 full and one at .5.
+    bci.save_item(rid, day, key, "2.5", db_path=db, today=TODAY)
+    row = _row(bci.sheet(rid, day, db_path=db, today=TODAY), "tito")[1]
+    assert row["full"] == 2 and row["open"] == [0.5]

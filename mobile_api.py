@@ -2768,7 +2768,8 @@ def mobile_bar_count_sheet(current_user):
 @mobile_bp.route("/food-cost/bar/count-item", methods=["POST"])
 @mobile_login_required
 def mobile_bar_count_item(current_user):
-    """{count_date, product_key, qty ("" clears)} — one product's count,
+    """{count_date, product_key, qty ("" clears) — or for a bottle {full,
+    open: [levels]}: whole bottles and each opened one's level} — one product's count,
     saved as it is typed; the date's category values follow from its
     products (bar.count_items.save_item). Each row keeps who entered it; no
     account event per product (a count is hundreds of them). No cost or
@@ -2780,7 +2781,8 @@ def mobile_bar_count_item(current_user):
     b = request.get_json(silent=True) or {}
     try:
         res = _bci.save_item(rid, b.get("count_date"), b.get("product_key"), b.get("qty"),
-                             user_id=_bar_viewer(current_user), today=_bar_count_today(rid))
+                             user_id=_bar_viewer(current_user), today=_bar_count_today(rid),
+                             full=b.get("full"), opens=b.get("open"))
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "That count didn't save.")), 400
     except Exception as e:

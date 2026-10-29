@@ -8,7 +8,9 @@ typed as each category's shelf value at cost, which nobody counts a bar by.
 Now the count is a sheet of every beer, liquor and wine product the bar's
 invoices carry (bar.purchases.product_catalog), each counted in the unit it
 is poured from: bottles for liquor and wine (a part bottle in tenths — 2.5),
-cans or bottles for packaged beer, kegs (0.5) for draft.
+cans or bottles for packaged beer, kegs (0.5) for draft. A bottle is counted
+as whole bottles (Full) and each opened bottle's level in tenths (Open: .3,
+.9 nearly full, .1 nearly out) — the count is their sum, the split kept.
 
 Each product's count is saved as it is typed (`save_item`, one product at a
 time — a count is never overwritten as a list) into `bar_count_items`, with
@@ -54,6 +56,12 @@ def init_bar_count_items(db_path=None):
             entered_by INTEGER,
             entered_at TEXT NOT NULL,
             PRIMARY KEY (restaurant_id, count_date, product_key))""")
+        # A bottle count's split (10/29/26): whole bottles, and each opened
+        # bottle's level in tenths (.3; .9 nearly full) — qty is their sum.
+        have = {r[1] for r in conn.execute("PRAGMA table_info(bar_count_items)")}
+        for col, decl in (("full_qty", "REAL"), ("open_json", "TEXT")):
+            if col not in have:
+                conn.execute(f"ALTER TABLE bar_count_items ADD COLUMN {col} {decl}")
         conn.commit()
     finally:
         conn.close()
@@ -106,7 +114,7 @@ def _unit(line, category, override=None) -> tuple:
 def _saved(restaurant_id, count_date, db_path=None) -> dict:
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT product_key, category, qty, unit, unit_cost FROM bar_count_items "
+        rows = conn.execute("SELECT product_key, category, qty, unit, unit_cost, full_qty, open_json FROM bar_count_items "
                             "WHERE restaurant_id=? AND count_date=?", (int(restaurant_id), count_date)).fetchall()
     finally:
         conn.close()
@@ -171,6 +179,8 @@ def sheet(restaurant_id, count_date, dollars=True, db_path=None, today=None, pro
         row = {"product_key": k, "name": p["name"], "unit": s["unit"] if s else p["unit"],
                "qty": float(s["qty"]) if s else None}
         row["unit_label"] = UNIT_WORDS[row["unit"]][1]
+        if s and row["unit"] == "bottle":
+            row["full"], row["open"] = _split(s)
         cost = (s["unit_cost"] if s else p["unit_cost"])
         if dollars:
             row["unit_cost"] = round(cost, 2) if cost is not None else None
@@ -195,6 +205,53 @@ def sheet(restaurant_id, count_date, dollars=True, db_path=None, today=None, pro
     return out
 
 
+MAX_OPEN = 30           # opened bottles of one product on one count
+
+
+def _split(saved) -> tuple:
+    """(full, [open levels]) of a saved bottle count: as typed, else read
+    from its total (a count saved as one number: 2.5 → 2 full, one at .5)."""
+    import json
+    if saved.get("full_qty") is not None or saved.get("open_json"):
+        try:
+            opens = [float(x) for x in json.loads(saved.get("open_json") or "[]")]
+        except (TypeError, ValueError):
+            opens = []
+        return float(saved.get("full_qty") or 0), opens
+    q = float(saved["qty"])
+    whole = int(q)
+    return float(whole), ([round(q - whole, 2)] if q - whole > 0.004 else [])
+
+
+def _parse_split(full, opens) -> tuple:
+    """(full, [levels]) from the Full box and the Open boxes — None, None
+    when every box is blank (clear the count). Full is whole bottles; an
+    opened bottle is its level, more than 0 and less than 1 (.3; .9 nearly
+    full). ValueError with an owner sentence."""
+    if isinstance(opens, (str, int, float)) and not isinstance(opens, bool):
+        opens = [opens]
+    levels = []
+    for o in (opens or []):
+        if o is None or (isinstance(o, str) and not o.strip()):
+            continue
+        try:
+            v = float(str(o).replace(",", "").strip())
+        except (TypeError, ValueError):
+            raise ValueError("Type an open bottle's level as a part of one — .3, or .9 nearly full.")
+        if isinstance(o, bool) or v != v or not 0 < v < 1:
+            raise ValueError("An open bottle is between .1 and .9 — a full one goes in Full.")
+        levels.append(round(v, 2))
+    if len(levels) > MAX_OPEN:
+        raise ValueError(f"At most {MAX_OPEN} open bottles of one product.")
+    f = _parse_qty(full)
+    if f is None and not levels:
+        return None, None
+    f = f or 0.0
+    if f != int(f):
+        raise ValueError("Full is whole bottles — an opened one's level goes in Open.")
+    return f, levels
+
+
 def _parse_qty(value):
     """None for blank (clear the product's count), else a number of units
     from 0 to MAX_QTY, to two places."""
@@ -211,7 +268,8 @@ def _parse_qty(value):
     return round(v, 2)
 
 
-def save_item(restaurant_id, count_date, product_key, qty, user_id=None, db_path=None, today=None) -> dict:
+def save_item(restaurant_id, count_date, product_key, qty=None, user_id=None, db_path=None, today=None,
+              full=None, opens=None) -> dict:
     """Save ONE product's count for a date (blank clears it), then the
     date's category values from its counted products (bar.counts.save_count,
     method "items"; a category with no product counted is taken back off).
@@ -226,7 +284,18 @@ def save_item(restaurant_id, count_date, product_key, qty, user_id=None, db_path
     if key not in prods:
         raise ValueError("Pick a beer, liquor or wine the bar has bought.")
     p = prods[key]
-    n = _parse_qty(qty)
+    import json
+    full_q = open_j = None
+    if full is not None or opens is not None:
+        # A bottle's Full and Open boxes (10/29/26); the count is their sum.
+        f, levels = _parse_split(full, opens)
+        n = None if f is None else round(f + sum(levels), 2)
+        if f is not None:
+            full_q, open_j = f, json.dumps(levels)
+        if n is not None and n > MAX_QTY:
+            raise ValueError(f"A count is between 0 and {MAX_QTY:,}.")
+    else:
+        n = _parse_qty(qty)
     conn = get_conn(db_path)
     try:
         if n is None:
@@ -235,10 +304,13 @@ def save_item(restaurant_id, count_date, product_key, qty, user_id=None, db_path
         else:
             conn.execute(
                 "INSERT INTO bar_count_items (restaurant_id, count_date, product_key, category, qty, unit, unit_cost, "
-                "entered_by, entered_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, count_date, product_key) "
+                "full_qty, open_json, entered_by, entered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(restaurant_id, count_date, product_key) "
                 "DO UPDATE SET category=excluded.category, qty=excluded.qty, unit=excluded.unit, "
-                "unit_cost=excluded.unit_cost, entered_by=excluded.entered_by, entered_at=excluded.entered_at",
-                (int(restaurant_id), iso, key, p["category"], n, p["unit"], p["unit_cost"], user_id, _now()))
+                "unit_cost=excluded.unit_cost, full_qty=excluded.full_qty, open_json=excluded.open_json, "
+                "entered_by=excluded.entered_by, entered_at=excluded.entered_at",
+                (int(restaurant_id), iso, key, p["category"], n, p["unit"], p["unit_cost"], full_q, open_j, user_id,
+                 _now()))
         conn.commit()
         rows = conn.execute("SELECT category, qty, unit_cost FROM bar_count_items WHERE restaurant_id=? "
                             "AND count_date=?", (int(restaurant_id), iso)).fetchall()
@@ -263,5 +335,6 @@ def save_item(restaurant_id, count_date, product_key, qty, user_id=None, db_path
     sh = sheet(restaurant_id, iso, dollars=False, db_path=db_path, today=today, products=prods)
     return {"ok": True, "count_date": iso, "count_date_mdy": _mdy(iso), "product_key": key, "name": p["name"],
             "category": p["category"], "qty": n, "unit": p["unit"], "unit_cost": p["unit_cost"],
+            "full": full_q, "open": json.loads(open_j) if open_j else ([] if full_q is not None else None),
             "value": round(n * p["unit_cost"], 2) if (n is not None and p["unit_cost"] is not None) else None,
             "category_total": values.get(p["category"]), "counted": sh["counted"], "of": sh["of"]}

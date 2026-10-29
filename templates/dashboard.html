@@ -48468,6 +48468,10 @@ function sfw2RuleCheck(chk) {
 .br-crow .in{grid-area:in;display:flex;align-items:center;gap:6px}
 #bar .br-crow input.br-in2{width:84px;height:40px;text-align:right}
 .br-crow .u{font-size:12.5px;color:var(--ink3);min-width:44px}
+.br-crow.bt{grid-template-areas:"n in" "op op" "st st"}
+.br-crow .op{grid-area:op;display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:6px}
+.br-crow .op .ol{font:600 12.5px/1 'Apfel Grotezk',sans-serif;color:var(--ink3);min-width:44px}
+#bar .br-crow input.br-in2.lv{width:56px;height:36px;text-align:center}
 .br-crow .st{grid-area:st;font-size:12.5px;color:var(--ink3);min-height:0}
 .br-crow .st:empty{display:none}
 .br-crow .st.ok{color:var(--green)}
@@ -50154,11 +50158,36 @@ function sfw2RuleCheck(chk) {
     var sh = ST.sheet, n = sh ? sh.of : 0, got = sh ? sh.counted : 0;
     return '<span class="br-pbar"><i style="width:' + (n ? got / n * 100 : 0).toFixed(0) + '%"></i></span><span>' + hn(got) + ' of ' + hn(n) + ' counted</span>';
   }
+  /* An opened bottle's level as it is said at the bar: ".3", ".9". */
+  function lvl(v) { var t = String(+v); return t.indexOf('0.') === 0 ? t.slice(1) : t; }
   function sheetRow(r) {
     var cost = r.unit_cost != null ? ' · ' + hn('$' + (+r.unit_cost).toFixed(2)) + ' a ' + esc2(r.unit === 'unit' ? 'unit' : r.unit) : '';
-    return '<label class="br-crow' + (r.qty != null ? ' has' : '') + '" data-br-cnm="' + esc2(String(r.name || '').toLowerCase()) + '"><span class="n"><b>' + esc2(r.name) + '</b><small>' + esc2(r.unit_label) + cost + '</small></span>'
+    var st = '<span class="st" data-br-cst="' + esc2(r.product_key) + '" role="status" aria-live="polite">' + (r.value != null ? hn(money(r.value)) : '') + '</span>';
+    if (r.unit === 'bottle') {
+      /* A bottle: whole bottles in Full, each opened one's level in Open
+         (owner, 10/29/26: ".3 for one that's open — closer to 1, the
+         fuller"). Typing in the last Open box adds another. */
+      var full = r.full != null ? r.full : (r.qty != null ? Math.floor(r.qty) : null), opens = r.open || [], ob = '', i;
+      if (r.full == null && r.qty != null && r.qty - Math.floor(r.qty) > 0.004) opens = [Math.round((r.qty - Math.floor(r.qty)) * 100) / 100];
+      for (i = 0; i < opens.length; i++) ob += openBox(r, lvl(opens[i]));
+      ob += openBox(r, '');
+      return '<div class="br-crow bt' + (r.qty != null ? ' has' : '') + '" data-br-crow="' + esc2(r.product_key) + '" data-br-cnm="' + esc2(String(r.name || '').toLowerCase()) + '"><span class="n"><b>' + esc2(r.name) + '</b><small>bottles' + cost + '</small></span>'
+        + '<span class="in"><input class="br-in2" type="text" inputmode="numeric" autocomplete="off" data-br-cf="' + esc2(r.product_key) + '" value="' + (full != null ? esc2(String(full)) : '') + '" placeholder="—" aria-label="' + esc2(r.name) + ', full bottles"><span class="u">full</span></span>'
+        + '<span class="op"><span class="ol">Open</span>' + ob + '</span>' + st + '</div>';
+    }
+    return '<label class="br-crow' + (r.qty != null ? ' has' : '') + '" data-br-crow="' + esc2(r.product_key) + '" data-br-cnm="' + esc2(String(r.name || '').toLowerCase()) + '"><span class="n"><b>' + esc2(r.name) + '</b><small>' + esc2(r.unit_label) + cost + '</small></span>'
       + '<span class="in"><input class="br-in2" type="text" inputmode="decimal" autocomplete="off" data-br-ci="' + esc2(r.product_key) + '" value="' + (r.qty != null ? esc2(String(r.qty)) : '') + '" placeholder="—" aria-label="' + esc2(r.name) + ', ' + esc2(r.unit_label) + ' on hand"><span class="u">' + esc2(r.unit_label) + '</span></span>'
-      + '<span class="st" data-br-cst="' + esc2(r.product_key) + '" role="status" aria-live="polite">' + (r.value != null ? hn(money(r.value)) : '') + '</span></label>';
+      + st + '</label>';
+  }
+  function openBox(r, v) {
+    return '<input class="br-in2 lv" type="text" inputmode="decimal" autocomplete="off" data-br-co="' + esc2(r.product_key) + '" value="' + esc2(v) + '" placeholder=".0" aria-label="' + esc2(r.name) + ', an open bottle’s level (.3; .9 nearly full)">';
+  }
+  /* The last Open box got a level: another empty one follows it. */
+  function moreOpen(inp) {
+    var box = inp.parentNode, all = box ? box.querySelectorAll('[data-br-co]') : [];
+    if (!box || all.length >= 30 || all[all.length - 1] !== inp || !String(inp.value || '').replace(/\s+/g, '')) return;
+    var key = inp.getAttribute('data-br-co'), hit = sheetRowOf(key);
+    box.insertAdjacentHTML('beforeend', openBox(hit ? hit.r : {product_key: key, name: ''}, ''));
   }
   function sheetBody() {
     var sh = ST.sheet, i, j, h = '';
@@ -50209,23 +50238,38 @@ function sfw2RuleCheck(chk) {
     return null;
   }
   function saveItem(inp) {
-    var key = inp.getAttribute('data-br-ci'), v = String(inp.value || '').replace(/^\s+|\s+$/g, ''), dt = $id('br-cdate');
-    var st = document.querySelector(attrSel('data-br-cst', key)), lab = inp.closest ? inp.closest('.br-crow') : null;
-    var date = (dt && dt.value) || todayIso(), hit = sheetRowOf(key);
+    var key = inp.getAttribute('data-br-ci'), v = String(inp.value || '').replace(/^\s+|\s+$/g, ''), hit = sheetRowOf(key);
     if (hit && String(hit.r.qty == null ? '' : hit.r.qty) === v) return;
+    saveCountBody(key, {qty: v}, inp.closest ? inp.closest('.br-crow') : null);
+  }
+  /* A bottle's row: its Full box and every Open box, saved together. */
+  function saveBottle(row) {
+    if (!row) return;
+    var key = row.getAttribute('data-br-crow'), f = row.querySelector('[data-br-cf]'), os = row.querySelectorAll('[data-br-co]'), opens = [], i;
+    for (i = 0; i < os.length; i++) { var o = String(os[i].value || '').replace(/^\s+|\s+$/g, ''); if (o) opens.push(o); }
+    var full = f ? String(f.value || '').replace(/^\s+|\s+$/g, '') : '', sig = full + '|' + opens.join(',');
+    if (row.getAttribute('data-br-sig') === sig) return;
+    row.setAttribute('data-br-sig', sig);
+    saveCountBody(key, {full: full, open: opens}, row);
+  }
+  function saveCountBody(key, body, lab) {
+    var dt = $id('br-cdate'), st = document.querySelector(attrSel('data-br-cst', key));
+    var date = (dt && dt.value) || todayIso(), hit = sheetRowOf(key);
     if (st) { st.className = 'st'; st.textContent = 'Saving…'; }
-    send('POST', '/api/food-cost/bar/count-item', {count_date: date, product_key: key, qty: v}, function (d) {
-      if (!d.ok) { if (st) { st.className = 'st err'; st.textContent = refusal(d, 'That count didn’t save.'); } return; }
+    body.count_date = date; body.product_key = key;
+    send('POST', '/api/food-cost/bar/count-item', body, function (d) {
+      if (!d.ok) { if (lab) lab.removeAttribute('data-br-sig'); if (st) { st.className = 'st err'; st.textContent = refusal(d, 'That count didn’t save.'); } return; }
       if (hit) {
         if (!hit.g.counted) hit.g.counted = 0;
         if (hit.r.qty == null && d.qty != null) hit.g.counted++;
         if (hit.r.qty != null && d.qty == null) hit.g.counted--;
         hit.r.qty = d.qty; hit.r.value = d.value != null ? d.value : null;
+        if (d.full !== undefined) { hit.r.full = d.full; hit.r.open = d.open; }
         if (ST.sheet.totals && d.category_total !== undefined) ST.sheet.totals[hit.g.category] = d.category_total || 0;
       }
       if (ST.sheet) { ST.sheet.counted = d.counted; ST.sheet.of = d.of; }
       if (lab) lab.classList.toggle('has', d.qty != null);
-      if (st) { st.className = 'st ok'; st.innerHTML = d.qty == null ? 'Cleared' : (d.value != null ? hn(money(d.value)) + ' · Saved' : 'Saved'); }
+      if (st) { st.className = 'st ok'; st.innerHTML = d.qty == null ? 'Cleared' : (d.full != null ? hn(lvl(d.qty)) + ' bottles · ' : '') + (d.value != null ? hn(money(d.value)) + ' · Saved' : 'Saved'); }
       var p = $id('br-cprog'); if (p) p.innerHTML = sheetProgress();
       var gh = hit && document.querySelector('[data-br-cgrp="' + hit.g.category + '"] .br-cgh span');
       if (gh) gh.innerHTML = hn(hit.g.counted) + ' of ' + hn(hit.g.products.length) + ' counted' + (ST.sheet.totals && hit.g.counted ? ' · ' + hn(money(ST.sheet.totals[hit.g.category] || 0)) : '');
@@ -50644,6 +50688,11 @@ function sfw2RuleCheck(chk) {
       }
       if (t.id === 'br-cdate') { ST.cnt.date = t.value; if (t.value) { ST.sheet = null; redrawSheet(); loadSheet(t.value); } return; }
       if (t.getAttribute('data-br-ci') != null) { if (t._brT) { clearTimeout(t._brT); t._brT = null; } saveItem(t); return; }
+      if (t.getAttribute('data-br-cf') != null || t.getAttribute('data-br-co') != null) {
+        var crow = t.closest ? t.closest('[data-br-crow]') : null;
+        if (crow && crow._brT) { clearTimeout(crow._brT); crow._brT = null; }
+        saveBottle(crow); return;
+      }
       if (t.getAttribute && t.getAttribute('data-br-vmapto') != null) {
         t.classList.remove('br-need');
         rowSay(t.closest ? t.closest('.br-mrow') : null, '', '');
@@ -50662,6 +50711,15 @@ function sfw2RuleCheck(chk) {
         /* Saved once typing settles; leaving the box saves at once (change). */
         if (t._brT) clearTimeout(t._brT);
         t._brT = setTimeout(function () { t._brT = null; saveItem(t); }, 700);
+        return;
+      }
+      if (t.getAttribute && (t.getAttribute('data-br-cf') != null || t.getAttribute('data-br-co') != null)) {
+        if (t.getAttribute('data-br-co') != null) moreOpen(t);
+        var brow = t.closest ? t.closest('[data-br-crow]') : null;
+        if (brow) {
+          if (brow._brT) clearTimeout(brow._brT);
+          brow._brT = setTimeout(function () { brow._brT = null; saveBottle(brow); }, 700);
+        }
         return;
       }
       if (t.id === 'br-csq') { ST.sheetQ = t.value; filterSheet(t.value); return; }
@@ -50900,7 +50958,7 @@ function sfw2RuleCheck(chk) {
   window._bar = {state: ST, sigList: sigList, signals: signals, recipes: recipes, prodOptions: prodOptions, sparkFit: sparkFit, listHtml: listHtml, rowDetail: rowDetail, rowHtml: rowHtml, labelIdx: labelIdx, priceUrl: priceUrl, tipLeft: tipLeft,
                  focusKey: focusKey, refocus: refocus, verdict: verdict, mapBody: mapBody, countsBody: countsBody, prodBody: prodBody,
                  listState: listState, redrawList: redrawList, rerender: rerender, send: send, refusal: refusal, inertApp: inertApp,
-                 saveMapping: saveMapping, saveCount: saveCount, saveItem: saveItem, setStopped: setStopped, page: page,
+                 saveMapping: saveMapping, saveCount: saveCount, saveItem: saveItem, saveBottle: saveBottle, setStopped: setStopped, page: page,
                  open: function (v) { OPEN = v; }, setData: function (d) { DATA = d; }};
   if (window.cavNavRegister) cavNavRegister('bar', function () { window.barOpen(); return true; });
   document.addEventListener('click', function (e) {

@@ -253,7 +253,7 @@ Web/iOS parity (9/25/26), Food Cost, exports and module gating:
   | `GET food-cost/bar/prices?offset&limit&q&dir=up\|down\|all&kind&cat&dist&sort=money\|pct\|newest&list` | Food Cost | `{ok, total, offset, limit, rows}` |
   | `GET food-cost/bar/products?offset&limit&q&cat` | Food Cost | `{ok, total, offset, limit, rows}` |
   | `GET food-cost/bar/expected-prices` | Food Cost | `{ok, rows, can_change}` |
-  | `GET food-cost/bar/count-sheet?date=`, `POST food-cost/bar/count-item {count_date, product_key, qty ("" clears)}` | who can count (FOOD_COST_ENTER or VIEW) | the bar count product by product (`bar.count_items`); costs, values and totals only with FOOD_COST_VIEW |
+  | `GET food-cost/bar/count-sheet?date=`, `POST food-cost/bar/count-item {count_date, product_key, qty ("" clears) | full + open: [levels] for a bottle}` | who can count (FOOD_COST_ENTER or VIEW) | the bar count product by product (`bar.count_items`); costs, values and totals only with FOOD_COST_VIEW |
   | `GET food-cost/bar/mapping` · `POST` | Food Cost · account holder | the bar mapping |
   | `GET food-cost/bar/counts` · `POST` · `DELETE …/counts/<date>[?category=]` | counts: holder + FOOD_COST_ENTER (dollars need Food Cost) · delete: holder | the bar's counts |
   | `GET food-cost/bar/waste` · `POST` · `DELETE …/waste/<id>` | holder + FOOD_COST_ENTER · delete: holder | the waste log; a POST runs at most once per `Idempotency-Key` (header, or `idempotency_key` in the body — the first answer is replayed, a request still in flight is a 409; SCALE-10, 10/16/26); the products an entry may name are the distinct products on file (`bar.purchases.product_catalog`), never every invoice line per request (SCALE-09) |
