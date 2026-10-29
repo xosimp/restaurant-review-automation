@@ -54,7 +54,7 @@ from bar.common import LABELS, POUR_CATEGORIES, _mdy, get_conn
 from bar.ledger import as_lines, ledger_of
 
 COUNT_CATEGORIES = POUR_CATEGORIES               # beer, liquor, wine
-METHODS = ("category_value", "items", "import")
+METHODS = ("category_value", "items", "import")       # "items": summed from bar.count_items
 SOURCES = ("owner", "backoffice", "import")
 # A count this far from a span's edge still brackets it; further, the span
 # is not the one the count measured.
@@ -100,6 +100,9 @@ def init_bar_counts(db_path=None):
         conn.commit()
     finally:
         conn.close()
+    # The count product by product (bar.count_items, 10/29/26).
+    from bar.count_items import init_bar_count_items
+    init_bar_count_items(db_path)
 
 
 # ── the counts ──────────────────────────────────────────────────────────────

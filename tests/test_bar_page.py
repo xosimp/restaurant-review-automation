@@ -606,15 +606,17 @@ def test_focus_survives_a_save_and_show_all_focuses_the_first_new_row(full):
 def test_writes_send_what_the_routes_take(full):
     out = _run(full, """
       ELS['br-cdate'] = el({value: '2026-09-30'}); ELS['br-cdate'].value = '2026-09-30';
-      var inp = el({'data-br-cnt': 'liquor'}); inp.value = '$1,200';
-      window._bar.saveCount(inp);
+      var inp = el({'data-br-ci': 'breakthru beverage illinois|9031'}); inp.value = '2.5';
+      window._bar.saveItem(inp);
       window._bar.setStopped('Breakthru Beverage', true);
       window._bar.state.q = 'vod'; window._bar.state.dir = 'deals'; window._bar.state.cat = 'liquor';
       console.log(JSON.stringify(CALLS)); console.log(window._bar.priceUrl(50));
     """)
     lines = out.strip().split("\n")
     calls = [c for c in json.loads(lines[-2]) if c["method"] != "GET"]
-    assert calls[0]["url"] == "/api/food-cost/bar/counts" and calls[0]["body"] == {"count_date": "2026-09-30", "values": {"liquor": "$1,200"}}
+    # The count is product by product (owner, 10/29/26): one product's count a write.
+    assert calls[0]["url"] == "/api/food-cost/bar/count-item" and calls[0]["body"] == {
+        "count_date": "2026-09-30", "product_key": "breakthru beverage illinois|9031", "qty": "2.5"}
     assert calls[1]["url"] == "/api/food-cost/bar/stopped" and calls[1]["body"] == {"distributor": "Breakthru Beverage"}
     url = lines[-1]
     assert url.startswith("/api/food-cost/bar/prices?offset=50&limit=50") and "q=vod" in url and "kind=deal_ended,deal,tier" in url
@@ -965,7 +967,7 @@ def test_every_workflow_control_survives_the_redesign(full):
     p["margins"] = {"rows": [], "suggestions": [{"provider": "rpower", "item_id": "9", "item": "Gin Fizz", "product_key": "k", "product": "Gin 1L", "match": 0.4}]}
     html = _render(p)
     for ctl in ('data-br-vmap="9"', 'data-br-vmapto="9"', 'data-br-vmapoz="9"', 'data-br-specp="7"', 'data-br-spec="7" data-act="confirm"',
-                'data-br-dm="9"', 'data-br-wlog="1"', 'id="br-wprod"', 'data-br-cnt="beer"', 'id="br-cdate"', 'data-br-dir="up"',
+                'data-br-dm="9"', 'data-br-wlog="1"', 'id="br-wprod"', 'id="br-csheet"', 'id="br-csq"', 'id="br-cdate"', 'data-br-dir="up"',
                 'id="br-q"', 'id="br-fsort"', 'data-br-series="total"', 'data-br-lazy="mapping"', 'data-br-lazy="products"', 'data-br-lazy="counts"',
                 'id="br-mq"', 'data-br-go="br-unm"'):
         assert ctl in html, ctl

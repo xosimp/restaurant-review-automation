@@ -2744,6 +2744,55 @@ def mobile_bar_count_save(current_user):
     return jsonify(**out)
 
 
+@mobile_bp.route("/food-cost/bar/count-sheet", methods=["GET"])
+@mobile_login_required
+def mobile_bar_count_sheet(current_user):
+    """?date=YYYY-MM-DD (today when left out) — every beer, liquor and wine
+    product to count, with the counts saved for that date (bar.count_items).
+    Costs, values and totals only for FOOD_COST_VIEW."""
+    import bar.count_items as _bci
+    if not _bar_count_enters(current_user):
+        return jsonify(ok=False, error="Only someone who can count stock can count the bar."), 403
+    rid = current_user["restaurant_id"]
+    today = _bar_count_today(rid)
+    try:
+        return jsonify(**_bci.sheet(rid, request.args.get("date") or today.isoformat(),
+                                    dollars=_bar_count_sees_dollars(current_user), today=today))
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "Pick the count date from the calendar.")), 400
+    except Exception as e:
+        _bar_capture(e, "bar_counts", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
+
+
+@mobile_bp.route("/food-cost/bar/count-item", methods=["POST"])
+@mobile_login_required
+def mobile_bar_count_item(current_user):
+    """{count_date, product_key, qty ("" clears)} — one product's count,
+    saved as it is typed; the date's category values follow from its
+    products (bar.count_items.save_item). Each row keeps who entered it; no
+    account event per product (a count is hundreds of them). No cost or
+    value in the answer without FOOD_COST_VIEW."""
+    import bar.count_items as _bci
+    if not _bar_count_enters(current_user):
+        return jsonify(ok=False, error="Only someone who can count stock can count the bar."), 403
+    rid = current_user["restaurant_id"]
+    b = request.get_json(silent=True) or {}
+    try:
+        res = _bci.save_item(rid, b.get("count_date"), b.get("product_key"), b.get("qty"),
+                             user_id=_bar_viewer(current_user), today=_bar_count_today(rid))
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "That count didn't save.")), 400
+    except Exception as e:
+        _bar_capture(e, "bar_write", rid)
+        return jsonify(ok=False, error=_BAR_WRITE_FAILED), 500
+    import bar.cache as _bcache
+    _bcache.invalidate(rid)
+    if not _bar_count_sees_dollars(current_user):
+        res = {k: v for k, v in res.items() if k not in ("unit_cost", "value", "category_total")}
+    return jsonify(**res)
+
+
 @mobile_bp.route("/food-cost/bar/counts/<count_date>", methods=["DELETE"])
 @mobile_login_required
 def mobile_bar_count_delete(current_user, count_date):

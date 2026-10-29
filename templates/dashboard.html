@@ -11904,7 +11904,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{width:96px}
 /* The week's PAR: two figures and one short line under them. */
 .sw-par-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0 0;max-width:460px}
-.sw-par-t{padding:9px 14px;border-radius:12px;background:var(--paper2)}
+.sw-par-t{padding:6px 0}
 .sw-par-t .k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
 .sw-par-t .v{margin-top:2px;font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;letter-spacing:-.01em;color:var(--ink);font-variant-numeric:tabular-nums}
 .sw-par-n{margin-top:6px;font-size:13.5px;line-height:1.5;color:var(--ink3)}
@@ -28717,15 +28717,19 @@ function swLoadLeft() {
     if (!d.can_edit) { if (tg) tg.disabled = true; if (nt) nt.disabled = true; }
   }).catch(function () { });
 }
+/* A Studio setting's save says how it went in the app's toast — green for
+   saved, red for a refusal — never as a line inside the Setup card (owner,
+   10/29/26: "the saved stuff needs to be a green toast"). The card's status
+   span is left empty. */
 function _swSave(body, statusId, okText, then) {
-  var st = document.getElementById(statusId); if (st) { st.textContent = 'Saving…'; st.className = 'ac-status'; }
+  var st = document.getElementById(statusId); if (st) { st.textContent = ''; st.className = 'ac-status'; }
+  var say = function (msg, kind) { if (typeof toast === 'function') toast(msg, kind); };
   fetch('/api/account/targets', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
     .then(apiJson).then(function (d) {
       if (d && d.ok && then) then();
-      if (!st) return;
-      if (d && d.ok) { st.textContent = okText; st.className = 'ac-status ok'; }
-      else { st.textContent = (d && d.error) || 'Could not save'; st.className = 'ac-status err'; }
-    }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } });
+      if (d && d.ok) say(okText, 'success');
+      else say((d && d.error) || 'That didn’t save. Try again.', 'error');
+    }).catch(function () { say('That didn’t save. Try again.', 'error'); });
 }
 // A number box that saves on change saves once it settles: a spinner click,
 // an arrow key or a scroll over it fires "change" on every step, and each
@@ -48450,6 +48454,26 @@ function sfw2RuleCheck(chk) {
 .br-cform .cur{position:absolute;left:14px;top:50%;transform:translateY(-50%);font:600 22px/1 'Space Grotesk',sans-serif;color:var(--ink3);pointer-events:none}
 #bar .br-cform input.br-in2.big{width:100%;height:56px;padding-left:34px;font:600 24px/1 'Space Grotesk',sans-serif;color:var(--ink);background:var(--surface)}
 .br-cform .br-ok{margin-top:12px}
+.br-cform #br-csq{width:100%;max-width:420px;margin-bottom:18px}
+.br-csheet{display:flex;flex-direction:column;gap:22px}
+.br-cgh{display:flex;align-items:center;gap:10px;margin-bottom:8px;font:600 15px/1.2 'Apfel Grotezk',sans-serif;color:var(--ink)}
+.br-cgh span{margin-left:auto;font:500 13.5px/1 'Space Grotesk',sans-serif;color:var(--ink3)}
+.br-cgl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.br-crow{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"n in" "st st";align-items:center;column-gap:12px;row-gap:2px;padding:10px 12px;border-radius:14px;background:var(--sf-recess);border:1px solid var(--br-hair2);transition:border-color .25s ease}
+.br-crow:focus-within{border-color:color-mix(in srgb,var(--ember) 50%,transparent)}
+.br-crow.has{border-color:color-mix(in srgb,var(--green) 34%,transparent)}
+.br-crow .n{grid-area:n;display:flex;flex-direction:column;gap:3px;min-width:0}
+.br-crow .n b{font:600 14.5px/1.25 'Apfel Grotezk',sans-serif;color:var(--ink);overflow-wrap:anywhere}
+.br-crow .n small{font-size:12.5px;color:var(--ink3)}
+.br-crow .in{grid-area:in;display:flex;align-items:center;gap:6px}
+#bar .br-crow input.br-in2{width:84px;height:40px;text-align:right}
+.br-crow .u{font-size:12.5px;color:var(--ink3);min-width:44px}
+.br-crow .st{grid-area:st;font-size:12.5px;color:var(--ink3);min-height:0}
+.br-crow .st:empty{display:none}
+.br-crow .st.ok{color:var(--green)}
+.br-crow .st.err{color:var(--red)}
+.br-cnote{font-size:13.5px;color:var(--ink3)}
+@media (max-width:720px){.br-cgl{grid-template-columns:1fr}}
 .br-cform .br-ok:empty{display:none}
 .br-wq{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,.6fr) minmax(0,1.35fr) minmax(0,1.1fr) minmax(0,1.05fr) minmax(0,1.2fr) auto;gap:10px;align-items:end;padding:18px 20px;border-radius:22px;border:1px solid var(--br-hair2);background:var(--br-plate);box-shadow:var(--elev-1);margin-bottom:14px}
 .br-wq label{display:flex;flex-direction:column;gap:6px;min-width:0;font:600 13px/1 'Apfel Grotezk',sans-serif;color:var(--ink3)}
@@ -49705,6 +49729,14 @@ function sfw2RuleCheck(chk) {
       if (over > 1) sc.scrollTop -= over;
     }
     if (focus) { var bt = $id('br-t-' + k); if (bt) bt.focus(); }
+    sheetWanted();
+  }
+  /* The count sheet is read when Inventory is the view on screen — never on
+     every Bar open. */
+  function sheetWanted() {
+    if (ST.tab !== 'stock') return;
+    var date = ST.cnt.date || todayIso();
+    if (!ST.sheet || ST.sheet.count_date !== date) loadSheet(date);
   }
   /* A view's heading: its title, the period it covers, and — folded — how it
      is read. No eyebrow, no paragraph to read first (owner, 10/15/26). */
@@ -50100,23 +50132,105 @@ function sfw2RuleCheck(chk) {
 
   /* ── Inventory: count the bar, log the waste ─────────────────────────── */
   function countsSec2(d) {
-    var cn = d.counted || {}, per = countedPeriod(d), miss = cn.missing || [], ml = '', i, k, form = '', got = 0, n = 0;
+    var cn = d.counted || {}, per = countedPeriod(d), miss = cn.missing || [], ml = '', i;
     for (i = 0; i < miss.length; i++) ml += (i ? '; ' : '') + esc2(miss[i].component) + (miss[i].why ? ' — ' + esc2(miss[i].why) : '');
     var date = ST.cnt.date || todayIso();
-    for (k in LABELS) {
-      if (!LABELS.hasOwnProperty(k)) continue;
-      n++; if (ST.cnt[k]) got++;
-      form += '<label class="br-cfi' + (ST.cnt[k] ? ' has' : '') + '"><span class="lb"><i class="br-swt" style="--s:' + seriesOf(k).css + '"></i>' + esc2(LABELS[k]) + '</span><span class="in"><span class="cur" aria-hidden="true">$</span><input class="br-in2 big" type="text" inputmode="decimal" autocomplete="off" data-br-cnt="' + k + '" value="' + esc2(ST.cnt[k] || '') + '" placeholder="not counted" aria-label="' + esc2(LABELS[k]) + ' count, in dollars at cost"></span><span class="br-err" id="br-cerr-' + k + '" role="alert"></span></label>';
-    }
     var stat = function (l, v, s) { return '<div class="cs"><span>' + l + '</span><b>' + v + '</b>' + (s ? '<small>' + s + '</small>' : '') + '</div>'; };
-    return '<section class="br-sec2" id="br-counts">' + head(per ? 'Pour cost, counted' : 'Count the bar', '', 'Two counts turn bought vs sold into counted pour cost: the opening count, plus what the bar bought, minus the closing count, as a % of what it sold. Count after close, each category at what you paid — a full keg without its deposit. Each value saves as you enter it; one left blank stays as it is.')
+    return '<section class="br-sec2" id="br-counts">' + head(per ? 'Pour cost, counted' : 'Count the bar', '', 'Count every bottle, can and keg after close: liquor and wine in bottles (2.5 for two and a half), packaged beer in cans or bottles, draft in kegs (0.5 for half a keg). Each count saves as you type it and is valued at what you last paid; the categories add up from their products. Two counts turn bought vs sold into counted pour cost.')
       + '<div class="br-cstat">' + stat('Last count', cn.last_count_mdy ? hn(cn.last_count_mdy) : 'None yet') + stat(cn.last_count_mdy ? 'Next due' : 'First due', cn.next_due_mdy ? hn(cn.next_due_mdy) : '—', 'month-end, after close')
       + stat('For counted pour cost', ml ? 'Still needed' : 'Ready', ml || '') + '</div>'
       + (per ? countedCard(per) : '')
       + '<div class="br-cform br-rise"><div class="top"><label class="dt">Count date<input class="br-in2 date" type="date" id="br-cdate" value="' + esc2(date) + '" max="' + esc2(todayIso()) + '" aria-label="Count date"></label>'
-      + '<div class="pg"><span class="br-pbar"><i style="width:' + (n ? got / n * 100 : 0).toFixed(0) + '%"></i></span><span>' + hn(got) + ' of ' + hn(n) + ' entered</span></div></div>'
-      + '<div class="br-ccats">' + form + '</div><div class="br-ok" id="br-cok" role="status" aria-live="polite"></div></div>'
+      + '<div class="pg" id="br-cprog">' + sheetProgress() + '</div></div>'
+      + '<input class="br-q" id="br-csq" type="search" placeholder="Find a bottle, can or keg" aria-label="Find a product to count" aria-controls="br-csheet" value="' + esc2(ST.sheetQ || '') + '">'
+      + '<div id="br-csheet" class="br-csheet">' + sheetBody() + '</div></div>'
       + '<details class="br-more" id="br-chist" data-br-lazy="counts"' + (ST.det['br-chist'] ? ' open' : '') + '><summary>Every count</summary><div id="br-chist-b">' + countsBody() + '</div></details></section>';
+  }
+  /* The count sheet (bar.count_items, owner 10/29/26: "a count for ALL
+     drinks"): every beer, liquor and wine product, grouped, A to Z, each
+     counted in its own unit and saved as it is typed. Costs and values only
+     when the login sees dollars. */
+  function sheetProgress() {
+    var sh = ST.sheet, n = sh ? sh.of : 0, got = sh ? sh.counted : 0;
+    return '<span class="br-pbar"><i style="width:' + (n ? got / n * 100 : 0).toFixed(0) + '%"></i></span><span>' + hn(got) + ' of ' + hn(n) + ' counted</span>';
+  }
+  function sheetRow(r) {
+    var cost = r.unit_cost != null ? ' · ' + hn('$' + (+r.unit_cost).toFixed(2)) + ' a ' + esc2(r.unit === 'unit' ? 'unit' : r.unit) : '';
+    return '<label class="br-crow' + (r.qty != null ? ' has' : '') + '" data-br-cnm="' + esc2(String(r.name || '').toLowerCase()) + '"><span class="n"><b>' + esc2(r.name) + '</b><small>' + esc2(r.unit_label) + cost + '</small></span>'
+      + '<span class="in"><input class="br-in2" type="text" inputmode="decimal" autocomplete="off" data-br-ci="' + esc2(r.product_key) + '" value="' + (r.qty != null ? esc2(String(r.qty)) : '') + '" placeholder="—" aria-label="' + esc2(r.name) + ', ' + esc2(r.unit_label) + ' on hand"><span class="u">' + esc2(r.unit_label) + '</span></span>'
+      + '<span class="st" data-br-cst="' + esc2(r.product_key) + '" role="status" aria-live="polite">' + (r.value != null ? hn(money(r.value)) : '') + '</span></label>';
+  }
+  function sheetBody() {
+    var sh = ST.sheet, i, j, h = '';
+    if (ST.sheetErr) return '<div class="br-empty">' + esc2(ST.sheetErr) + '</div>';
+    if (!sh || !sh.groups) return '<div class="br-empty" role="status">Reading the bar’s products…</div>';
+    if (!sh.groups || !sh.groups.length) return '<div class="br-empty">No beer, liquor or wine on the invoices yet — the sheet fills in from them.</div>';
+    for (i = 0; i < sh.groups.length; i++) {
+      var g = sh.groups[i], rows = '';
+      for (j = 0; j < g.products.length; j++) rows += sheetRow(g.products[j]);
+      var tot = sh.totals && sh.totals[g.category] != null && g.counted ? ' · ' + hn(money(sh.totals[g.category])) : '';
+      h += '<div class="br-cgrp" data-br-cgrp="' + esc2(g.category) + '"><div class="br-cgh"><i class="br-swt" style="--s:' + seriesOf(g.category).css + '"></i><b>' + esc2(g.label) + '</b><span>' + hn(g.counted) + ' of ' + hn(g.products.length) + ' counted' + tot + '</span></div><div class="br-cgl">' + rows + '</div></div>';
+    }
+    if (sh.unpriced && sh.unpriced.length && sh.totals) h += '<div class="br-cnote">Counted, no price on the invoices yet — left out of the totals: ' + esc2(sh.unpriced.join(', ')) + '.</div>';
+    return h + '<div class="br-empty" id="br-csq-none" hidden>No product matches that.</div>';
+  }
+  function redrawSheet() {
+    var b = $id('br-csheet'), p = $id('br-cprog');
+    if (b) b.innerHTML = sheetBody();
+    if (p) p.innerHTML = sheetProgress();
+    if (ST.sheetQ) filterSheet(ST.sheetQ);
+  }
+  function loadSheet(date) {
+    if (ST.sheetBusy === date) return;
+    ST.sheetBusy = date; ST.sheetErr = '';
+    fetch('/api/food-cost/bar/count-sheet?date=' + encodeURIComponent(date), {credentials: 'same-origin'}).then(jsonOf).then(function (d) {
+      ST.sheetBusy = null;
+      if (d && d.ok) { ST.sheet = d; ST.sheetErr = ''; } else ST.sheetErr = refusal(d, 'The count sheet couldn’t be read just now.');
+      redrawSheet();
+    }, function () { ST.sheetBusy = null; ST.sheetErr = 'The count sheet couldn’t be read just now.'; redrawSheet(); });
+  }
+  function filterSheet(q) {
+    var box = $id('br-csheet'), s = String(q || '').toLowerCase(), shown = 0, i, j;
+    if (!box) return;
+    var grps = box.querySelectorAll('[data-br-cgrp]');
+    for (i = 0; i < grps.length; i++) {
+      var rows = grps[i].querySelectorAll('[data-br-cnm]'), vis = 0;
+      for (j = 0; j < rows.length; j++) { var hit = !s || rows[j].getAttribute('data-br-cnm').indexOf(s) >= 0; rows[j].hidden = !hit; if (hit) vis++; }
+      grps[i].hidden = !vis; shown += vis;
+    }
+    var none = $id('br-csq-none'); if (none) none.hidden = shown > 0;
+  }
+  /* One product's count, saved once typing settles (or at once when the box
+     is left): the row says Saved or why not; the sheet's figures follow
+     without a repaint, so the cursor never jumps. */
+  function sheetRowOf(key) {
+    var sh = ST.sheet, i, j;
+    for (i = 0; sh && sh.groups && i < sh.groups.length; i++) for (j = 0; j < (sh.groups[i].products || []).length; j++) if (sh.groups[i].products[j].product_key === key) return {g: sh.groups[i], r: sh.groups[i].products[j]};
+    return null;
+  }
+  function saveItem(inp) {
+    var key = inp.getAttribute('data-br-ci'), v = String(inp.value || '').replace(/^\s+|\s+$/g, ''), dt = $id('br-cdate');
+    var st = document.querySelector(attrSel('data-br-cst', key)), lab = inp.closest ? inp.closest('.br-crow') : null;
+    var date = (dt && dt.value) || todayIso(), hit = sheetRowOf(key);
+    if (hit && String(hit.r.qty == null ? '' : hit.r.qty) === v) return;
+    if (st) { st.className = 'st'; st.textContent = 'Saving…'; }
+    send('POST', '/api/food-cost/bar/count-item', {count_date: date, product_key: key, qty: v}, function (d) {
+      if (!d.ok) { if (st) { st.className = 'st err'; st.textContent = refusal(d, 'That count didn’t save.'); } return; }
+      if (hit) {
+        if (!hit.g.counted) hit.g.counted = 0;
+        if (hit.r.qty == null && d.qty != null) hit.g.counted++;
+        if (hit.r.qty != null && d.qty == null) hit.g.counted--;
+        hit.r.qty = d.qty; hit.r.value = d.value != null ? d.value : null;
+        if (ST.sheet.totals && d.category_total !== undefined) ST.sheet.totals[hit.g.category] = d.category_total || 0;
+      }
+      if (ST.sheet) { ST.sheet.counted = d.counted; ST.sheet.of = d.of; }
+      if (lab) lab.classList.toggle('has', d.qty != null);
+      if (st) { st.className = 'st ok'; st.innerHTML = d.qty == null ? 'Cleared' : (d.value != null ? hn(money(d.value)) + ' · Saved' : 'Saved'); }
+      var p = $id('br-cprog'); if (p) p.innerHTML = sheetProgress();
+      var gh = hit && document.querySelector('[data-br-cgrp="' + hit.g.category + '"] .br-cgh span');
+      if (gh) gh.innerHTML = hn(hit.g.counted) + ' of ' + hn(hit.g.products.length) + ' counted' + (ST.sheet.totals && hit.g.counted ? ' · ' + hn(money(ST.sheet.totals[hit.g.category] || 0)) : '');
+      ST.counts = null;
+    });
   }
   function waste2(d) {
     var w = (d.bar_ops || {}).waste || {}, rec = w.recent || [], br = w.by_reason || [], wl = '', ch = '', i, j;
@@ -50224,6 +50338,7 @@ function sfw2RuleCheck(chk) {
   function afterRender(root) {
     var ds = root.querySelectorAll ? root.querySelectorAll('details[data-br-lazy]') : [], i;
     for (i = 0; i < ds.length; i++) if (ds[i].open) ensureLazy(ds[i].getAttribute('data-br-lazy'));
+    sheetWanted();
   }
   /* Focus survives a re-render (V30): the focused control's own key, found again. */
   var FKEYS = ['data-br-cat', 'data-br-map', 'data-br-cnt', 'data-br-row', 'data-br-dir', 'data-br-series', 'data-br-more', 'data-br-mixers',
@@ -50527,7 +50642,8 @@ function sfw2RuleCheck(chk) {
         postSetting({count_mixers: on}, on ? 'Saved — mixers count as liquor; the bar’s figures updated' : 'Saved — mixers are kept out of liquor; the bar’s figures updated', function () { t.checked = !on; });
         return;
       }
-      if (t.id === 'br-cdate') { ST.cnt.date = t.value; return; }
+      if (t.id === 'br-cdate') { ST.cnt.date = t.value; if (t.value) { ST.sheet = null; redrawSheet(); loadSheet(t.value); } return; }
+      if (t.getAttribute('data-br-ci') != null) { if (t._brT) { clearTimeout(t._brT); t._brT = null; } saveItem(t); return; }
       if (t.getAttribute && t.getAttribute('data-br-vmapto') != null) {
         t.classList.remove('br-need');
         rowSay(t.closest ? t.closest('.br-mrow') : null, '', '');
@@ -50542,6 +50658,13 @@ function sfw2RuleCheck(chk) {
     });
     el.addEventListener('input', function (e) {
       var t = e.target; if (!t) return;
+      if (t.getAttribute && t.getAttribute('data-br-ci') != null) {
+        /* Saved once typing settles; leaving the box saves at once (change). */
+        if (t._brT) clearTimeout(t._brT);
+        t._brT = setTimeout(function () { t._brT = null; saveItem(t); }, 700);
+        return;
+      }
+      if (t.id === 'br-csq') { ST.sheetQ = t.value; filterSheet(t.value); return; }
       if (t.id === 'br-q') {
         ST.q = t.value; ST.shown = 0;
         /* Debounced (R15): one list build per pause, not per keystroke. */
@@ -50777,7 +50900,7 @@ function sfw2RuleCheck(chk) {
   window._bar = {state: ST, sigList: sigList, signals: signals, recipes: recipes, prodOptions: prodOptions, sparkFit: sparkFit, listHtml: listHtml, rowDetail: rowDetail, rowHtml: rowHtml, labelIdx: labelIdx, priceUrl: priceUrl, tipLeft: tipLeft,
                  focusKey: focusKey, refocus: refocus, verdict: verdict, mapBody: mapBody, countsBody: countsBody, prodBody: prodBody,
                  listState: listState, redrawList: redrawList, rerender: rerender, send: send, refusal: refusal, inertApp: inertApp,
-                 saveMapping: saveMapping, saveCount: saveCount, setStopped: setStopped, page: page,
+                 saveMapping: saveMapping, saveCount: saveCount, saveItem: saveItem, setStopped: setStopped, page: page,
                  open: function (v) { OPEN = v; }, setData: function (d) { DATA = d; }};
   if (window.cavNavRegister) cavNavRegister('bar', function () { window.barOpen(); return true; });
   document.addEventListener('click', function (e) {
