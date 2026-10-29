@@ -459,6 +459,7 @@ Created at boot by `bar.products.init_bar_products`, which `bar.classify.init_ba
 - `bar_product_packs` — PRIMARY KEY `(restaurant_id, product_key)`: `units_per_case` (1–120), `container_ml` (50–60,000): the owner's pack where the description does not say it (the parser's assumption otherwise, labelled). Both empty deletes the row.
 - `bar_product_links` — PRIMARY KEY `(restaurant_id, product_key)`: `same_as` (another product_key): the owner's word that two codes are one product where no valid UPC joins them (`bar.products.canonical_keys`).
 - `bar_expected_prices` — `id`, `restaurant_id`, `product_key`, `min_qty` (1–1,000), `price` (a unit), `valid_from` / `valid_to` (ISO or NULL), `note`, `set_by`, `set_at`; index `(restaurant_id, product_key)`. The owner's deal sheet (F8): a line on an invoice in the lookback billed above the price its quantity earns is a `price_watch.tier_flags` row; where the sheet is silent the learned ladder decides.
+- `bar_count_items` — PRIMARY KEY `(restaurant_id, count_date, product_key)`: `category` (liquor|wine|beer), `qty` (0–10,000, two places), `unit` (bottle|can|keg|unit), `unit_cost` (what one unit cost at the count, from the product's newest invoice line through its pack; NULL when unpriced), `entered_by`, `entered_at`. The bar count product by product (`bar.count_items`, 10/29/26); after each save the date's `bar_counts` values are the sums of their counted products (method `items`). A financial record: kept, never pruned.
 - `bar_drink_map` — PRIMARY KEY `(restaurant_id, provider, item_id)`: `product_key`, `pour_oz` (NULL = a bottle or can sold as it comes), `set_by`, `set_at`. A POS menu item (`pos_menu_prices`) the owner confirmed is one bought product (F11). `bar.margins.margins` reads only these rows; its name suggestions are never stored or used.
 
 ### Bar counts (`bar/counts.py`, barfix 10/15/26, audit F1)
@@ -488,6 +489,7 @@ Every table the bar fix round added, with how long it is kept and what an off-si
 | `email_intake_routes` | each intake address | for good (a retired address stays, `active=0`) | `address` scrubbed (a write credential) |
 | `bar_product_categories`, `bar_settings`, `bar_product_packs`, `bar_product_links`, `bar_expected_prices`, `bar_drink_map`, `bar_drink_specs`, `bar_stopped_distributors`, `bar_sales_map` | an owner's choice (bounded by the products and POS names) | for good | copied |
 | `bar_counts` | one row per category per count date | for good (a counted pour cost needs both ends) | copied |
+| `bar_count_items` | one row per product per count date | for good (a count's detail) | copied |
 | `bar_waste` | each waste entry an owner or manager logs | for good (counts, never a dollar; small) | copied |
 | `bar_sales_nights` | each archived night × POS cell | 1095 days (`RETAIN_POS_ARCHIVE_DAYS`, with the ticket archive) | copied |
 | `pos_menu_catalog`, `pos_sales_categories` | the POS's own menu and categories (bounded) | for good, rewritten by each sync | copied |
