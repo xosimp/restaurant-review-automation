@@ -554,7 +554,8 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
     wx = _weather(restaurant, tmr, db_path)
     if wx and not wx.get("stale"):
         rain, hi = wx.get("precip_pct"), wx.get("high_f")
-        short = (wx.get("short_forecast") or "").strip()
+        import weather as _wx_words
+        short = _wx_words.plain_line(wx.get("short_forecast"))
         if rain is not None and rain >= RAIN_PCT:
             items.append({"kind": "weather", "tone": "warn",
                           "text": f"Rain forecast ({int(rain)}% chance{f', high {hi}°' if hi is not None else ''})"})

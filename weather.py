@@ -17,6 +17,7 @@ their own optional-data gaps.
 """
 import config
 import json
+import re
 import threading
 import time
 from datetime import datetime, timedelta
@@ -234,7 +235,7 @@ def meal_weather(hourly, day) -> dict:
         precs = [(x.get("probabilityOfPrecipitation") or {}).get("value") for x in pts]
         precs = [v for v in precs if v is not None]
         temps = [x.get("temperature") for x in pts if isinstance(x.get("temperature"), (int, float))]
-        words = [str(x.get("shortForecast") or "") for x in pts if x.get("shortForecast")]
+        words = [plain_forecast(x.get("shortForecast")) for x in pts if x.get("shortForecast")]
         out[f"{meal}_precip_pct"] = max(precs) if precs else None
         out[f"{meal}_temp_f"] = round(sum(temps) / len(temps), 1) if temps else None
         out[f"{meal}_short"] = max(set(words), key=words.count) if words else ""
@@ -394,12 +395,43 @@ def _row(d, p):
         "date": d,
         "day_name": p.get("name", ""),
         "high_f": p.get("temperature"),
-        "short_forecast": p.get("shortForecast", ""),
+        "short_forecast": plain_forecast(p.get("shortForecast", "")),
         "precip_pct": precip,
         "as_of": as_of,
         "age_hours": round(age, 1) if age is not None else None,
         "stale": age is None or age > FORECAST_STALE_HOURS,
     }
+
+
+# The Weather Service's short forecast is Title Case shorthand ("Slight
+# Chance Showers And Thunderstorms then Chance Showers And Thunderstorms").
+# plain_forecast says it in plain words, lower case (owner, 10/29/26:
+# "should be 'chance of showers', plain English").
+_CHANCE_RE = re.compile(r"\b(slight chance|chance)\b(?!\s+of\b)\s+")
+
+
+def plain_forecast(text) -> str:
+    """"Slight Chance Showers And Thunderstorms then Chance Showers And
+    Thunderstorms" → "slight chance of showers and thunderstorms, then a
+    chance of showers and thunderstorms". Lower case, idempotent; "" for
+    nothing."""
+    s = " ".join(str(text or "").split()).lower()
+    if not s:
+        return ""
+    parts = []
+    for i, part in enumerate(re.split(r"\s+then\s+", s)):
+        part = _CHANCE_RE.sub(lambda m: m.group(1) + " of ", part).strip().rstrip(",").strip()
+        if i and part.startswith(("chance of", "slight chance of")):
+            part = "a " + part
+        parts.append(part)
+    return ", then ".join(parts)
+
+
+def plain_line(text) -> str:
+    """A weather line as a sentence starts: plain_forecast's words with the
+    first letter capitalised ("Slight chance of showers, high 67°")."""
+    s = plain_forecast(text)
+    return s[:1].upper() + s[1:]
 
 
 def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):
@@ -430,7 +462,7 @@ def _with_night(row, night, hourly=None):
     if night:
         row["night_precip_pct"] = (night.get("probabilityOfPrecipitation") or {}).get("value")
         row["low_f"] = night.get("temperature")
-        row["night_short_forecast"] = night.get("shortForecast", "")
+        row["night_short_forecast"] = plain_forecast(night.get("shortForecast", ""))
     if hourly:
         row.update(meal_weather(hourly, row.get("date")))
     return row
