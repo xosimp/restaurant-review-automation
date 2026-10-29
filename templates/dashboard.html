@@ -6322,21 +6322,25 @@ svg:hover .hb-xh{opacity:1}
   // row sits under both columns, so stretching the card to it pushed it
   // further down and Erik's card ran twice its height (owner, 10/24/26). Only
   // text in the flow counts - a hidden or positioned tip never does.
+  // Measured from the greeting column's own lines only - the date, the
+  // headline, last night's report and the sub-line - never every element
+  // inside it, and never past HB_DNA_MAX: on 10/29/26 EJ's card ran past the
+  // bottom of the screen on Safari (~1,450px) from a stray measurement.
+  var HB_DNA_MAX=420;
   function hbDnaFit(){
-    var slot=document.getElementById('hb-dna-card'),card=slot&&slot.firstElementChild,lead=document.querySelector('#hb-root>.hb-top>div:first-child');
-    if(!card||!lead)return;
+    var slot=document.getElementById('hb-dna-card'),card=slot&&slot.firstElementChild;
+    if(!card)return;
     card.style.height='';slot.classList.remove('fit');card.classList.remove('roomy','tall');
     if(window.innerWidth<=1000)return;
-    var els=lead.querySelectorAll('*'),b=0,i,r,e,cs,skip;
-    for(i=0;i<els.length;i++){
-      if(els[i].children.length||!els[i].offsetHeight)continue;
-      skip=false;
-      for(e=els[i];e&&e!==lead;e=e.parentElement){cs=window.getComputedStyle(e);if(cs.position==='absolute'||cs.position==='fixed'||cs.visibility==='hidden'||cs.opacity==='0'){skip=true;break;}}
-      if(skip)continue;
-      r=els[i].getBoundingClientRect();if(r.bottom>b)b=r.bottom;
+    var ids=['hb-kicker','hb-h1','hb-status','hb-sub'],b=0,i,el,r;
+    for(i=0;i<ids.length;i++){
+      el=document.getElementById(ids[i]);
+      if(!el||el.hidden||!el.offsetHeight)continue;
+      r=el.getBoundingClientRect();if(r.bottom>b)b=r.bottom;
     }
+    if(!b)return;
     slot.classList.add('fit');
-    var h=Math.round(b-card.getBoundingClientRect().top);
+    var h=Math.min(HB_DNA_MAX,Math.round(b-card.getBoundingClientRect().top));
     if(h>168)card.style.height=h+'px';else slot.classList.remove('fit');
     // Tall enough to fill (owner, 10/22/26: the 168px card's contents sat
     // small in the middle of a ~270px card): the roomy layout, its traits
@@ -6348,6 +6352,9 @@ svg:hover .hb-xh{opacity:1}
   window.hbDnaFit=hbDnaFit;
   var _hbFitT=null;
   window.addEventListener('resize',function(){clearTimeout(_hbFitT);_hbFitT=setTimeout(hbDnaFit,120);});
+  // The greeting re-wraps once the web fonts arrive (Safari paints the
+  // fallback first): measured again then.
+  if(document.fonts&&document.fonts.ready&&document.fonts.ready.then)document.fonts.ready.then(function(){hbDnaFit();});
   // ── follow-through: today's brief, open issues, goals, results ────────────
   // Four small reads, rendered together once all have answered. Each is
   // optional — a 403 (a manager login has no morning brief) or a failure
