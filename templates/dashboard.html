@@ -48386,6 +48386,13 @@ function sfw2RuleCheck(chk) {
 .br-mrow.br-busy::after{content:"";position:absolute;bottom:0;left:-30%;width:30%;height:2px;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:pulseBarSlide 1.4s linear infinite}
 .br-mrow .br-msg{grid-column:1/-1;margin-top:-8px;font-size:13.5px;color:var(--ink2)}
 .br-mrow .br-msg:empty{display:none}
+.br-mrow .br-handf{grid-column:1/-1;display:flex;flex-direction:column;gap:12px;padding:16px 0 6px;border-top:1px solid var(--hb-line)}
+.br-handf .br-k{margin:0}
+.br-handf .br-form{flex-wrap:wrap;align-items:flex-end}
+.br-handf .br-in2.wide{width:220px}
+.br-handf .br-sel.sm{width:130px;height:44px}
+.br-handf .note{font-size:13.5px;color:var(--ink3)}
+.br-handf .acts{display:flex;gap:8px;align-items:center}
 .br-mrow .br-msg.err{color:var(--br-red-text)}
 .br-mrow .br-msg.ok{color:var(--green)}
 .br-mrow .br-sel.br-need{outline:2px solid var(--red);outline-offset:1px}
@@ -49104,9 +49111,14 @@ function sfw2RuleCheck(chk) {
   var NOT_ITEM = /discount|deposit|empties|\bfee\b|charge|credit|handle/i;
   var CAT_ORDER = ['liquor', 'wine', 'beer'];
   function prodSortKey(p) { return String(p.product || '').toLowerCase().replace(/^[^a-z0-9]+/, ''); }
-  function prodOptions(cat, first, pick, pickName) {
-    var ps = barProducts(null), groups = {}, order = [], o = '<option value="">' + esc2(first) + '</option>', i, g, k, found = null;
+  /* hand: the Pours-from picker also offers the owner's bottles bought
+     outside the invoices, and a way to add one (bar.hand, 10/29/26: EJ's
+     Bombay, Malibu and Knob Creek come from a liquor store, never an
+     invoice). Other pickers keep to invoice products. */
+  function prodOptions(cat, first, pick, pickName, hand) {
+    var ps = barProducts(null), groups = {}, order = [], o = '<option value="">' + esc2(first) + '</option>', i, g, k, found = null, own = [];
     for (i = 0; i < ps.length; i++) {
+      if (ps[i].hand) { if (hand) own.push(ps[i]); continue; }
       if (NOT_ITEM.test(ps[i].product || '')) continue;
       if (pick && ps[i].product_key === pick) found = ps[i];
       g = ps[i].category || 'other';
@@ -49126,7 +49138,45 @@ function sfw2RuleCheck(chk) {
       for (i = 0; i < g.length; i++) if (g[i].product_key !== pick) o += '<option value="' + esc2(g[i].product_key) + '">' + esc2(g[i].product) + '</option>';
       o += '</optgroup>';
     }
+    if (hand) {
+      own.sort(function (a, b) { var x = prodSortKey(a), y = prodSortKey(b); return x < y ? -1 : (x > y ? 1 : 0); });
+      o += '<optgroup label="Bought elsewhere · your prices">';
+      for (i = 0; i < own.length; i++) o += '<option value="' + esc2(own[i].product_key) + '">' + esc2(own[i].product) + '</option>';
+      o += '<option value="add:hand">+ Add a bottle you buy elsewhere…</option></optgroup>';
+    }
     return o;
+  }
+  /* A bottle bought outside the invoices, typed in by the owner: under a
+     drink to match (Add and match) or a bottle already kept (Save). Sizes
+     as a store sells them; the price is one bottle's. */
+  var HAND_SIZES = [['50', '50 ml'], ['187', '187 ml'], ['200', '200 ml'], ['375', '375 ml'], ['750', '750 ml'], ['1000', '1 L'], ['1500', '1.5 L'], ['1750', '1.75 L'], ['12 oz', '12 oz'], ['16 oz', '16 oz'], ['19.2 oz', '19.2 oz'], ['24 oz', '24 oz']];
+  function handSizeVal(b) {
+    if (!b) return null;
+    var lab = String(b.size_label || ''), i;
+    for (i = 0; i < HAND_SIZES.length; i++) if (HAND_SIZES[i][0].indexOf('oz') > 0 ? lab === HAND_SIZES[i][0].replace(' oz', 'OZ') : Math.abs(+HAND_SIZES[i][0] - (+b.size_ml || 0)) < 1) return HAND_SIZES[i][0];
+    return null;
+  }
+  function handForm(o) {
+    var cat = o.category || 'liquor', size = handSizeVal(o.bottle) || (cat === 'beer' ? '12 oz' : '750'), b = o.bottle || {}, i, so = '', co = '';
+    for (i = 0; i < HAND_SIZES.length; i++) so += '<option value="' + HAND_SIZES[i][0] + '"' + (HAND_SIZES[i][0] === size ? ' selected' : '') + '>' + HAND_SIZES[i][1] + '</option>';
+    for (i = 0; i < 3; i++) { var c = ['liquor', 'wine', 'beer'][i]; co += '<option value="' + c + '"' + (c === cat ? ' selected' : '') + '>' + esc2(LABELS[c] || c) + '</option>'; }
+    return '<div class="br-handf" data-br-handform="1"><div class="br-k">' + (b.product_key ? 'Change this bottle' : 'A bottle you buy elsewhere') + '</div><div class="br-form">'
+      + '<label>Bottle<input class="br-in2 wide" type="text" data-h="name" maxlength="60" value="' + esc2(b.name || o.name || '') + '"></label>'
+      + '<label>Kind<select class="br-sel sm" data-h="category">' + co + '</select></label>'
+      + '<label>Size<select class="br-sel sm" data-h="size">' + so + '</select></label>'
+      + '<label>One bottle cost<input class="br-in2" type="text" inputmode="decimal" data-h="price" placeholder="$" value="' + (b.price != null ? esc2(String(b.price)) : '') + '"></label>'
+      + '<label>Where you buy it<input class="br-in2 wide" type="text" data-h="source" maxlength="60" placeholder="Optional" value="' + esc2(b.source || '') + '"></label>'
+      + '<span class="acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-br-handsave="1"' + (b.product_key ? ' data-key="' + esc2(b.product_key) + '"' : '') + (o.item_id ? ' data-item="' + esc2(o.item_id) + '" data-provider="' + esc2(o.provider || '') + '"' : '') + '>' + (o.item_id ? 'Add and match' : 'Save') + '</button>'
+      + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-br-handx="1">Cancel</button></span></div>'
+      + '<span class="note">Its drinks are costed at this price. It isn’t on an invoice, so it’s never counted as a purchase.</span></div>';
+  }
+  function openHandForm(row, o) {
+    if (!row) return;
+    var f = row.querySelector('[data-br-handform]');
+    if (f) f.parentNode.removeChild(f);
+    row.insertAdjacentHTML('beforeend', handForm(o));
+    var n = row.querySelector('[data-br-handform] [data-h="price"]');
+    if (n) { try { n.focus(); } catch (e) {} }
   }
   function varItem(x) {
     var w = x.unit_word || (x.unit === 'oz' ? 'oz' : 'unit'), basis = [], i;
@@ -49168,7 +49218,7 @@ function sfw2RuleCheck(chk) {
       + (sl ? '<span class="br-serve">' + sl + '</span>' : '')
       + (u.spec_suggested ? '<span class="br-tagx">Recipe card suggests one</span>' : '') + '</div>'
       + '<div class="m">' + (sg ? '<span class="br-sug">Suggested</span><b>' + esc2(sg.product) + '</b>' + (sg.oz != null ? '<span class="oz">' + hn(sg.oz + ' oz') + '</span>' : '') : noSuggestion(u)) + '</div>'
-      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(posName(u.item)) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key) + '<optgroup label="Not a drink to match"><option value="skip:not_a_drink">Set aside — not a drink</option><option value="skip:not_on_invoices">Set aside — not bought on any invoice</option></optgroup></select>'
+      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '" data-cat="' + esc2(u.category || '') + '" data-name="' + esc2(posName(u.item)) + '" aria-label="Product ' + esc2(posName(u.item)) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key, null, true) + '<optgroup label="Not a drink to match"><option value="skip:not_a_drink">Set aside — not a drink</option><option value="skip:not_on_invoices">Set aside — not bought on any invoice</option></optgroup></select>'
         + '<input class="br-in2" style="width:84px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="' + (pd ? esc2(pd + ' oz') : 'oz') + '" value="' + (sg && sg.oz != null ? esc2(String(sg.oz)) : '') + '" aria-label="Ounces a drink' + (pd ? ' — ' + esc2(String(pd)) + ' if left empty' : '') + '">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-vmap="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '">Match</button></div>' : '') + '</div></div>';
   }
@@ -50019,9 +50069,33 @@ function sfw2RuleCheck(chk) {
       + '<div class="br-rcps"><div class="br-rcol">' + cols[0] + '</div><div class="br-rcol">' + cols[1] + '</div></div>'
       + (more ? '<div class="br-showall"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-specall="1">Show all ' + hn(v.suggestions_total) + '</button></div>' : '') + '</section>';
   }
+  /* Bottles bought outside the invoices (bar.hand): the owner's list with
+     each one's price, and the drinks poured from them — matched and costed,
+     kept out of bought vs sold. */
+  function handSec(d) {
+    var hb = d.hand_products || [], v = d.variance || {}, ew = v.elsewhere || [], h = '', i;
+    if (!hb.length && !ew.length) return '';
+    for (i = 0; i < hb.length; i++) {
+      var b = hb[i];
+      h += '<div class="br-mrow aside" data-br-hrow="' + esc2(b.product_key) + '"><div class="n"><b>' + esc2(b.product) + '</b><span><i class="br-swt" style="--s:' + seriesOf(b.category).css + '"></i>' + esc2(LABELS[b.category] || b.category) + (b.source ? ' · ' + esc2(b.source) : '') + '</span></div>'
+        + '<div class="m"><span class="nos">' + hn('$' + (+b.price).toFixed(2)) + ' a bottle · ' + (b.drinks ? hn(b.drinks) + ' ' + plural(b.drinks, 'drink') + ' pour it' : 'no drink pours it yet') + '</span></div><div class="r">'
+        + (OWNER ? '<button type="button" class="cbtn cbtn-ghost cbtn-sm" data-br-handedit="' + esc2(b.product_key) + '">Change</button><button type="button" class="cbtn cbtn-text cbtn-sm" data-br-handdel="' + esc2(b.product_key) + '" data-drinks="' + (+b.drinks || 0) + '">Remove</button>' : '') + '</div></div>';
+    }
+    var dr = '';
+    for (i = 0; i < ew.length; i++) {
+      var x = ew[i];
+      dr += '<div class="br-mrow aside"><div class="n"><b>' + esc2(posName(x.item)) + '</b><span><i class="br-swt" style="--s:' + seriesOf(x.category).css + '"></i>' + esc2(LABELS[x.category] || x.category || '') + ' · ' + hn(x.rung_units) + ' sold · ' + hn(money(x.sales_usd)) + '</span></div>'
+        + '<div class="m"><span class="nos">Pours ' + esc2(prodName(x.product_key)) + '</span></div><div class="r">'
+        + (OWNER ? '<button type="button" class="cbtn cbtn-ghost cbtn-sm" data-br-unaside="' + esc2(x.item_id) + '" data-provider="' + esc2(x.provider) + '">Undo</button>' : '') + '</div></div>';
+    }
+    return '<section class="br-sec2" id="br-hand">' + head('Bottles you buy elsewhere', hn(hb.length),
+        'Bottles that never come on a distributor invoice — a liquor store run. A drink matched to one is costed at the price you gave, under Cost. It isn’t counted in bought vs sold: no invoice says how many you bought.')
+      + '<div class="br-mlist">' + h + '</div>'
+      + (dr ? fold('br-hand-drinks', 'Drinks poured from them · ' + hn(ew.length) + ' · ' + hn(money(v.elsewhere_sales_usd || 0)) + ' sold', null, '<div class="br-mlist">' + dr + '</div>', '') : '') + '</section>';
+  }
   function matchPanel(d) {
     var v = d.variance || {};
-    return matchHead(d) + unmatchedQ(d) + nameMatches(d) + recipes(v) + mappingSec(d) + '<section class="br-sec2">' + products(d) + '</section>';
+    return matchHead(d) + unmatchedQ(d) + handSec(d) + nameMatches(d) + recipes(v) + mappingSec(d) + '<section class="br-sec2">' + products(d) + '</section>';
   }
 
   /* ── Inventory: count the bar, log the waste ─────────────────────────── */
@@ -50457,6 +50531,10 @@ function sfw2RuleCheck(chk) {
       if (t.getAttribute && t.getAttribute('data-br-vmapto') != null) {
         t.classList.remove('br-need');
         rowSay(t.closest ? t.closest('.br-mrow') : null, '', '');
+        if (t.value === 'add:hand') {
+          t.value = '';
+          openHandForm(t.closest ? t.closest('.br-mrow') : null, {item_id: t.getAttribute('data-br-vmapto'), provider: t.getAttribute('data-provider'), category: t.getAttribute('data-cat'), name: t.getAttribute('data-name')});
+        }
       }
       if (t.id === 'br-fcat') { ST.cat = t.value; ST.shown = 0; refreshList(); }
       else if (t.id === 'br-fdist') { ST.dist = t.value; ST.shown = 0; refreshList(); }
@@ -50477,7 +50555,7 @@ function sfw2RuleCheck(chk) {
       else if (t.getAttribute && t.getAttribute('data-br-cnt')) ST.cnt[t.getAttribute('data-br-cnt')] = t.value;
     });
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-whyclose],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-whyclose],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab],[data-br-handsave],[data-br-handx],[data-br-handedit],[data-br-handdel]') : null;
       if (!t) return;
       var a = function (n) { return t.getAttribute(n); };
       if (a('data-br-tab') != null) { setTab(a('data-br-tab')); return; }
@@ -50563,6 +50641,40 @@ function sfw2RuleCheck(chk) {
         rowWrite('/api/food-cost/bar/drink-map', vb, vrow, t,
                  skip ? 'Set aside — it moves to Set aside' : 'Matched to ' + vname + (oz > 0 ? ' at ' + oz + ' oz' : '') + ' — it counts in bought vs sold now',
                  skip ? 'Set aside — it is listed under Set aside' : 'Matched — it counts in bought vs sold now');
+      } else if (a('data-br-handsave') != null) {
+        var hf = t.closest ? t.closest('[data-br-handform]') : null, hrow = hf ? hf.parentNode : null;
+        var hv = function (n) { var x = hf ? hf.querySelector('[data-h="' + n + '"]') : null; return x ? String(x.value || '').replace(/^\s+|\s+$/g, '') : ''; };
+        var hb = {name: hv('name'), category: hv('category'), size: hv('size'), price: hv('price'), source: hv('source')};
+        if (!hb.price) { rowSay(hrow, 'Give what one bottle cost.', 'err'); return; }
+        if (a('data-key')) hb.product_key = a('data-key');
+        if (a('data-item')) {
+          hb.provider = a('data-provider'); hb.item_id = a('data-item');
+          var hoz = +valOf(attrSel('data-br-vmapoz', a('data-item'))).replace(/[^\d.]/g, '');
+          if (hoz > 0) hb.pour_oz = hoz;
+        }
+        rowWrite('/api/food-cost/bar/hand-product', hb, hrow, t,
+                 a('data-item') ? 'Added ' + hb.name + ' and matched — its cost shows under Cost' : 'Saved ' + hb.name,
+                 a('data-item') ? 'Added ' + hb.name + ' — the drink is matched and costed at your price' : 'Saved — drinks poured from ' + hb.name + ' use the new price');
+      } else if (a('data-br-handx') != null) {
+        var hx = t.closest ? t.closest('[data-br-handform]') : null;
+        if (hx) hx.parentNode.removeChild(hx);
+      } else if (a('data-br-handedit') != null) {
+        var hk = a('data-br-handedit'), hbs = (DATA && DATA.hand_products) || [], hi, hbot = null;
+        for (hi = 0; hi < hbs.length; hi++) if (hbs[hi].product_key === hk) hbot = hbs[hi];
+        if (hbot) openHandForm(t.closest ? t.closest('.br-mrow') : null, {bottle: hbot, category: hbot.category});
+      } else if (a('data-br-handdel') != null) {
+        var hd = a('data-br-handdel'), hn2 = +a('data-drinks') || 0;
+        /* Two presses: the first says what goes with it. */
+        if (!t.getAttribute('data-armed')) {
+          t.setAttribute('data-armed', '1');
+          t.textContent = hn2 ? 'Remove — ' + hn2 + ' ' + plural(hn2, 'drink') + (hn2 === 1 ? ' goes' : ' go') + ' back to match' : 'Remove for good';
+          return;
+        }
+        t.disabled = true;
+        send('DELETE', '/api/food-cost/bar/hand-product/' + encodeURIComponent(hd.replace(/^hand\|/, '')), null, function (d) {
+          if (!d.ok) { t.disabled = !!d.lost; say(refusal(d), 'error'); return; }
+          say('Removed ' + (d.name || 'the bottle') + (d.cleared ? ' — ' + d.cleared + ' ' + plural(d.cleared, 'drink') + ' back in Drinks to match' : ''), 'success'); reread();
+        });
       } else if (a('data-br-unaside') != null) {
         ownerWrite('/api/food-cost/bar/drink-map', {provider: a('data-provider'), item_id: a('data-br-unaside'), product_key: null}, 'Back in Drinks to match', t);
       } else if (a('data-br-entry') != null) {

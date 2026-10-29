@@ -109,6 +109,7 @@ _SOURCES = (
     ("bar_product_links", "COUNT(*), MAX(set_at)"),
     ("bar_expected_prices", "COUNT(*), MAX(id), MAX(set_at)"),
     ("bar_drink_map", "COUNT(*), MAX(set_at)"),
+    ("bar_hand_products", "COUNT(*), MAX(set_at), SUM(price), SUM(size_ml)"),
     ("bar_drink_specs", "COUNT(*), MAX(set_at), SUM(oz)"),
     ("bar_waste", "COUNT(*), MAX(id), MAX(entered_at)"),
     # Back Office's entries and how they sort (backoffice_ap, 10/15/26).
@@ -309,6 +310,10 @@ def trim(payload) -> dict:
         out["pickable"] = [{"product_key": p.get("product_key"), "product": p.get("product"),
                             "category": p.get("category"), "distributor": p.get("distributor")}
                            for p in prods if isinstance(p, dict) and p.get("category") not in ("fee", "deposit")]
+        # The owner's bottles bought outside the invoices (bar.hand): a drink
+        # may pour from one; the page lists them in their own group.
+        from bar.hand import picker_rows
+        out["pickable"] += picker_rows(payload.get("hand_products") or [])
     return out
 
 

@@ -17126,6 +17126,8 @@ ACCOUNT_EVENT_TYPES = (
     # acting login recorded, `detail` the before and after.
     "bar_category_changed", "bar_stopped_changed", "bar_settings_changed", "bar_pack_changed",
     "bar_link_changed", "bar_deal_sheet_changed", "bar_drink_map_changed",
+    # A bottle bought outside the invoices added, changed or removed (bar.hand, 10/29/26).
+    "bar_hand_product_changed",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -17189,6 +17191,7 @@ ACCOUNT_EVENT_LABELS = {
     "bar_link_changed": "Bar products linked or unlinked",
     "bar_deal_sheet_changed": "Bar deal sheet changed",
     "bar_drink_map_changed": "Bar drink matched to a product",
+    "bar_hand_product_changed": "Bar bottle bought elsewhere added or changed",
     "auto_publish_changed": "Automatic schedule publishing changed",
     "auto_order_changed": "Trusted supplier orders changed",
     "auto_draft_changed": "Automatic schedule drafting changed",

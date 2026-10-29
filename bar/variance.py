@@ -957,9 +957,16 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         filed = _filer(conn, int(restaurant_id))
     finally:
         conn.close()
+    # Drinks poured from a bottle the owner buys outside the invoices
+    # (bar.hand): costed under Cost, listed apart here, never a gap.
+    elsewhere_of = {}
+    from bar.hand import is_hand
     for m in dmap:
         ck = canon.get(m["product_key"], m["product_key"])
         p = prods.get(ck)
+        if is_hand(m["product_key"]):
+            elsewhere_of[(m["provider"], str(m["item_id"]))] = m["product_key"]
+            continue
         if p is None or p.pack is None:
             # A product with no purchase line on file: nothing to compare.
             continue
@@ -1006,6 +1013,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     from bar.mapping import key_for
     unmapped = {}
     aside = {}
+    elsewhere = {}
     aside_sales = defaultdict(float)
     drink_items = set()     # POS items sold as beer, liquor or wine under the mapping
     cat_sales = defaultdict(float)
@@ -1031,6 +1039,17 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         if not tg:
             pure_mod = bool(r["pure_mod"])
             rung = not r["qty_zero"]
+            if k in elsewhere_of:
+                if is_drink and kind == "sale" and r["item_id"] and not pure_mod and rung:
+                    # Matched to a bottle bought elsewhere: in the matched
+                    # share's base like a set-aside drink, with no gap.
+                    e = elsewhere.setdefault(k, {"provider": k[0], "item_id": k[1], "item": r["item_name"],
+                                                 "category": bar_kind, "product_key": elsewhere_of[k],
+                                                 "rung_units": 0.0, "sales_usd": 0.0})
+                    e["rung_units"] += qty
+                    e["sales_usd"] += _f(r["sales"])
+                    aside_sales[bar_kind] += _f(r["sales"])
+                continue
             why = owner_aside.get(k) or set_aside_reason(r["item_name"])
             if why == "bucket" and not r["in_bucket"]:
                 why = None          # a bucket rung as one item: its beers are in it, ask about it
@@ -1180,10 +1199,17 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     for a in aside_rows:
         a["rung_units"] = _r(a["rung_units"])
         a["sales_usd"] = round(a["sales_usd"], 2)
+    elsewhere_rows = sorted(elsewhere.values(), key=lambda e: -e["sales_usd"])
+    for e in elsewhere_rows:
+        e["rung_units"] = _r(e["rung_units"])
+        e["sales_usd"] = round(e["sales_usd"], 2)
     totals = _totals(items, cat_sales, mapped_sales)
     open_cards = {_card_key(o) for o in suggested[:MAX_SUGGESTIONS]}
     out = {"set_aside": aside_rows[:MAX_UNMAPPED], "set_aside_total": len(aside_rows),
            "set_aside_sales_usd": round(sum(a["sales_usd"] for a in aside_rows), 2),
+           # Poured from a bottle bought outside the invoices (bar.hand).
+           "elsewhere": elsewhere_rows[:MAX_UNMAPPED], "elsewhere_total": len(elsewhere_rows),
+           "elsewhere_sales_usd": round(sum(e["sales_usd"] for e in elsewhere_rows), 2),
            "available": bool(items), "basis": "bought_vs_rung", "label": LABELS["bought_vs_rung"],
            "span": span_out, "items": items[:MAX_ITEMS], "items_total": len(items),
            "unmapped": unmapped_rows[:MAX_UNMAPPED], "unmapped_total": len(unmapped_rows),

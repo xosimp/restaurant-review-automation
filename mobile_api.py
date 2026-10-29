@@ -3480,7 +3480,6 @@ def mobile_bar_drink_map(current_user):
     restaurant's menu (pos_menu_prices)."""
     import bar.edits as _bed
     import bar.margins as _bmar
-    from bar.common import get_conn as _bar_gc
 
     def run(rid, acting):
         b = _bar_body()
@@ -3488,31 +3487,95 @@ def mobile_bar_drink_map(current_user):
         item_id = str(b.get("item_id") or "").strip()
         if not provider or not item_id or len(provider) > 40 or len(item_id) > 100:
             raise ValueError("Pick the drink from the POS menu.")
-        conn = _bar_gc()
-        try:
-            on_menu = conn.execute("SELECT 1 FROM pos_menu_prices WHERE restaurant_id=? AND provider=? "
-                                   "AND item_id=? LIMIT 1", (int(rid), provider, item_id)).fetchone()
-            # A button the POS has sold here is this restaurant's, whether or
-            # not its price list has been read since (owner, 10/27/26: a new
-            # button waited up to a week to be matchable).
-            if not on_menu:
-                on_menu = conn.execute("SELECT 1 FROM pos_ticket_lines WHERE restaurant_id=? AND provider=? "
-                                       "AND item_id=? AND kind='sale' LIMIT 1", (int(rid), provider, item_id)).fetchone()
-        finally:
-            conn.close()
-        if not on_menu:
+        if not _bar_on_menu(rid, provider, item_id):
             raise ValueError("That drink isn't on this restaurant's POS menu.")
         key = b.get("product_key")
         if key not in (None, "") and str(key).startswith("skip:"):
             pass                                  # set aside: bar.margins.set_drink_map checks the reason
+        elif key not in (None, ""):
+            # One of its invoice products, or a bottle the owner added by
+            # hand (bar.hand: bought outside the invoices).
+            import bar.hand as _bhand
+            known = _bed.known_product_keys(rid) | (_bhand.keys(rid) if _bhand.is_hand(key) else set())
+            key = _bed.check_product_key(rid, key, known=known)
         else:
-            key = _bed.check_product_key(rid, key) if key not in (None, "") else None
+            key = None
         oz = _bar_num(b.get("pour_oz"), "A pour is a number of ounces.")
         before = next((m.get("product_key") for m in _bmar.drink_map(rid)
                        if m.get("provider") == provider and str(m.get("item_id")) == item_id), None)
         res = _bmar.set_drink_map(rid, provider, item_id, key, pour_oz=oz, user_id=acting)
         return res, f"{provider} {item_id}: {before or 'not matched'} -> {key or 'not matched'}"
     return _bar_write(current_user, "which product a drink pours", "bar_drink_map_changed", run)
+
+
+@mobile_bp.route("/food-cost/bar/hand-product", methods=["POST"])
+@mobile_login_required
+def mobile_bar_hand_product(current_user):
+    """{name, category liquor|wine|beer, size (750, "1 L", "12 oz"), price
+    (a bottle), source?, product_key? (to change one)} — a bottle bought
+    outside the distributors' invoices (bar.hand). With {provider, item_id,
+    pour_oz?} too, that POS drink is matched to it in the same write.
+    → {ok, row, added, matched}."""
+    import bar.hand as _bhand
+    import bar.margins as _bmar
+
+    def run(rid, acting):
+        b = _bar_body()
+        key = b.get("product_key")
+        if key not in (None, "") and not _bhand.is_hand(key):
+            raise ValueError("Only a bottle you added can be changed here.")
+        provider = str(b.get("provider") or "").strip()
+        item_id = str(b.get("item_id") or "").strip()
+        oz = _bar_num(b.get("pour_oz"), "A pour is a number of ounces.")
+        if (provider or item_id) and not _bar_on_menu(rid, provider, item_id):
+            raise ValueError("That drink isn't on this restaurant's POS menu.")
+        res = _bhand.save(rid, b.get("name"), b.get("category"), b.get("size"), b.get("price"),
+                          source=b.get("source"), key=key or None, user_id=acting)
+        row = res["row"]
+        res["matched"] = None
+        if provider and item_id:
+            res["matched"] = _bmar.set_drink_map(rid, provider, item_id, row["product_key"], pour_oz=oz,
+                                                 user_id=acting)
+        detail = (f"{'added' if res['added'] else 'changed'} {row['product']} at ${row['price']:,.2f}"
+                  + (f" ({row['source']})" if row.get("source") else "")
+                  + (f"; {provider} {item_id} pours it" if res["matched"] else ""))
+        return res, detail
+    return _bar_write(current_user, "the bottles bought elsewhere", "bar_hand_product_changed", run)
+
+
+@mobile_bp.route("/food-cost/bar/hand-product/<hid>", methods=["DELETE"])
+@mobile_login_required
+def mobile_bar_hand_product_delete(current_user, hid):
+    """Take a bottle bought elsewhere off (404 when it isn't this
+    restaurant's); every drink that poured it goes back to Drinks to match.
+    → {ok, product_key, name, cleared}."""
+    import bar.hand as _bhand
+
+    def run(rid, acting):
+        if not re.fullmatch(r"[0-9a-f]{12}", str(hid or "")):
+            raise LookupError("That bottle isn't one of this restaurant's.")
+        res = _bhand.remove(rid, _bhand.PREFIX + hid)
+        return res, f"removed {res['name']}" + (f"; {res['cleared']} drink(s) back to match" if res["cleared"] else "")
+    return _bar_write(current_user, "the bottles bought elsewhere", "bar_hand_product_changed", run)
+
+
+def _bar_on_menu(rid, provider, item_id) -> bool:
+    """Whether a POS drink is this restaurant's: on its price list — or a
+    button the POS has sold here, whether or not its price list has been
+    read since (owner, 10/27/26: a new button waited up to a week to be
+    matchable)."""
+    from bar.common import get_conn as _bar_gc
+    if not provider or not item_id or len(provider) > 40 or len(item_id) > 100:
+        return False
+    conn = _bar_gc()
+    try:
+        if conn.execute("SELECT 1 FROM pos_menu_prices WHERE restaurant_id=? AND provider=? AND item_id=? LIMIT 1",
+                        (int(rid), provider, item_id)).fetchone():
+            return True
+        return bool(conn.execute("SELECT 1 FROM pos_ticket_lines WHERE restaurant_id=? AND provider=? "
+                                 "AND item_id=? AND kind='sale' LIMIT 1", (int(rid), provider, item_id)).fetchone())
+    finally:
+        conn.close()
 
 
 def food_target_labelled(payload, rid):
