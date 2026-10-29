@@ -322,6 +322,9 @@ def draft_figures(restaurant_id, rows, restaurant=None, constraints=None, db_pat
     open_times = (getattr(c, "open_times", None) or {}) if c is not None else {}
     close_times = (getattr(c, "close_times", None) or {}) if c is not None else {}
     families = (getattr(c, "role_families", None) or None) if c is not None else None
+    # The week's job codes: a Host AM on at dinner is the dinner's Host PM,
+    # as the usual crew beside it is counted (labor.historical_patterns).
+    codes = {(r.get("role") or "").strip() for r in rows}
     out = {}
     for d in dates:
         try:
@@ -332,9 +335,9 @@ def draft_figures(restaurant_id, rows, restaurant=None, constraints=None, db_pat
         open_m = sq._slot_minutes(open_times.get(day) or "")
         close_m = sq._slot_minutes(close_times.get(day) or "")
         for part in PARTS:
-            groups = sq.concurrent_groups(mine, part, open_m, close_m, families)["role"]
+            groups = sq.concurrent_groups(mine, part, open_m, close_m, families, codes=codes)["role"]
             for role, figs in groups.items():
-                people = sq.present_people(mine, part, role)
+                people = sq.present_people(mine, part, role, codes=codes)
                 if not (figs.get("peak") or people):
                     continue
                 key = (role, day, part)

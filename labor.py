@@ -3584,7 +3584,8 @@ def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict =
     usual distinct crew is counted from.
 
     {"concurrent": {(weekday, daypart): {job code: {"held", "peak", "slots":
-    {minute: people}}}}, "concurrent_family": the same per role family,
+    {minute: people}, "most", "most_people"}}}}, "concurrent_family": the
+    same per role family,
     "concurrent_trends": [{day, part, role, now, was, since, direction}]}.
 
     Per weekday, its latest TYPICAL_WEEKS dates (a date the role was missing
@@ -3594,7 +3595,9 @@ def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict =
     daypart, `slots` the count at each half hour. Each figure is the lower
     recency-weighted median across the dates — more than half the
     (recency-weighted) nights run at least that — so a floor set from
-    `held` is one the restaurant's own usual night keeps. A held level that
+    `held` is one the restaurant's own usual night keeps. `most` and
+    `most_people` are the record over the same dates: the most on at once,
+    and the most different people on the floor for the meal. A held level that
     moved and stayed moved (the distinct crew's TREND_* rules) takes the
     recent level: the lower median of the last TREND_SIDE dates."""
     from shift_quality import concurrent_groups, floor_slots, _slot_minutes as _sm
@@ -3610,6 +3613,9 @@ def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict =
         except (TypeError, ValueError):
             continue
     conc, fam_out, trends = {}, {}, []
+    # Every job code in the rows: a Host AM on at dinner is counted as the
+    # dinner's Host PM (concurrent_groups), as the distinct crew counts it.
+    codes = {(r.get("role") or "").strip() for r in rows or []}
     for day, dlist in by_day.items():
         dates = sorted(dlist)[-TYPICAL_WEEKS:]
         weight = {d: i + 1 for i, d in enumerate(dates)}
@@ -3617,7 +3623,7 @@ def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict =
         close_m = _sm((close_times or {}).get(day) or "")
         for part in ("morning", "night"):
             has_window = bool(floor_slots(part, open_m, close_m))
-            per = {d: concurrent_groups(by_date[d], part, open_m, close_m, families) for d in dates}
+            per = {d: concurrent_groups(by_date[d], part, open_m, close_m, families, codes=codes) for d in dates}
             for kind, sink in (("role", conc), ("family", fam_out)):
                 names = {}
                 for d in dates:
@@ -3631,6 +3637,7 @@ def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict =
                     # serves none of the core window has no held figure.
                     held_by = {d: int((figs[d] or {}).get("held") or 0) for d in dates} if has_window else {}
                     peak_by = {d: int((figs[d] or {}).get("peak") or 0) for d in dates}
+                    people_by = {d: int((figs[d] or {}).get("people") or 0) for d in dates}
                     minutes = sorted({m for f in figs.values() if f for m in f["slots"]})
                     slots = {m: _wmedian([((figs[d] or {}).get("slots", {}).get(m, 0), weight[d]) for d in dates])
                              for m in minutes}
@@ -3649,7 +3656,13 @@ def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict =
                             held = t["now"]
                             trends.append(dict(t, day=day, part=part, role=name))
                     if peak or held:
-                        slot_out[name] = {"held": held, "peak": peak, "slots": {m: n for m, n in slots.items() if n}}
+                        # The record over the same dates — the most this meal
+                        # has run of the role on at once and on the floor: a
+                        # measured labor standard is held to it
+                        # (schedule_requirements, raised by the date's demand).
+                        slot_out[name] = {"held": held, "peak": peak, "slots": {m: n for m, n in slots.items() if n},
+                                          "most": max(peak_by.values()) if peak_by else 0,
+                                          "most_people": max(people_by.values()) if people_by else 0}
                 if slot_out:
                     sink[(day, part)] = slot_out
     return {"concurrent": conc, "concurrent_family": fam_out,
@@ -3744,6 +3757,12 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
     pub_rows = [r for r in published_rows or []
                 if (r.get("employee") or "").strip() and not _is_training((r.get("role") or "").strip())
                 and (_key(r.get("employee")) in sal or _key(r.get("employee")) not in punched)]
+    # A shift counts in each half of the day as its family's code for that
+    # half (schedule_roles.code_for_daypart): a Host AM punch on at dinner is
+    # the dinner's Host PM, so no AM job is ever its usual crew at dinner —
+    # the draft is counted the same way (ShiftContext.job_code).
+    from schedule_roles import code_for_daypart as _code_for, fold_table as _fold_table
+    _codes = _fold_table({(r.get("role") or "").strip() for r in list(punch_rows) + pub_rows}, families)
 
     def _count(rows):
         by_role_date = _dd(lambda: _dd(lambda: _dd(lambda: _dd(set))))
@@ -3777,7 +3796,7 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                 # requirement set too low here and its draft's dinner read short
                 # there — the requirement and the measurement must agree.
                 for part in _present_dayparts(s):
-                    by_role_date[day][part][role][date_].add(name)
+                    by_role_date[day][part][_code_for(role, part, table=_codes)][date_].add(name)
                 # The day's close read against its open — the one close
                 # rule (schedule_time.close_on_timeline): a 5:30am close is
                 # the next morning only where the day opens after it.
@@ -3786,7 +3805,8 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                 if window:
                     late_dates.setdefault(day, {})[date_] = window
                     if late_minutes(s, window) > 0:
-                        late_by[day][role][date_].add((name, s.get("shift_start"), s.get("shift_end")))
+                        late_by[day][_code_for(role, "night", table=_codes)][date_].add(
+                            (name, s.get("shift_start"), s.get("shift_end")))
         return by_role_date, dates_by_day, late_by, late_dates
 
     trends = []

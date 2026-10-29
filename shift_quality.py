@@ -54,8 +54,8 @@ from types import SimpleNamespace
 # codes, a name's key) is schedule_roles' — layer S0; re-exported here.
 from schedule_roles import (  # noqa: F401
     _DAYPART_WORDS, _MORNING_WORDS, _NIGHT_WORDS, _ROLE_SPLIT, _TRAINING_ROLE, _family_words, _role_word_kept,
-    _role_words_cached, is_training_role, is_training_row, name_key, role_daypart, role_family, role_tokens,
-    role_words)
+    _role_words_cached, code_for_daypart, fold_table, is_training_role, is_training_row, name_key, role_daypart,
+    role_family, role_tokens, role_words)
 
 # The scale every dimension reports on. Percentages, because "Coverage 100%"
 # is a sentence an owner can act on and "Coverage 1.0" is not.
@@ -366,6 +366,10 @@ class ShiftContext:
     role_families: dict = field(default_factory=dict)
     held_roles: dict = field(default_factory=dict)
     roster_roles: dict = field(default_factory=dict)
+    # Every job code the restaurant uses (the week's rows, its usual crew,
+    # the roster's roles): a row's code is read as its family's code for
+    # THIS shift's half of the day (job_code, schedule_roles.code_for_daypart).
+    job_codes: tuple = ()
     # The restaurant's own role weights ({family: weight}) over
     # role_criticality's defaults; {} reads the defaults.
     role_criticality: dict = field(default_factory=dict)
@@ -434,6 +438,17 @@ class ShiftContext:
         restaurant's own map, else role_family's word rule."""
         return role_family(role, self.role_families)
 
+    def job_code(self, role) -> str:
+        """`role` as counted on this shift: a code naming the other half of
+        the day is its family's code for this one ("Host AM" on at dinner is
+        the dinner's "Host PM") — the usual crew is counted the same way
+        (labor.staffing_baseline), so a requirement and the draft's count
+        never disagree on a label."""
+        table = self.__dict__.get("_code_fold")
+        if table is None:
+            table = self.__dict__["_code_fold"] = fold_table(self.job_codes, self.role_families)
+        return code_for_daypart(role, self.daypart, table=table)
+
     def manages(self, name) -> bool:
         """Whether `name` is a manager, or an acting manager on this date —
         Constraints.manages, read from the signals the engine passes."""
@@ -489,6 +504,7 @@ class ShiftContext:
             key = n.lower()
             if key in claimed:
                 continue
+            role = self.job_code(role)
             claimed[key] = role
             out.setdefault(role, []).append(n)
         return out
@@ -2959,38 +2975,56 @@ def _concurrency(spans, daypart, open_minutes=None, close_minutes=None) -> dict:
 
 
 def concurrent_groups(rows: list, daypart: str, open_minutes=None, close_minutes=None,
-                      families: dict = None, skip=None) -> dict:
+                      families: dict = None, skip=None, codes=None) -> dict:
     """concurrent_on for every role in one date's `rows` at once:
     {"role": {job code: figures}, "family": {role family: figures}} — the
-    job code as the rows spell it (its first spelling). Training codes are
-    nobody's crew and are left out."""
+    job code as the rows spell it (its first spelling), read as its
+    family's code for `daypart` (code_for_daypart over `codes`, the
+    restaurant's job codes — the rows' own when None): a Host AM on at
+    dinner is the dinner's Host PM. Training codes are nobody's crew and
+    are left out."""
     by_code, by_fam, spelled = {}, {}, {}
+    present = {}                    # code or family -> people on the floor for the daypart
+    table = fold_table(codes if codes is not None else {r.get("role") for r in rows or []}, families)
     for r in rows or []:
         person = " ".join(str(r.get("employee") or "").split()).casefold()
         role = " ".join(str(r.get("role") or "").split())
         if not person or not role or is_training_role(role) or (skip is not None and skip(r)):
             continue
+        role = code_for_daypart(role, daypart, table=table)
         sp = _row_span(r)
         if not sp:
             continue
         key = role.casefold()
+        fam = role_family(role, families)
         spelled.setdefault(key, role)
         by_code.setdefault(key, []).append((person, sp[0], sp[1]))
-        by_fam.setdefault(role_family(role, families), []).append((person, sp[0], sp[1]))
-    return {"role": {spelled[k]: _concurrency(v, daypart, open_minutes, close_minutes) for k, v in by_code.items()},
-            "family": {f: _concurrency(v, daypart, open_minutes, close_minutes) for f, v in by_fam.items()}}
+        by_fam.setdefault(fam, []).append((person, sp[0], sp[1]))
+        if daypart in present_dayparts(r):
+            present.setdefault(("role", key), set()).add(person)
+            present.setdefault(("family", fam), set()).add(person)
+    # `people`: the different people on the floor for the daypart (the usual
+    # crew's own unit) beside the on-at-once figures.
+    return {"role": {spelled[k]: dict(_concurrency(v, daypart, open_minutes, close_minutes),
+                                      people=len(present.get(("role", k)) or ())) for k, v in by_code.items()},
+            "family": {f: dict(_concurrency(v, daypart, open_minutes, close_minutes),
+                               people=len(present.get(("family", f)) or ())) for f, v in by_fam.items()}}
 
 
 def present_people(rows: list, daypart: str, role, families: dict = None, by_family: bool = False,
-                   skip=None) -> int:
+                   skip=None, codes=None) -> int:
     """How many different people of `role` are on the floor for `daypart`
     (present_dayparts — the requirement's own count, labor.historical_
-    patterns'): the second number beside concurrent_on's, never mixed with it."""
+    patterns'): the second number beside concurrent_on's, never mixed with it.
+    A job code is read as its family's code for `daypart` (code_for_daypart
+    over `codes`, the rows' own when None), as the usual crew counts it."""
     want = _counted_key(role, families, by_family)
+    table = fold_table(codes if codes is not None else {r.get("role") for r in rows or []}, families)
     names = set()
     for r in rows or []:
         person = " ".join(str(r.get("employee") or "").split()).casefold()
-        if not person or (skip is not None and skip(r)) or _counted_key(r.get("role"), families, by_family) != want:
+        if not person or (skip is not None and skip(r)) or _counted_key(
+                code_for_daypart(r.get("role"), daypart, table=table), families, by_family) != want:
             continue
         if daypart in present_dayparts(r):
             names.add(person)
@@ -5277,6 +5311,29 @@ def present_dayparts(row: dict) -> list:
     return _stime.present_dayparts(row)
 
 
+def label_by_daypart(rows: list, codes=None, families: dict = None, keep=None) -> int:
+    """Each row's job code made its family's code for the half of the day
+    it is mainly on (present_dayparts' first; code_for_daypart over `codes`,
+    the rows' own when None), in place — the generator's last word on a
+    label, so an evening host shift goes out as a Host PM whichever path
+    drafted it. `keep(row)` True leaves a row as it is (the owner's locked
+    shifts, a day the draft keeps). Returns how many rows changed."""
+    table = fold_table(codes if codes is not None else {r.get("role") for r in rows or []}, families)
+    if not table:
+        return 0
+    changed = 0
+    for r in rows or []:
+        role = (r.get("role") or "").strip()
+        if not role or (keep is not None and keep(r)):
+            continue
+        parts = present_dayparts(r)
+        code = code_for_daypart(role, parts[0] if parts else None, table=table)
+        if code != role:
+            r["role"] = code
+            changed += 1
+    return changed
+
+
 def touched_dayparts(row: dict) -> list:
     """The dayparts a row reaches into at all (schedule_time.touched_dayparts)
     — each whose core service window it overlaps by any minute, the start's
@@ -5879,6 +5936,14 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
     # wherever the draft carries them.
     req_by_date = signals.get("requirements_by_date") or {}
     req_reasons = signals.get("requirement_reasons") or {}
+    # Every job code in use here, for each shift's job_code: the week's
+    # rows, the usual crew and the requirements, the roster.
+    codes = {(r.get("role") or "").strip() for r in rows or []}
+    for crew in list(typical_all.values()) + list(req_by_date.values()):
+        if isinstance(crew, dict):
+            codes.update(str(k) for k in crew)
+    codes.update(str(v) for v in (signals.get("roster_roles") or {}).values())
+    job_codes = tuple(sorted(c for c in codes if c))
     if frame is not None:
         frame.update(week_assignments=week_assignments, flagged=signals.get("flagged") or set(),
                      breaches_at=breaches_at, week_start=week_start, ratings=ratings)
@@ -5978,6 +6043,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             managers=managers,
             acting_managers=acting,
             role_families=families,
+            job_codes=job_codes,
             hard_breaches=list(breaches_at.get((date, part)) or []) + list(breaches_at.get((date, "*")) or []),
             unwritten=not shift_rows,
             strength_crews=crews,

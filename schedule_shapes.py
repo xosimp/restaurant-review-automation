@@ -631,11 +631,16 @@ def _holds_family(c, name, role, d, roster_roles) -> bool:
     return False
 
 
-def _nobody_reason(c, role, d, roster_roles) -> str:
+def _nobody_reason(c, role, d, roster_roles, rows=None, part=None) -> str:
     """Why nobody may work `role` on `d`: the reasons of the people who hold
-    it, counted."""
+    it, counted. With the week's `rows` and the shift's `part`, a holder who
+    could legally take a shift of it over the core window that day
+    (Constraints.can_add) is named instead — the role was left empty, not
+    unfillable: EJ's Saturday 11/7/26 read "nobody who works it can take a
+    shift" while its barback had 11.5 hours that week and a free night."""
     why = Counter()
     holders = 0
+    free = []
     for name in sorted(c.roster_names or []):
         if not _holds_family(c, name, role, d, roster_roles):
             continue
@@ -645,8 +650,22 @@ def _nobody_reason(c, role, d, roster_roles) -> str:
             ok, w = c.fillable(name, d)
         if not ok:
             why[str(w or "unavailable")] += 1
+        else:
+            free.append(name)
     if not holders:
         return f"nobody on the roster works {role}"
+    if free and rows is not None and part in ("morning", "night"):
+        day = sq._day_name(d)
+        win = sq.floor_window(part, _rules.parse_minutes((getattr(c, "open_times", None) or {}).get(day) or ""),
+                              _rules.parse_minutes((getattr(c, "close_times", None) or {}).get(day) or ""))
+        if win:
+            probe = {"date": d, "day": day, "role": role, "shift_start": _fmt(win[0] % 1440),
+                     "shift_end": _fmt(win[1] % 1440), "notes": ""}
+            probe["scheduled_hours"] = _stime.row_hours_text(probe, getattr(c, "tz", None))
+            could = [n for n in free if c.can_add(dict(probe, employee=n), rows)[0]]
+            if could:
+                return (f"{_names_said(could)} could work it — the draft left it empty "
+                        f"(the labor budget or a costlier gap came first)")
     if not why:
         return "nobody who works it can take a shift that fits its hours"
     bits = [f"{n} {w}" for w, n in sorted(why.items(), key=lambda kv: (-kv[1], kv[0]))[:3]]
@@ -674,14 +693,22 @@ def uncovered_roles(rows, requirements, c, roster_roles=None) -> list:
             if n > 0 and role and _rules.manager_role_kind(role) not in ("owner", "manager"):
                 k = (d, fam(role))
                 if k not in need or n > need[k][1]:
-                    need[k] = (role, n)
+                    need[k] = (role, n, row.get("daypart"))
     out = []
-    for (d, f), (role, n) in sorted(need.items()):
+    for (d, f), (role, n, part) in sorted(need.items()):
         if (d, f) in on:
             continue
         out.append({"date": d, "day": sq._day_name(d), "role": role, "needed": n,
-                    "why": _nobody_reason(c, role, d, roster_roles)})
+                    "why": _nobody_reason(c, role, d, roster_roles, rows=list(rows or []), part=part)})
     return out
+
+
+def _names_said(names) -> str:
+    """'Ana', 'Ana and Bo', 'Ana, Bo and 2 more'."""
+    names = list(names)
+    if len(names) <= 2:
+        return " and ".join(names)
+    return f"{names[0]}, {names[1]} and {len(names) - 2} more"
 
 
 def uncovered_line(items) -> str:
@@ -1034,15 +1061,24 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
         name = (r.get("employee") or "").strip()
         if sp and name and c is not None:
             last_slots[(c.key(name), sq._day_name(r.get("date") or ""), family(r.get("role")))].append(sp[0])
+    # Every job code in use: a shape is drafted under its family's code for
+    # the half of the day it is mainly on (sq.code_for_daypart) — an evening
+    # host shift is a Host PM, never a Host AM because Host AM priced lower
+    # (EJ's week of 11/4/26: three Host AM shifts at dinner and no Host PM).
+    fold = sq.fold_table({role for roles in roles_by_date.values() for role in roles}
+                         | {str(v) for v in (roster_roles or {}).values()}
+                         | {(r.get("role") or "").strip() for r in hist_rows}, getattr(c, "role_families", None))
     m = _cp.CpModel()
     obj = []
     pats = {}
+    pat_roles = {}                       # (date, role) -> [the code each pattern is drafted under]
     n = {}
     z = {}
     z_by_pd = defaultdict(list)          # (person i, date) -> [(var, s, e, hours, role, k)]
     on_at = defaultdict(list)            # (family, abs t) -> [(n var, role)]
     late_by = defaultdict(list)          # (date, family) -> [(person, var, end)]
     dollars = []
+    obj_dollars = []                     # (cents, var): the wage terms, read back for the budget's verdict
     day_cache = {}
     short_meta = []
     at_meta = {}
@@ -1060,6 +1096,8 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                 continue
             txt = [(_fmt(s), _fmt(e)) for s, e in ps]
             parts_of = [set(sq.touched_dayparts({"shift_start": a, "shift_end": b})) - {"unknown"} for a, b in txt]
+            codes_k = [sq.code_for_daypart(role, (sq.present_dayparts({"date": d, "shift_start": a, "shift_end": b})
+                                                  or [None])[0], table=fold) for a, b in txt]
             hist_here = hist.get((fam, day)) or Counter()
             htot = float(sum(hist_here.values()) or 1)
             kvars = defaultdict(list)
@@ -1071,12 +1109,12 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                     continue
                 if not p.doubles and p.busy.get(d):
                     continue
-                w_ = wage(p, role)
                 for k, (s, e) in enumerate(ps):
                     if not parts_of[k] <= set(ok_parts):
                         continue
-                    if not _fits(c, p, d, role, s, e, ok_parts, txt[k]):
+                    if not _fits(c, p, d, codes_k[k], s, e, ok_parts, txt[k]):
                         continue
+                    w_ = wage(p, codes_k[k])
                     v = m.new_bool_var(f"z{p.i}_{d}_{role}_{k}")
                     z[(p.i, d, role, k)] = v
                     kvars[k].append(v)
@@ -1085,6 +1123,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                     cents = _cents(hours * w_)
                     if cents:
                         dollars.append(cents * v)
+                        obj_dollars.append((cents, v))
                         obj.append((cents, v))
                     shape_c = _cents(ctx.length_usd(role, s, e))
                     shape_c += _cents(ctx.usual_slot_usd(p.name, d, sq.present_dayparts(
@@ -1107,6 +1146,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                                        "nobody may work it"})
                 continue
             pats[(d, role)] = ps
+            pat_roles[(d, role)] = codes_k
             for k in sorted(kvars):
                 s, e = ps[k]
                 v = m.new_int_var(0, len(kvars[k]), f"n{d}_{role}_{k}")
@@ -1395,6 +1435,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                         m.add(lhs <= 1 + br)
                         obj.append((W_POLICY_REST, br))
     # the budget, priced: past it, each dollar costs BUDGET_OVER_FACTOR more
+    over = None
     if budget_dollars and dollars:
         fixed_cents = 0
         for r in context_rows or []:
@@ -1438,7 +1479,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     chosen = []
     for (pi, d, role, k), v in z.items():
         if s.value(v):
-            chosen.append((d, role.lower(), pats[(d, role)][k], people[pi].name, role))
+            chosen.append((d, role.lower(), pats[(d, role)][k], people[pi].name, pat_roles[(d, role)][k]))
     chosen.sort()
     for d, _rl, (a, b), who, role in chosen:
         r = {"date": d, "day": sq._day_name(d), "employee": "", "role": role, "shift_start": _fmt(a),
@@ -1456,12 +1497,19 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
             cell[1] += k * _obj.slot_value(ctx, d, t, role)
             cell[2] = max(cell[2], k)
     nobody = {(e["date"], e["role"]) for e in short_meta}
+    # Short where the budget bound (spent to within 2% of it, or past) is the
+    # budget's cut of the lowest-value half hours, never "more than the
+    # people can cover" — EJ's Saturday 11/7/26 barback was said to be
+    # unfillable while its barback had a free night.
+    budget_bound = bool(over is not None and (s.value(over) > 0 or sum(
+        cents * s.value(v) for cents, v in obj_dollars) >= 0.98 * _cents(float(budget_dollars))))
+    why_short = ("left short to hold the labor budget — the lowest-value half hours are cut first"
+                 if budget_bound else "more than the people who can work it can cover inside their hours and the rules")
     for (d, role), (mins, usd, most, _x) in sorted(agg.items()):
         if (d, role) in nobody:
             continue
         short.append({"date": d, "role": role, "people": most, "minutes": mins, "kind": "short",
-                      "usd": round(usd, 2), "why": "more than the people who can work it can cover inside "
-                                                    "their hours and the rules"})
+                      "usd": round(usd, 2), "why": why_short, "budget": budget_bound})
     out["rows"] = rows
     out["short"] = short
     out["stats"] = {"status": "optimal" if st == _cp.OPTIMAL else "time_limit", "patterns": len(n),

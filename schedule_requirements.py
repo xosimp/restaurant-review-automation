@@ -172,6 +172,46 @@ def _scaled(n, factor) -> int:
     return max(1, int(n * float(factor) + 0.5))
 
 
+def _hold_to_record(driven: dict, concurrent: dict, ratios: dict, typical: dict) -> None:
+    """A MEASURED labor standard's ask (staffing_model.needs), in place, held
+    to the larger of what the date's demand makes of the usual crew and the
+    meal's own record — the most this restaurant has run of the role on the
+    floor (labor.concurrent_patterns' `most_people`) and on at once (`most`)
+    over the dates the usual crew is read from. The record already holds the
+    meal's busiest nights, its event nights among them, so the demand never
+    lifts it twice. A standard measured over every lunch of the week asked
+    EJ's Bears Sunday brunch (11/8/26) for 13 cooks, 5 bussers and 5 hosts
+    from a meal that has never run more than 6, 1 and 3 (its three Bears
+    Sundays included): no roster could staff it, and its cost came out of
+    every other shift under the labor budget. The owner's own standard
+    ("yours") is their word and is never held."""
+    low = {str(k).strip().lower(): v for k, v in (concurrent or {}).items() if isinstance(v, dict)}
+    for r, dn in (driven or {}).items():
+        if dn.get("source") == "yours":
+            continue
+        rec = low.get(r.strip().lower()) or {}
+        try:
+            lift = float(ratios.get(r, 1.0) or 1.0)
+        except (TypeError, ValueError):
+            lift = 1.0
+        usual = int(typical.get(r, 0) or 0)
+        most_people, most_on = int(rec.get("most_people") or 0), int(rec.get("most") or 0)
+        held = False
+        if most_people:
+            cap = max(usual, _scaled(usual, lift), most_people)
+            if int(dn.get("distinct") or 0) > cap:
+                dn["distinct"], held = cap, True
+        if most_on and dn.get("half"):
+            cap_on = max(_scaled(int(rec.get("peak") or 0), lift), most_on)
+            if max(dn["half"].values()) > cap_on:
+                dn["half"] = {t: min(int(n), cap_on) for t, n in dn["half"].items()}
+                dn["peak"] = max(dn["half"].values())
+                held = True
+        if held:
+            dn["reason"] = ((dn.get("reason") or "") + f"; held to the most this meal has run here "
+                            f"({most_people or most_on}) or its usual crew with the date's demand")
+
+
 def _day_name(date_str: str, fallback: str = "") -> str:
     try:
         return datetime.strptime((date_str or "")[:10], "%Y-%m-%d").strftime("%A")
@@ -469,6 +509,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     else:
                         conc_base[k_c] = v_c
                 driven = _sm.needs(staffing_model, day, part, ratios_d, typical_raw, conc_base, window=(lo_d, hi_d))
+                _hold_to_record(driven, conc_base, ratios_d, typical_raw)
                 for r, dn in driven.items():
                     _log(r, "driver", typical_here.get(r, 0), int(dn["distinct"]), dn.get("reason") or "",
                          "yours" if dn.get("source") == "yours" else "measured")

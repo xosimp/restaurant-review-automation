@@ -1092,6 +1092,15 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
                 entry["forecast"]["low"], entry["forecast"]["high"] = q.get(0.1), q.get(0.9)
         parts = {}
         weather_day = []
+        # The meal(s) the occasion falls on: the one carrying the most of it,
+        # or at least the day's own lift. A split measured from the label's
+        # own nights puts the other meal at its own figure, not 1.0 — EJ's
+        # Bears Sunday 11/8/26 had lunch at -14% and dinner at +89%, and the
+        # day's role lifts (+61% servers, +79% bussers) landed on lunch too.
+        falls_on = None
+        if occ_parts:
+            top = max(occ_parts.values())
+            falls_on = {p for p, v in occ_parts.items() if v >= top - 0.005 or v >= occasion - 0.005}
         for part in ("morning", "night"):
             occ = (occ_parts or {}).get(part, occasion)
             w = ctx.weather(d, part, wet.get(d), rain)
@@ -1104,7 +1113,7 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
             roles = {}
             # A role's own lift on the meal the occasion falls on (a whole-day
             # occasion: both) — never on the other meal of a dinner game.
-            if not occ_parts or abs(occ - 1.0) >= 0.005:
+            if not occ_parts or (part in falls_on and abs(occ - 1.0) >= 0.005):
                 for role, lift in role_lifts.items():
                     roles[role] = round(max(0.0, trend_f * float(lift) * wf), 3)
             for role, pf in ctx.patio(d, part).items():

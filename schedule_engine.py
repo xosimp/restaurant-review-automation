@@ -6720,7 +6720,7 @@ def _fill_pick(scorer, rows, legal):
 
 def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, restaurant_id: int,
                         close_times: dict, role_buffers: dict, floors: dict = None,
-                        constraints=None, scorer_for=None, only_dates=None) -> tuple:
+                        constraints=None, scorer_for=None, only_dates=None, report: dict = None) -> tuple:
     """Deterministic backstop for the owner's per-role, per-daypart staffing
     floors (schedule_rules.role_floors): "at least 1 line cook on lunch and
     2 at dinner, 3 on Saturday night". A prompt-only floor plateaus below
@@ -6761,6 +6761,14 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     costs the week the least Shift Quality is taken when `scorer_for` gives
     a scorer (shift_quality.LocalScorer, _pass_scorer).
 
+    When nobody more can be added — everyone who works the role is already
+    on that day — a shift of the role already on runs on over the short
+    half hours, or starts earlier (_floor_stretch), under the same legality
+    questions. EJ's Saturday 11/7/26 lunch: six cooks free, all six on, one
+    ending at 1:00pm against a floor of 6 to 2:30pm — the hard breach stood
+    although running that cook on 1.5h broke nothing. Each stretch is
+    listed in `report["stretched"]` when a `report` dict is passed.
+
     Returns (preview_rows, rows_added, added_dates).
     """
     floors = floors if floors is not None else {}
@@ -6800,7 +6808,28 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
                 got = _slot_fill(preview_rows, date, day_name, role_name, part, short, c, close_times, role_buffers,
                                  book, tried, scorer, f"added — {role_name} floor")
                 if got is None:
-                    break
+                    # Nobody more can be added: a shift of the role already
+                    # on runs on (or starts earlier) over what is short.
+                    st = _floor_stretch(preview_rows, date, day_name, role_name, short, c, close_times,
+                                        role_buffers, book, skip, only_dates)
+                    if st is None:
+                        break
+                    i, new_row, extra = st
+                    old_row = preview_rows[i]
+                    preview_rows[i] = new_row
+                    counted = [r for r in preview_rows if r.get("date") == date and id(r) not in skip]
+                    if sum(_floor_short_slots(fc, day_name, counted, role_name, need, part).values()) \
+                            >= sum(short.values()):
+                        preview_rows[i] = old_row
+                        break
+                    emp = (new_row.get("employee") or "").strip()
+                    book["hours"][emp] = book["hours"].get(emp, 0.0) + extra
+                    if report is not None:
+                        report.setdefault("stretched", []).append(
+                            {"date": date, "employee": emp, "role": new_row.get("role"),
+                             "from": f"{old_row.get('shift_start')}-{old_row.get('shift_end')}",
+                             "to": f"{new_row.get('shift_start')}-{new_row.get('shift_end')}"})
+                    continue
                 employee, new_row = got
                 preview_rows.append(new_row)
                 after = _floor_short_slots(fc, day_name, counted + [new_row], role_name, need, part)
@@ -6816,6 +6845,62 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
                 rows_added += 1
                 added_dates[date] = added_dates.get(date, 0) + 1
     return preview_rows, rows_added, added_dates
+
+
+def _floor_stretch(rows, date, day_name, role_name, short, c, close_times, role_buffers, book, skip,
+                   only_dates=None):
+    """(index, row, hours added) — a shift of `role_name`'s family already on
+    `date` run on past its end, or started before its start, over the
+    floor's `short` half hours ({minute: people short}), when nobody more
+    can be added; or None. The stretch asks what an added shift asks
+    (_legal_fills' rounds: Constraints.can_add — rest, the shift length, a
+    minor's limits, the hours maximum — and nothing new or worse on the day
+    or in the person's week, change_regressions; inside the overtime line
+    first, past it only when nobody can stretch inside theirs). The
+    smallest stretch, then the fewest week hours, goes first. A pinned or
+    locked row, a training shift and a row that will not stand are never
+    re-timed."""
+    import schedule_rows as _srows_st
+    import shift_quality as _sqf
+    fam = c.family(role_name)
+    minutes = sorted(short)
+    lo, hi = minutes[0], minutes[-1] + _SLOT_MIN
+    cands = []
+    for i, r in enumerate(rows):
+        emp = (r.get("employee") or "").strip()
+        if (r.get("date") != date or not emp or id(r) in skip or not _changeable(r, only_dates)
+                or _srows_st.is_locked(r) or c.family(r.get("role")) != fam or c.training_row(r)):
+            continue
+        sp = _sqf._row_span(r)
+        if not sp:
+            continue
+        s, e = sp
+        if lo <= e < hi:
+            new, extra = dict(r, shift_end=_rules._fmt_minutes(hi % 1440)), hi - e
+        elif lo < s < hi:
+            new, extra = dict(r, shift_start=_rules._fmt_minutes(lo % 1440)), s - lo
+        else:
+            continue
+        _enforce_close_time(new, day_name, close_times, role_buffers, constraints=c)
+        nsp = _sqf._row_span(new)
+        if new.get("needs_review") or not nsp or (nsp[1] - nsp[0]) <= (e - s):
+            continue
+        new["scheduled_hours"] = _stime.row_hours_text(new, _rules.tz_of(c))
+        cands.append((extra, book["hours"].get(emp, 0.0), i, emp, new))
+    cands.sort(key=lambda t: (t[0], t[1], t[3]))
+    for mode in _rules.FILL_ROUNDS:
+        strict = mode == _rules.FILL_ROUNDS[0]
+        for extra, _h, i, emp, new in cands:
+            others = [x for j, x in enumerate(rows) if j != i]
+            if not c.can_add(new, others, overtime=mode[0], policy=mode[1])[0]:
+                continue
+            if change_regressions(rows, others + [new], c, date, [emp],
+                                  upto=(_rules.TIER_OVERTIME if strict else
+                                        _rules.TIER_POLICY if mode[1] else _rules.TIER_COVERAGE),
+                                  hard_only=not strict):
+                continue
+            return i, new, round(extra / 60.0, 2)
+    return None
 
 
 def _floor_short_slots(c, day_name, rows, role, need, part) -> dict:
@@ -10371,10 +10456,11 @@ def _stage_manager(rows, x):
 
 
 def _stage_floors(rows, x):
+    rep = {}
     new, n, dates = _ensure_role_floors(rows, x.week_dates, x.week_days, x.rid, x.close_times, x.role_buffers,
                                         floors=x.c.role_floors, constraints=x.c, scorer_for=x.scorer_for,
-                                        only_dates=x.editable)
-    return {"rows": new, "report": {"added": n, "dates": dates}}
+                                        only_dates=x.editable, report=rep)
+    return {"rows": new, "report": {"added": n, "dates": dates, "stretched": rep.get("stretched") or []}}
 
 
 def _stage_owner_words(rows, x):
