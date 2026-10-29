@@ -101,6 +101,7 @@ _SOURCES = (
     ("fintech_files", "COUNT(*), MAX(id), SUM(CASE WHEN status='purged' THEN 1 ELSE 0 END)"),
     ("bar_product_categories", "COUNT(*), MAX(set_at)"),
     ("bar_counts", "COUNT(*), MAX(entered_at), SUM(value_usd)"),
+    ("bar_count_items", "COUNT(*), MAX(entered_at), SUM(qty)"),
     ("bar_sales_map", "COUNT(*), MAX(updated_at), MAX(confirmed_at)"),
     ("bar_sales_nights", "COUNT(*), MAX(computed_at)"),
     ("bar_stopped_distributors", "COUNT(*), MAX(set_at)"),

@@ -12529,6 +12529,20 @@ def food_cost_bar_drink_map(current_user):
     return _m("mobile_bar_drink_map")(current_user)
 
 
+@client_bp.route("/api/food-cost/bar/count-sheet", methods=["GET"])
+@login_required
+def food_cost_bar_count_sheet(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_count_sheet."""
+    return _m("mobile_bar_count_sheet")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/count-item", methods=["POST"])
+@login_required
+def food_cost_bar_count_item(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_count_item."""
+    return _m("mobile_bar_count_item")(current_user)
+
+
 @client_bp.route("/api/food-cost/bar/counts", methods=["GET"])
 @login_required
 def food_cost_bar_counts(current_user):
