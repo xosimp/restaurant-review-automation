@@ -94,6 +94,20 @@ def init_bar_products(db_path=None):
             set_by INTEGER,
             set_at TEXT NOT NULL,
             PRIMARY KEY (restaurant_id, provider, item_id))""")
+        # A bottle the owner buys outside the distributors' invoices (a
+        # liquor store run), with what one cost them (bar.hand, 10/29/26): a
+        # drink can pour from it and be costed; it is never a purchase.
+        conn.execute("""CREATE TABLE IF NOT EXISTS bar_hand_products (
+            restaurant_id INTEGER NOT NULL,
+            product_key TEXT NOT NULL,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            size_ml REAL NOT NULL,
+            price REAL NOT NULL,
+            source TEXT,
+            set_by INTEGER,
+            set_at TEXT NOT NULL,
+            PRIMARY KEY (restaurant_id, product_key))""")
         conn.commit()
     finally:
         conn.close()

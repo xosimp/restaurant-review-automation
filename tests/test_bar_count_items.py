@@ -136,3 +136,14 @@ def test_a_counts_only_login_counts_without_a_dollar(db, monkeypatch):
     assert cl.get("/api/food-cost/bar/count-sheet").status_code == 403
     assert cl.post("/api/food-cost/bar/count-item", json={"count_date": TODAY.isoformat(),
                                                           "product_key": titos["product_key"], "qty": 1}).status_code == 403
+
+
+def test_a_bottle_bought_elsewhere_is_counted_at_the_owners_price(db):
+    import bar.hand as bh
+    rid = _rid(db)
+    _stock(db, rid)
+    key = bh.save(rid, "Bombay Sapphire", "liquor", "1 L", 32.0, source="Binny's", db_path=db)["row"]["product_key"]
+    _, row = _row(bci.sheet(rid, TODAY.isoformat(), db_path=db, today=TODAY), "bombay")
+    assert row["product_key"] == key and row["unit"] == "bottle" and row["unit_cost"] == 32.0
+    out = bci.save_item(rid, TODAY.isoformat(), key, "1.5", db_path=db, today=TODAY)
+    assert out["value"] == 48.0 and out["category_total"] == 48.0

@@ -128,6 +128,15 @@ def _products(restaurant_id, db_path=None, today=None) -> dict:
         unit, cost = _unit(lines[k], v["category"], packs.get(k))
         out[k] = {"name": v["name"], "category": v["category"], "unit": unit, "unit_cost": cost,
                   "last": lines[k]["last"]}
+    # The owner's bottles bought outside the invoices (bar.hand): always on
+    # the sheet, valued at the price they gave.
+    from bar.hand import hand_products
+    for h in hand_products(restaurant_id, db_path):
+        if h["category"] in COUNT_CATEGORIES:
+            unit = "can" if (h["category"] == "beer" and h["size_label"].endswith("OZ")) else "bottle"
+            out[h["product_key"]] = {"name": h["product"], "category": h["category"], "unit": unit,
+                                     "unit_cost": round(float(h["price"]), 4),
+                                     "last": (today or date.today()).isoformat()}
     return out
 
 

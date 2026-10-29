@@ -246,11 +246,17 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
     [{provider, item_id, item, product_key, product}], mapped, menu_items}."""
     menu = _menu(restaurant_id, db_path)
     mapped = {(m["provider"], str(m["item_id"])): m for m in drink_map(restaurant_id, db_path)}
+    # Bottles bought outside the invoices: costed from the owner's own price
+    # through the same pack and pour (bar.hand, 10/29/26).
+    from bar.hand import hand_products, is_hand, series as hand_series
+    hand = ({r["product_key"]: r for r in hand_products(restaurant_id, db_path)}
+            if any(is_hand(m["product_key"]) for m in mapped.values()) else {})
     rows = []
     bucket_n = None
     for k, m in mapped.items():
         item = menu.get(k)
-        s = _series_for(analysis, m["product_key"])
+        hrow = hand.get(m["product_key"])
+        s = hand_series(hrow) if hrow else _series_for(analysis, m["product_key"])
         if not item or not s:
             continue
         tiers = s["tiers"]
@@ -304,12 +310,16 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
             b = unit_costs(ch["from"], l.get("uom"), l["description"], l["category"], pour=p, ppc=l.get("ppc")) or {}
             before, changed = (b.get("per_each") if mode == "each" else b.get("per_pour")), ch["since"]
         mm = drink_margin(cost_now, item["price"], before)
+        if hrow:
+            bought = f"${hrow['price']:,.2f} a bottle, your price" + (f" at {hrow['source']}" if hrow.get("source") else "")
+            assume = "; ".join(x for x in (assume, bought + " — not on an invoice") if x)
         rows.append(dict(mm, provider=k[0], item_id=k[1], item=item["name"], level=item["level"],
                          level_basis=item.get("level_basis"),
-                         product_key=m["product_key"], product=display_name(l["description"]),
+                         product_key=m["product_key"],
+                         product=hrow["product"] if hrow else display_name(l["description"]),
                          pour_label=label, confidence=now["confidence"],
                          assumes=now["assumes"] + ([assume] if assume else []),
-                         changed_mdy=_mdy(changed) if changed else None))
+                         changed_mdy=_mdy(changed) if changed else None, hand=bool(hrow)))
     rows.sort(key=lambda r: -(r["cost_pct"] or 0))
     # Suggestions: menu items not mapped whose name shares words with a
     # bought liquor, wine or beer product. Never used until confirmed.

@@ -9,6 +9,7 @@ from bar.counts import _trading_days
 from bar.counts import counted as _counted
 from bar.counts import latest_counted
 from bar.feed import FEED_LABEL
+from bar.hand import hand_products as _hand_products
 from bar.insights import _insights
 from bar.judge import owner_stopped
 from bar.ledger import Lines, Sales
@@ -247,6 +248,9 @@ def _build(restaurant_id, db_path=None, today=None) -> dict:
             "bar_settings": {k: cfg[k] for k in ("count_mixers", "liquor_oz", "wine_oz", "draft_oz",
                                                  "draft_yield_pct")},
             "products": products,
+            # Bottles bought outside the invoices, with the owner's prices
+            # (bar.hand): pickable, costed, never purchases.
+            "hand_products": _hand_products(restaurant_id, db_path),
             "to_check": to_check,
             "other_spend": other_spend,
             "categories": [{"key": c, "label": LABELS[c]} for c in ("beer", "liquor", "wine", "na", "supplies", "other")],
