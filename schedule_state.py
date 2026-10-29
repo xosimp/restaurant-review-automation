@@ -93,7 +93,8 @@ STAGES = {
     },
     "repair": {
         "repair": dict, "optimizer": dict, "solver": dict, "overtime_rebalance": dict, "staggered": list,
-        "trimmed": list, "hours_trimmed": float, "role_times": dict, "role_windows": dict, "stations": dict,
+        "trimmed": list, "hours_trimmed": float, "relabelled": int, "role_times": dict, "role_windows": dict,
+        "stations": dict,
         "min_hours": dict, "manager_coverage": dict, "end_overruns": list, "standby_days": list,
         "overtime_forecast": dict, "likely_edits": list, "cap_floor_conflicts": list,
         "section_cap_conflicts": list, "floor_suggestions": list, "budget_conflict": dict,

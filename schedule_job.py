@@ -971,6 +971,7 @@ def _stage_repair(job: GenerationRun, cand: Candidate, ctx: _PassContext, editab
     for _k, _s in (loop.get("seconds") or {}).items():
         cand.timer.add(f"repair.{_k}", _s)
     cand.rows = loop["rows"]
+    _label_by_daypart(cand, ctx)
     if cand.code_redo_on and not se._redo_changed(cand.spec.base.rows, cand.rows, cand.spec.dates):
         # The code's redo changed nothing on the owner's days: the model
         # redoes them after all, nothing saved here.
@@ -984,6 +985,32 @@ def _stage_repair(job: GenerationRun, cand: Candidate, ctx: _PassContext, editab
     log.info(f"repair loop: {loop['cycles']} cycle(s), "
           f"{'converged' if loop['converged'] else 'stopped at its bound'}, {len(loop['fixes'])} fixes, "
           f"{len(loop['refused'])} refused, {len(loop['failures'])} failed")
+
+
+def _label_by_daypart(cand: Candidate, ctx: _PassContext) -> None:
+    """Every drafted shift goes out under its family's job code for the
+    half of the day it is mainly on (shift_quality.label_by_daypart) — the
+    solver's shapes, the model's rows and every fill-in pass alike; the
+    owner's locked shifts and the days a redo keeps stay exactly as they
+    are. Counted in the review's `relabelled`."""
+    import schedule_rows as _srows
+    import shift_quality as _sq
+    sig = cand.pass_sig or {}
+    codes = {(r.get("role") or "").strip() for r in cand.rows}
+    codes.update(str(v) for v in (sig.get("roster_roles") or {}).values())
+    for req in ctx.reqs or []:
+        codes.update(str(e.get("role") or "") for e in (req.get("roles") or []) if isinstance(e, dict))
+    editable = ctx.pass_editable
+    families = getattr(ctx.constraints, "role_families", None) if ctx.constraints is not None else None
+    try:
+        n = _sq.label_by_daypart(cand.rows, codes, families,
+                                 keep=lambda r: _srows.is_locked(r) or (editable is not None
+                                                                      and r.get("date") not in editable))
+    except Exception as _lx:
+        _degraded(f"job codes not matched to the daypart: {_lx!r}", _lx)
+        return
+    if n:
+        cand.result["relabelled"] = n
 
 
 def _price_week(cand: Candidate, ctx: _PassContext, rows) -> None:

@@ -74,6 +74,7 @@ LRU_EXEMPT = {
     "response_validation._context_pool_for": "pure in the text",
     "schedule_roles._family_words": "string normalising",
     "schedule_roles._role_words_cached": "string normalising",
+    "schedule_roles._fold_table": "pure over its arguments (a set of job codes and the role map, both as tuples)",
     "schedule_rules._weekday_name_of": "date arithmetic",
     "schedule_time._parse": "time parsing",
     "schedule_time._base_date": "date arithmetic",

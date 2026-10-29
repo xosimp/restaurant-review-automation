@@ -136,6 +136,71 @@ def role_daypart(role):
     return "morning" if morning else "night"
 
 
+# A duty, not a half of the day: "Closer" and "Opener" are jobs of their
+# own at any hour, so code_for_daypart never trades them for another code.
+_DUTY_WORDS = frozenset({"open", "opening", "opener", "close", "closing", "closer"})
+
+
+def _half_code(code):
+    """The half of the day a job code is one half of a role's pair for, or
+    None (no daypart word, or a duty code)."""
+    part = role_daypart(code)
+    if part is None or set(role_tokens(code)) & _DUTY_WORDS:
+        return None
+    return part
+
+
+@lru_cache(maxsize=256)
+def _fold_table(codes: tuple, families: tuple) -> dict:
+    fam_map = dict(families) if families else None
+    halves = {}
+    for c in codes:
+        part = _half_code(c)
+        if part is not None:
+            halves.setdefault((role_family(c, fam_map), part), []).append(c)
+    out = {}
+    for c in codes:
+        part = _half_code(c)
+        if part is None:
+            continue
+        other = "night" if part == "morning" else "morning"
+        sib = sorted(halves.get((role_family(c, fam_map), other)) or (), key=lambda x: (x.casefold(), x))
+        if sib:
+            out[(c.casefold(), other)] = sib[0]
+    return out
+
+
+def fold_table(codes, families=None) -> dict:
+    """{(code casefolded, part): the code it is counted as in that part} for
+    every job code in `codes` that names the other half of the day and has
+    a partner for `part` — code_for_daypart's table, built once per set of
+    codes (the scorer reads it for every person on every shift)."""
+    key = tuple(sorted({" ".join(str(c).split()) for c in codes or () if str(c or "").strip()}))
+    fam = tuple(sorted((str(k), str(v)) for k, v in (families or {}).items()))
+    return _fold_table(key, fam)
+
+
+def code_for_daypart(role, part, codes=None, families=None, table=None) -> str:
+    """The job code `role` counts as while it is on the floor for `part`
+    ('morning' / 'night'). A code naming the OTHER half of the day ("Host
+    AM" on at dinner) is its family's code for this half ("Host PM") when
+    the restaurant has one among `codes` (or `table`, fold_table's); any
+    other role is itself.
+
+    A host on the floor at dinner is the dinner's host, whatever job the
+    POS punch or the draft gave the shift: the usual crew read from the
+    punches, the draft's own count and the generator's label all read a
+    shift this way, so a requirement and its measurement never disagree on
+    a label — EJ's week of 11/4/26 read "No host PM" on 11 shifts with three
+    hosts on, the draft labelled them Host AM. An AM job's targets still
+    keep to the morning (owner, 10/2/26): no "Host AM" is ever asked for at
+    dinner."""
+    if part not in ("morning", "night") or not str(role or "").strip():
+        return role
+    t = table if table is not None else fold_table(codes or (), families)
+    return t.get((" ".join(str(role).split()).casefold(), part), role)
+
+
 def name_key(name) -> str:
     """One spelling of a person's name for every comparison: case and
     spacing ignored — the key Constraints.salaried and models.
