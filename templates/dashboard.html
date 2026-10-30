@@ -28317,8 +28317,26 @@ function _swHasContent(sec) {
   if (k === 'req') return full('sfw1-req');
   return true;
 }
+/* The week grid reads by role, never by the POS's AM/PM job codes (owner,
+   10/30/26: "get rid of the am/pm split — combine all roles"): Host AM and
+   Host PM are one Host group, and a role the owner renamed reads as named
+   (Simple EJ's Utility is its Food runner). The row keeps its job code. */
+var _swFams = null, _swFamsAsked = false;
+function _swRoleLabel(code) {
+  var low = String(code || '').replace(/\s+/g, ' ').replace(/^\s|\s$/g, '').toLowerCase(), f = (_swFams && _swFams.families) || [], fam = '', i, j;
+  if (!low) return '';
+  for (i = 0; i < f.length && !fam; i++) for (j = 0; j < (f[i].roles || []).length; j++) if (String(f[i].roles[j]).toLowerCase() === low) { fam = f[i].label || f[i].family || ''; break; }
+  if (!fam) fam = low.replace(/\s+(am|pm|day|night|lunch|dinner|brunch)$/i, '');
+  return fam.charAt(0).toUpperCase() + fam.slice(1);
+}
 function swRenderGrid() {
   var host = document.getElementById('swg'); if (!host) return;
+  if (!_swFamsAsked) {
+    _swFamsAsked = true;
+    fetch('/api/labor/role-families', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (f) {
+      if (f && f.ok) { _swFams = f; swRenderGrid(); }
+    })['catch'](function () {});
+  }
   // The selected shift is followed by its row, not its index: an edit
   // re-sorts the week.
   if (_swSelRow) { _swSel = _schedRows.indexOf(_swSelRow); if (_swSel < 0) { _swSel = null; _swSelRow = null; } }
@@ -28342,9 +28360,13 @@ function swRenderGrid() {
   for (i = 0; i < (_schedRosterNames || []).length; i++) person(_schedRosterNames[i]);
   var groups = {}, gOrder = [];
   for (i = 0; i < order.length; i++) {
-    var p = byPerson[order[i]], best = '', bn = -1, rk;
-    for (rk in p.roles) if (p.roles.hasOwnProperty(rk) && p.roles[rk] > bn) { best = rk; bn = p.roles[rk]; }
-    p.role = best || _schedRoleOf(p.name) || 'Other';
+    // The role they work most this week, AM and PM counted as one.
+    var p = byPerson[order[i]], best = '', bn = -1, rk, tally = {}, lab, top = '', tn = -1;
+    for (rk in p.roles) if (p.roles.hasOwnProperty(rk)) { lab = _swRoleLabel(rk); tally[lab] = (tally[lab] || 0) + p.roles[rk]; }
+    for (lab in tally) if (tally.hasOwnProperty(lab) && tally[lab] > tn) { top = lab; tn = tally[lab]; }
+    for (rk in p.roles) if (p.roles.hasOwnProperty(rk) && _swRoleLabel(rk) === top && p.roles[rk] > bn) { best = rk; bn = p.roles[rk]; }
+    p.code = best || _schedRoleOf(p.name) || '';
+    p.role = _swRoleLabel(p.code) || 'Other';
     if (!groups[p.role]) { groups[p.role] = []; gOrder.push(p.role); }
     groups[p.role].push(p);
   }
@@ -28393,10 +28415,10 @@ function swRenderGrid() {
       h += '<div class="swg-r"><div class="swg-p"><span class="n" title="' + _escAttr(q.name) + '">' + _escHtml(q.name) + dots + '</span><span class="h' + (ot ? ' ot' : '') + '">' + (q.hrs > 0 ? '<span class="hb-num">' + _schedHrs(q.hrs) + 'h</span>' : 'No shifts') + (ot ? ' · over ' + ceil + 'h' : '') + '</span></div>';
       for (k = 0; k < days.length; k++) {
         var list = (q.cells[days[k]] || []).slice().sort(function (a, b) { return (_schedMinutes(_schedRows[a].shift_start) || 0) - (_schedMinutes(_schedRows[b].shift_start) || 0); });
-        h += '<div class="swg-c" data-swg-drop="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" data-swg-role="' + _escAttr(q.role) + '">';
+        h += '<div class="swg-c" data-swg-drop="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" data-swg-role="' + _escAttr(q.code) + '">';
         for (var c = 0; c < list.length; c++) {
           var ri = list[c], rw = _schedRows[ri], why = rw.needs_review ? (rw.review_reason || 'needs review') : (rw.notes || '');
-          var sub = '<span class="hb-num">' + _schedHrs(_swRowHrs(rw)) + 'h</span>' + (rw.role && rw.role !== q.role ? ' · ' + _escHtml(rw.role) : '') + (rw.needs_review ? ' · ' + _escHtml(String(why).slice(0, 40)) : '');
+          var sub = '<span class="hb-num">' + _schedHrs(_swRowHrs(rw)) + 'h</span>' + (rw.role && _swRoleLabel(rw.role) !== q.role ? ' · ' + _escHtml(_swRoleLabel(rw.role)) : '') + (rw.needs_review ? ' · ' + _escHtml(String(why).slice(0, 40)) : '');
           h += '<button type="button" draggable="true" class="swg-chip' + (rw.needs_review || rw.review_unchecked ? ' bad' : '') + (rw.review_pending ? ' pending' : '') + (rw.locked ? ' locked' : '') + (_schedOverrides[ri] ? ' chg' : '') + (_swEditIdx === ri ? ' editing' : '') + (_swSel === ri ? ' sel' : '') + '" data-swg-chip="' + ri + '"'
              + ' aria-label="' + _escAttr(q.name + ', ' + _schedDayOf(days[k]) + ' ' + (rw.shift_start || '') + ' to ' + (rw.shift_end || '') + (rw.needs_review ? ', needs review' : '')) + '">'
              + '<span class="t">' + _escHtml(_swShort(rw.shift_start)) + '–' + _escHtml(_swShort(rw.shift_end)) + '</span><span class="s">' + sub + '</span>'
@@ -30395,7 +30417,7 @@ function _swDropOk(i, cell) {
   var r = _schedRows[i]; if (!r || !cell) return false;
   var pr = String(cell.getAttribute('data-swg-drop') || '').split('|'), role = String(cell.getAttribute('data-swg-role') || '').toLowerCase();
   if (String(pr[0]).toLowerCase() === String(r.employee || '').toLowerCase() && pr[1] === r.date) return false;
-  return !r.role || !role || role === String(r.role).toLowerCase() || role === 'other';
+  return !r.role || !role || _swRoleLabel(role) === _swRoleLabel(r.role) || role === 'other';
 }
 function _swDropClear() { var ds = document.querySelectorAll('.swg-c.drop,.swg-c.nodrop'), k; for (k = 0; k < ds.length; k++) ds[k].className = 'swg-c'; }
 document.addEventListener('dragstart', function (ev) {
