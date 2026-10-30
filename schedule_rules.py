@@ -5842,8 +5842,13 @@ def _floor_breaches(c, d, day, items, counted) -> list:
 
 def _family_label(c, fam) -> str:
     """How a role family reads to the owner: its job code without the
-    daypart words, as the restaurant spells it ("Server" for Server AM/PM)."""
+    daypart words, as the restaurant spells it ("Server" for Server AM/PM).
+    A role the owner named in their map is called what they named it: Simple
+    EJ's Utility AM/PM codes are its "Food runner" (owner, 10/30/26), never
+    "Utility" again."""
     from collections import Counter
+    if fam and fam in set((c.role_families or {}).values()):
+        return str(fam)[:1].upper() + str(fam)[1:]
     names = Counter()
     for low, disp in (c.role_names or {}).items():
         if c.family(low) == fam:
