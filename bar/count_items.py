@@ -71,15 +71,19 @@ def _newest_lines(restaurant_id, db_path=None) -> dict:
     """{product_key: {description, uom, unit_price, ppc, priced, last}} —
     each product's newest priced invoice line (`last` its newest date, priced
     or not), read from the distinct price points, never every line
-    (SCALE-09)."""
+    (SCALE-09). A product's per-bottle charge line counts as its delivery,
+    never its price: Southern Glazer's billed two bottles of Jameson Black
+    Barrel only as their $2.29 charge (owner, 10/30/26: "I don't see it"),
+    so the bottles are on the sheet to count, unpriced, not valued at $2.29."""
     from bar.classify import product_key
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT i.distributor, l.item_code, l.description, l.uom, l.unit_price, l.ppc, MAX(i.invoice_date) AS last "
+            "SELECT i.distributor, l.item_code, l.description, l.uom, l.unit_price, l.ppc, l.kind, "
+            "MAX(i.invoice_date) AS last "
             "FROM fintech_invoice_lines l JOIN fintech_invoices i ON i.id=l.invoice_id "
-            "WHERE i.restaurant_id=? AND i.invoice_date IS NOT NULL AND l.kind='item' "
-            "GROUP BY i.distributor, l.item_code, l.description, l.uom, l.unit_price, l.ppc",
+            "WHERE i.restaurant_id=? AND i.invoice_date IS NOT NULL AND l.kind IN ('item', 'charge') "
+            "GROUP BY i.distributor, l.item_code, l.description, l.uom, l.unit_price, l.ppc, l.kind",
             (int(restaurant_id),)).fetchall()
     finally:
         conn.close()
@@ -87,12 +91,22 @@ def _newest_lines(restaurant_id, db_path=None) -> dict:
     for r in sorted((dict(x) for x in rows), key=lambda x: str(x["last"] or "")):
         k = product_key(r["distributor"], r["item_code"], r["description"])
         d = str(r["last"] or "")[:10]
-        priced = float(r["unit_price"] or 0) > 0
-        cur = out.setdefault(k, {"priced": False, "last": d})
+        item = r["kind"] == "item"
+        priced = item and float(r["unit_price"] or 0) > 0
+        cur = out.setdefault(k, {"priced": False, "last": d, "item": False})
         cur["last"] = max(cur["last"], d)
-        if priced or not cur["priced"]:
-            cur.update(description=r["description"], uom=r["uom"], unit_price=float(r["unit_price"] or 0),
-                       ppc=r["ppc"], priced=priced or cur["priced"])
+        if priced:
+            take = True
+        elif item:
+            take = not cur["priced"]
+        else:
+            # A charge line names the product only while no item line does,
+            # and a printout's line with no unit never replaces one with it.
+            take = not cur["item"] and (r["uom"] or not cur.get("uom"))
+        if take:
+            cur.update(description=r["description"], uom=r["uom"],
+                       unit_price=float(r["unit_price"] or 0) if item else 0.0,
+                       ppc=r["ppc"], priced=priced or cur["priced"], item=item or cur["item"])
     return out
 
 
@@ -126,7 +140,7 @@ def _products(restaurant_id, db_path=None, today=None) -> dict:
     liquor and wine product on the invoices, its counting unit and cost."""
     from bar.products import pack_overrides
     from bar.purchases import product_catalog
-    cat = product_catalog(restaurant_id, db_path)
+    cat = product_catalog(restaurant_id, db_path, kinds=("item", "charge"))
     lines = _newest_lines(restaurant_id, db_path)
     packs = pack_overrides(restaurant_id, db_path)
     out = {}
