@@ -269,6 +269,24 @@ def init_fintech_invoices(db_path=None):
     import models as _models_once
     _models_once.run_once("fintech_lines_ppc_and_lone_charges_v1",
                           lambda: backfill_ppc_and_charges(db_path=db_path), db_path=db_path)
+    _models_once.run_once("fintech_printout_case_units_v1",
+                          lambda: backfill_printout_units(db_path=db_path), db_path=db_path)
+
+
+def backfill_printout_units(db_path=None) -> int:
+    """Every printout line still without a unit takes one now that a case is
+    priced through its bottles (Bulleit '87, 10/30/26). Run once
+    (models.run_once). Returns the lines changed."""
+    conn = get_conn(db_path)
+    try:
+        n = 0
+        for rid, dkey in conn.execute("SELECT DISTINCT restaurant_id, distributor_key FROM fintech_invoices "
+                                      "WHERE source_format='printout'").fetchall():
+            n += _backfill_units(conn, rid, [dkey])
+        conn.commit()
+    finally:
+        conn.close()
+    return n
 
 
 def backfill_ppc_and_charges(db_path=None) -> int:
@@ -980,7 +998,7 @@ def _current_version(conn, existing):
 def _history(conn, rid, dkey, vendor_id, exclude_invoice=None) -> list:
     """Every line this restaurant bought from the distributor (by key)."""
     sql = ("SELECT l.id, l.invoice_id, l.item_code, l.uom, l.unit_price, l.upc, l.kind, l.uom_inferred, l.qty, "
-           "l.cost, l.description, i.source_format, i.invoice_date FROM fintech_invoice_lines l "
+           "l.cost, l.description, l.ppc, i.source_format, i.invoice_date FROM fintech_invoice_lines l "
            "JOIN fintech_invoices i ON i.id = l.invoice_id WHERE i.restaurant_id=? AND (i.distributor_key=?")
     args = [rid, dkey]
     if vendor_id:
@@ -994,8 +1012,8 @@ def _history(conn, rid, dkey, vendor_id, exclude_invoice=None) -> list:
 
 
 def _unit_book(history) -> dict:
-    """{item_key: {uom: (date, price, upc)}}: the latest export price of each
-    code in each unit."""
+    """{item_key: {uom: (date, price, upc, ppc)}}: the latest export price of
+    each code in each unit, with the bottles its case holds."""
     book = {}
     for h in history:
         if (h["source_format"] != "export" or not h["uom"] or h["uom_inferred"] or h["kind"] != "item"
@@ -1006,19 +1024,33 @@ def _unit_book(history) -> dict:
             continue
         prev = book.setdefault(k, {}).get(h["uom"])
         if prev is None or str(h["invoice_date"] or "") >= str(prev[0] or ""):
-            book[k][h["uom"]] = (h["invoice_date"], float(h["unit_price"]), h["upc"])
+            book[k][h["uom"]] = (h["invoice_date"], float(h["unit_price"]), h["upc"], h.get("ppc"))
     return book
 
 
+_BOTTLE_UNITS = ("BO", "BT")
+
+
 def _infer_unit(ln, book):
-    """A printout line's unit and UPC from the same code's export history: the
-    unit whose latest price is nearest its own, within UNIT_PRICE_RATIO;
-    nothing when none is that close (a bottle bought from a case code)."""
+    """A printout line's unit, UPC and case size from the same code's export
+    history: the unit whose latest price is nearest its own, within
+    UNIT_PRICE_RATIO; nothing when none is that close. A code bought only by
+    the bottle is priced by the case too, through the bottles its case holds
+    (owner, 10/30/26: Bulleit '87 at $331.90 on a printout, its export a
+    $25.73 bottle of a 12-bottle case, was counted at $331.90 a bottle) — and
+    one bought only by the case by the bottle."""
     if ln.get("uom") or not ln.get("unit_price") or ln["unit_price"] <= 0:
         return False
-    units = book.get(item_key(ln.get("item_code")))
+    units = dict(book.get(item_key(ln.get("item_code"))) or {})
     if not units:
         return False
+    for u, (d, price, _upc, ppc) in list(units.items()):
+        if not ppc or int(ppc) < 2:
+            continue
+        if u in _BOTTLE_UNITS and "CA" not in units:
+            units["CA"] = (d, price * int(ppc), None, ppc)
+        elif u == "CA" and not any(b in units for b in _BOTTLE_UNITS):
+            units["BO"] = (d, price / int(ppc), None, ppc)
     best = min(units.items(), key=lambda kv: abs(math.log(ln["unit_price"] / kv[1][1])))
     # A code only ever sold by the keg is a keg whatever this line's price (a
     # keg is never split; a credit memo re-bills one at $59).
@@ -1028,6 +1060,8 @@ def _infer_unit(ln, book):
     ln["uom"], ln["uom_inferred"] = best[0], 1
     if not ln.get("upc") and best[1][2]:
         ln["upc"] = best[1][2]
+    if not ln.get("ppc") and best[1][3]:
+        ln["ppc"] = best[1][3]
     return True
 
 
@@ -1218,11 +1252,13 @@ def _backfill_units(conn, rid, dkeys) -> int:
             if h["source_format"] != "printout" or h["uom"] or h["kind"] != "item":
                 continue
             ln = {"item_code": h["item_code"], "description": h["description"], "uom": None, "upc": h["upc"],
-                  "qty": h["qty"], "unit_price": h["unit_price"], "cost": h["cost"], "raw_adjustment": None}
+                  "qty": h["qty"], "unit_price": h["unit_price"], "cost": h["cost"], "raw_adjustment": None,
+                  "ppc": h.get("ppc")}
             if _infer_unit(ln, book):
                 _settle(ln, rate)
-                conn.execute("UPDATE fintech_invoice_lines SET uom=?, upc=?, uom_inferred=1, deposit=?, adjustment=? "
-                             "WHERE id=?", (ln["uom"], ln["upc"], ln["deposit"], ln["adjustment"], h["id"]))
+                conn.execute("UPDATE fintech_invoice_lines SET uom=?, upc=?, uom_inferred=1, deposit=?, adjustment=?, "
+                             "ppc=? WHERE id=?", (ln["uom"], ln["upc"], ln["deposit"], ln["adjustment"], ln.get("ppc"),
+                                                  h["id"]))
                 n += 1
     return n
 

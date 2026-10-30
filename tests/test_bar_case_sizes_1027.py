@@ -160,3 +160,21 @@ def test_every_pourable_product_reaches_the_pickers_past_the_table_cap():
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html"),
                encoding="utf-8").read()
     assert "function allProducts() { return (DATA && (DATA.pickable || DATA.products)) || []; }" in src
+
+
+def test_a_printout_case_is_priced_through_the_bottles_its_export_case_holds():
+    # Owner, 10/30/26: Bulleit '87 at $331.90 on a printout (a 12-bottle
+    # case) was counted at $331.90 a bottle — its only export was one $25.73
+    # bottle, more than 1.5x off the case.
+    book = {fi.item_key("9798799"): {"BO": ("2026-09-29", 25.73, "082000", 12)}}
+    ln = {"item_code": "9798799", "uom": None, "unit_price": 331.90}
+    assert fi._infer_unit(ln, book) and (ln["uom"], ln["ppc"], ln.get("upc")) == ("CA", 12, None)
+    uc = unit_costs(331.90, ln["uom"], "BULLEIT BRBN '87 90 750ML", "liquor", ppc=ln["ppc"])
+    assert round(uc["per_each"], 2) == 27.66
+    # A bottle bought from a case-only code reads as a bottle of that case.
+    book = {fi.item_key("9000754"): {"CA": ("2026-06-30", 324.0, "08200", 12)}}
+    ln = {"item_code": "9000754", "uom": None, "unit_price": 28.5}
+    assert fi._infer_unit(ln, book) and (ln["uom"], ln["ppc"]) == ("BO", 12)
+    # Neither near a bottle nor a case: no unit is guessed.
+    ln = {"item_code": "9000754", "uom": None, "unit_price": 90.0}
+    assert not fi._infer_unit(ln, book) and ln["uom"] is None
