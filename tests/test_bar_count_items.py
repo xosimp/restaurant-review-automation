@@ -172,3 +172,30 @@ def test_a_bottle_is_counted_as_full_bottles_and_each_opened_ones_level(db):
     bci.save_item(rid, day, key, "2.5", db_path=db, today=TODAY)
     row = _row(bci.sheet(rid, day, db_path=db, today=TODAY), "tito")[1]
     assert row["full"] == 2 and row["open"] == [0.5]
+
+
+def test_a_bottle_billed_only_by_its_charge_is_counted_unpriced(db):
+    # Owner, 10/30/26: Jameson Black Barrel was missing — Southern Glazer's
+    # billed its two bottles only as their $2.29-a-bottle charge.
+    rid = _rid(db)
+    _stock(db, rid)
+    d = (TODAY - timedelta(days=12)).isoformat()
+    _invoice(db, rid, "Southern Glazer's Wine & Spirits of IL", "SG1", d, [
+        ("24601", "JAMESON IRISH WHISKEY 80 1.0L", "CA", 1, 408.0),
+        ("24601", "JAMESON IRISH WHISKEY 80 1.0L", "BO", 1, 2.29),
+        ("412253", "JAMESON IRISH BLACK BRL 80 1.0L", "BO", 2, 2.29)])
+    import models
+    conn = models.get_conn(db)
+    conn.execute("UPDATE fintech_invoice_lines SET kind='charge' WHERE unit_price=2.29")
+    conn.commit()
+    conn.close()
+    day = TODAY.isoformat()
+    _, bb = _row(bci.sheet(rid, day, db_path=db, today=TODAY), "black")
+    assert bb["unit"] == "bottle" and bb["unit_cost"] is None                 # never $2.29 a bottle
+    out = bci.save_item(rid, day, bb["product_key"], full="1", opens=[".4"], db_path=db, today=TODAY)
+    assert out["qty"] == 1.4
+    sh = bci.sheet(rid, day, db_path=db, today=TODAY)
+    assert sh["unpriced"] == [bb["name"]] and sh["totals"]["liquor"] == 0.0
+    # A product with a real bottle price keeps it beside its charge line.
+    _, jam = _row(sh, "jameson irish whiskey")
+    assert jam["unit_cost"] == 34.0
