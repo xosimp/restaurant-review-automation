@@ -48484,6 +48484,9 @@ function sfw2RuleCheck(chk) {
 .br-crow .st.ok{color:var(--green)}
 .br-crow .st.err{color:var(--red)}
 .br-cnote{font-size:13.5px;color:var(--ink3)}
+.br-chand{display:flex;flex-direction:column;gap:12px;margin:0 0 18px}
+.br-chand .acts{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.br-chand .note{font-size:13.5px;color:var(--ink3)}
 @media (max-width:720px){.br-cgl{grid-template-columns:1fr}}
 .br-cform .br-ok:empty{display:none}
 .br-wq{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,.6fr) minmax(0,1.35fr) minmax(0,1.1fr) minmax(0,1.05fr) minmax(0,1.2fr) auto;gap:10px;align-items:end;padding:18px 20px;border-radius:22px;border:1px solid var(--br-hair2);background:var(--br-plate);box-shadow:var(--elev-1);margin-bottom:14px}
@@ -50200,7 +50203,12 @@ function sfw2RuleCheck(chk) {
     var sh = ST.sheet, i, j, h = '';
     if (ST.sheetErr) return '<div class="br-empty">' + esc2(ST.sheetErr) + '</div>';
     if (!sh || !sh.groups) return '<div class="br-empty" role="status">Reading the bar’s products…</div>';
-    if (!sh.groups || !sh.groups.length) return '<div class="br-empty">No beer, liquor or wine on the invoices yet — the sheet fills in from them.</div>';
+    /* A bottle no invoice carries (a liquor-store buy) is added here, on the
+       sheet it is counted on (owner, 10/30/26: "there is no button on the
+       inventory UI for add a bottle"). Only a login that sees dollars: it
+       asks what the bottle cost. */
+    if (sh.totals) h += '<div class="br-chand" id="br-chand"><span class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-chadd="1">+ Add a bottle bought elsewhere</button><span class="note">Not on an invoice — a liquor-store bottle.</span></span></div>';
+    if (!sh.groups.length) return h + '<div class="br-empty">No beer, liquor or wine on the invoices yet — add a bottle above, or the sheet fills in from the invoices.</div>';
     for (i = 0; i < sh.groups.length; i++) {
       var g = sh.groups[i], rows = '';
       for (j = 0; j < g.products.length; j++) rows += sheetRow(g.products[j]);
@@ -50599,7 +50607,7 @@ function sfw2RuleCheck(chk) {
   /* ownerWrite for one matching row: the row shows the save in flight and
      its result at once; the payload re-read (seconds on a big store)
      repaints the list behind it. */
-  function rowWrite(url, body, row, btn, doneMsg, okToast) {
+  function rowWrite(url, body, row, btn, doneMsg, okToast, after) {
     if (btn) btn.disabled = true;
     if (row) row.classList.add('br-busy');
     rowSay(row, '', '');
@@ -50608,6 +50616,7 @@ function sfw2RuleCheck(chk) {
       if (!d.ok) { if (btn) btn.disabled = !!d.lost; rowSay(row, refusal(d), 'err'); return; }
       if (row) { row.classList.add('br-done'); var f = row.querySelector('.br-form'); if (f) f.setAttribute('inert', ''); }
       rowSay(row, doneMsg, 'ok');
+      if (after) after(d);
       say(okToast, 'success'); reread();
     });
   }
@@ -50840,9 +50849,13 @@ function sfw2RuleCheck(chk) {
           var hoz = +valOf(attrSel('data-br-vmapoz', a('data-item'))).replace(/[^\d.]/g, '');
           if (hoz > 0) hb.pour_oz = hoz;
         }
+        var onSheet = hrow && hrow.id === 'br-chand';
         rowWrite('/api/food-cost/bar/hand-product', hb, hrow, t,
-                 a('data-item') ? 'Added ' + hb.name + ' and matched — its cost shows under Cost' : 'Saved ' + hb.name,
-                 a('data-item') ? 'Added ' + hb.name + ' — the drink is matched and costed at your price' : 'Saved — drinks poured from ' + hb.name + ' use the new price');
+                 a('data-item') ? 'Added ' + hb.name + ' and matched — its cost shows under Cost' : (onSheet ? 'Added ' + hb.name + ' — count it below' : 'Saved ' + hb.name),
+                 a('data-item') ? 'Added ' + hb.name + ' — the drink is matched and costed at your price' : (onSheet ? 'Added ' + hb.name + ' to the count' : 'Saved — drinks poured from ' + hb.name + ' use the new price'),
+                 onSheet ? function () { ST.sheet = null; ST.sheetQ = hb.name; } : null);
+      } else if (a('data-br-chadd') != null) {
+        openHandForm($id('br-chand'), {category: 'liquor', name: ST.sheetQ || ''});
       } else if (a('data-br-handx') != null) {
         var hx = t.closest ? t.closest('[data-br-handform]') : null;
         if (hx) hx.parentNode.removeChild(hx);
