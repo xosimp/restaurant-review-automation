@@ -28,6 +28,8 @@ overtime > min hours > requirements > budget > quality), each tier's weight
 far above everything below it:
 
   manager      a stretch with no manager on the floor (per minute)
+  always_on    a stretch open with nobody of a role the restaurant keeps on
+               all day (a bartender), or an on-at-open role late (per minute)
   floor        a shift a staffing floor needs left unfilled (per hour)
   closer       a role's close without one of its closers
   policy       hours past the restaurant's weekly ceiling, rest shorter
@@ -103,6 +105,9 @@ DETERMINISTIC = str(os.getenv("SCHEDULE_CPSAT_DETERMINISTIC", "1")).strip() != "
 Q = 100
 W_MANAGER_MIN = 10 ** 11            # a minute with no manager on the floor
 W_CLOSER = 4 * 10 ** 10              # a role's close without a closer
+# A minute open with nobody of a role kept on all day (a bartender —
+# schedule_rules.always_on_families): coverage, above a floor's hour.
+W_ALWAYS_ON_MIN = 10 ** 9
 W_COVER_HOUR = 10 ** 10              # an hour of a floor shift left unfilled
 W_POLICY_HOUR = 3 * 10 ** 8         # an hour past the restaurant's weekly ceiling (or a salaried limit)
 W_POLICY_REST_HOUR = 3 * 10 ** 8    # an hour of rest short of the restaurant's rule
@@ -115,7 +120,7 @@ REQ_VALUE_BOUNDS = (0.1, 8.0)       # its demand x criticality against average: 
 # words first; then keeping last published week's (else the usual) person
 # on each slot; then every quality tie-break — fairness can never again
 # decide which shift goes empty.
-PHASE_RULES = frozenset({"manager", "floor", "closer", "policy_hours", "policy_rest", "policy_run", "overtime",
+PHASE_RULES = frozenset({"manager", "always_on", "floor", "closer", "policy_hours", "policy_rest", "policy_run", "overtime",
                          "min_hours", "requirement", "budget", "habit", "leadership", "pending", "memory",
                          "commitment", "starved"})
 PHASE_STABILITY = frozenset({"stability", "change", "usual"})
@@ -138,6 +143,7 @@ TERM_LABELS = {
     "manager": "a stretch with no manager on the floor",
     "floor": "a shift a staffing floor needs, unfilled",
     "closer": "a close without one of the role's closers",
+    "always_on": "a stretch open with nobody of a role you keep on (a bartender)",
     "policy_hours": "hours past the restaurant's weekly ceiling",
     "policy_rest": "rest shorter than the restaurant's rule",
     "policy_run": "days past the days-in-a-row rule",
@@ -511,6 +517,7 @@ class _Model:
         self._unfilled()
         self._per_person()
         self._manager()
+        self._always_on()
         self._closer()
         self._leaders()
         self._static_and_stability()
@@ -838,6 +845,65 @@ class _Model:
                 else:
                     for u in live:
                         m.add(sum(lits) + gap + self.unf[u.id] >= 1)
+
+    def _always_on(self):
+        """A role the restaurant keeps on every minute it is open (a
+        bartender) and one it wants on at the open
+        (schedule_rules.always_on_families / on_at_open_families, owner
+        10/30/26): each stretch of the role's open window no kept row of the
+        family covers is priced per minute unless a filled shift of it does
+        — so a bartender shift is never the one left empty when it is the
+        only one on. A stretch no shift in the solve could cover is the
+        sweep's role_gap and the repair stage's, not this term's."""
+        prob, m, c, book = self.prob, self.m, self.prob.c, self.book
+        if c is None:
+            return
+        always, at_open = _rules.always_on_families(c), _rules.on_at_open_families(c)
+        if not (always or at_open):
+            return
+        closed = c.closed_dates or set()
+        by = {}
+        for u in prob.units:
+            if not u.date or u.date in closed or (u.fixed and u.draft is None):
+                continue
+            for r in u.rows:
+                fam = prob.family(r.get("role"))
+                if fam not in always and fam not in at_open:
+                    continue
+                if c.training_row(r if not u.fixed else dict(r, employee=prob.names[u.draft])):
+                    continue
+                sp = _rules._span(r)
+                if sp:
+                    by.setdefault((u.date, fam), []).append((sp[0], sp[1], u))
+        for (d, fam), items in sorted(by.items(), key=lambda kv: kv[0]):
+            day = sq._day_name(d)
+            o, cl = _rules.open_hours(c, day)
+            if o is None or cl is None or cl <= o:
+                continue
+            opening = fam not in always
+            if opening:
+                lo, hi = _rules.role_open_window(c, fam, day, o, cl)
+            else:
+                lo, hi = _rules.role_need_window(c, fam, day, o, cl, first_start=min(s for s, _e, _u in items),
+                                                 last_end=max(e for _s, e, _u in items))
+            if lo is None or hi <= lo:
+                continue
+            if opening:
+                hi = lo + 1               # on at the open: the open minute only
+            cuts = sorted({lo, hi} | {t for s, e, _u in items for t in (s, e) if lo < t < hi})
+            for a, b in zip(cuts, cuts[1:]):
+                if b <= a:
+                    continue
+                cover = [u for s, e, u in items if s <= a and b <= e]
+                if any(u.fixed for u in cover):
+                    continue
+                live = list({u.id: u for u in cover if u.id in self.unf}.values())
+                if not live:
+                    continue
+                gap = m.new_bool_var(f"ao{d}_{fam}_{a}")
+                book.add("always_on", gap, W_ALWAYS_ON_MIN * (60 if opening else (b - a)),
+                         {"date": d, "family": fam, "start": a, "end": b})
+                m.add(sum(1 - self.unf[u.id] for u in live) + gap >= 1)
 
     def _closer(self):
         prob, m, c, book = self.prob, self.m, self.prob.c, self.book

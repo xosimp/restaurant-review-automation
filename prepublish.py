@@ -110,7 +110,9 @@ GROUP_FIX_LABELS = {"long_run": "Give each a day off (shows each change)",
                     "rest_gap": "Space out the short turnarounds (shows each change)",
                     "shift_too_long": "Shorten the long shifts (shows each change)",
                     "no_manager": "Cover each stretch with a manager (shows each change)",
-                    "coverage_floor": "Fill each short shift (shows each change)"}
+                    "coverage_floor": "Fill each short shift (shows each change)",
+                    "role_gap": "Cover each stretch (shows each change)",
+                    "role_late_open": "Bring someone in at open (shows each change)"}
 # Soft kinds that are reminders, not decisions: one FYI line each (TRUST-22).
 REMINDER_KINDS = ("meal_break", "shift_too_short")
 # The edit and endpoint names a `post` action may name (API_REFERENCE).
@@ -630,6 +632,8 @@ def _must_fix(rid, gate, keep, user, scores, memo=None) -> list:
             try:
                 if kind == "rule:no_manager" and v:
                     item["fixes"] = _manager_fixes(rows, c, v)
+                elif kind in ("rule:role_gap", "rule:role_late_open") and v:
+                    item["fixes"] = _role_fixes(rows, c, v)
                 elif kind.startswith("rule:") and v and not v.get("day_level") and v.get("index") is not None:
                     if prepared is None:
                         import schedule_engine as _se
@@ -678,6 +682,24 @@ def _manager_fixes(rows, c, v) -> list:
     if not d:
         return []
     got = _sr.cover_manager_gaps([dict(r) for r in rows], c, editable={d})
+    return _backstop_fixes(rows, got, d)
+
+
+def _role_fixes(rows, c, v) -> list:
+    """The always-on / on-at-open backstop's own legal answer for that day
+    (schedule_rules.cover_role_gaps on that date alone): one of the role run
+    on or brought in earlier, or somebody who works it brought in."""
+    import schedule_rules as _sr
+    d = v.get("date")
+    if not d:
+        return []
+    got = _sr.cover_role_gaps([dict(r) for r in rows], c, editable={d})
+    return _backstop_fixes(rows, got, d)
+
+
+def _backstop_fixes(rows, got, d) -> list:
+    """A backstop's answer for one date ({rows, extended, added, left}) as
+    one-tap edits to the rows on screen, else why nobody could."""
     fixes = []
     new_rows = got.get("rows") or []
     for e in (got.get("extended") or [])[:2]:
@@ -1083,7 +1105,8 @@ def _crew_decision(rid, keep, crew, cell) -> dict:
 
 # ── groups (TRUST-15) ──────────────────────────────────────────────────────
 
-_DAY_KINDS = ("no_manager", "coverage_floor", "nobody_at_close", "keyholder_until_close", "owner_rule")
+_DAY_KINDS = ("no_manager", "coverage_floor", "nobody_at_close", "keyholder_until_close", "owner_rule",
+              "role_gap", "role_late_open")
 
 
 def group_items(items, tier) -> list:

@@ -9843,6 +9843,12 @@ REPAIR_STAGES = (
      "check the people your instruction or rules name"),
     ("stations", _rules.TIER_COVERAGE, "The kitchen-station fill", "check each kitchen station has a trained cook"),
     ("close_out", _rules.TIER_COVERAGE, "The closer repair", "check each role's closer stays until close"),
+    # A role kept on every minute you're open (a bartender, by default) and
+    # one you want on at the open (owner, 10/30/26): schedule_rules.
+    # cover_role_gaps runs one of the role on, or brings somebody who works
+    # it in, inside everyone's availability.
+    ("always_on", _rules.TIER_COVERAGE, "The pass that keeps a bartender (and each role you keep on) on while "
+     "you're open", "check a bartender is on every minute you're open, and each role you want on at open is"),
     # The hours your RESTAURANT HOURS & SHIFT RULES give each role — a hard
     # staffing rule — held here, at the coverage rank, BEFORE the trims: a
     # row outside them moves inside, its length kept (applied last, after
@@ -10489,6 +10495,15 @@ def _stage_close_out(rows, x):
     return {"rows": out["rows"], "fixes": fixes}
 
 
+def _stage_always_on(rows, x):
+    out = _rules.cover_role_gaps(rows, x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e.get("from") or "nobody of the role", "to": e["employee"] + " " + e["to"],
+              "kind": "role_cover", "reason": e["reason"]} for e in out["extended"] + out["added"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"extended": len(out["extended"]), "added": len(out["added"]), "left": out.get("left") or [],
+                       "shortfall": out.get("shortfall")}}
+
+
 def _stage_overtime(rows, x):
     out = _rules.rebalance_overtime(rows, x.c, roster_roles=x.roster_roles, editable=x.editable)
     fixes = [{"index": m["index"], "from": m["from"], "to": m["to"], "kind": m.get("kind") or "overtime",
@@ -10753,7 +10768,7 @@ def _stage_role_times(rows, x):
 
 _STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _stage_manager, "policy": _stage_policy,
               "floors": _stage_floors, "owner_words": _stage_owner_words, "stations": _stage_stations,
-              "close_out": _stage_close_out,
+              "close_out": _stage_close_out, "always_on": _stage_always_on,
               "overtime": _stage_overtime, "min_hours": _stage_min_hours, "pad_overruns": _stage_pad_overruns,
               "section_cap": _stage_section_cap,
               "budget": _stage_budget, "top_up": _stage_top_up, "stagger": _stage_stagger,
@@ -11314,7 +11329,8 @@ def _added_above_budget_line(added: dict) -> str:
     bring back is over."""
     words = {"person": "a person's legal limits", "replace": "replacing people who couldn't work",
              "manager": "a manager every minute", "floors": "your staffing floors", "stations": "kitchen stations",
-             "close_out": "closers until close", "overtime": "moving overtime to teammates",
+             "close_out": "closers until close", "always_on": "a bartender on every minute you're open",
+             "overtime": "moving overtime to teammates",
              "policy": "your scheduling limits", "min_hours": "the minimum hours you set",
              "top_up": "the shift requirements (the crew each shift needs)"}
     parts = [(words.get(k, k), v) for k, v in sorted((added or {}).items(), key=lambda kv: -kv[1]) if v >= 0.5]

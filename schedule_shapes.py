@@ -83,6 +83,10 @@ WORKERS = max(1, int(float(os.getenv("SCHEDULE_CPSAT_WORKERS", "4") or 4)))
 # weights (integer units shared with schedule_cpsat's tiers; dollars are cents)
 W_FLOOR_SLOT = 10 ** 10 // 2         # half an hour of a floor short (coverage)
 W_CAP_SLOT = 10 ** 10 // 2           # half an hour over the section cap / role ceiling (coverage)
+# Half an hour open with nobody of a role the restaurant keeps on all day (a
+# bartender — schedule_rules.always_on_families, owner 10/30/26): coverage,
+# above a floor's half hour.
+W_ALWAYS_ON_SLOT = 10 ** 10
 W_CLOSER = 4 * 10 ** 10
 W_POLICY_HUNDREDTH = 3 * 10 ** 6     # a hundredth of an hour past the weekly ceiling (policy)
 W_POLICY_RUN_DAY = 2 * 10 ** 9       # a day past the days-in-a-row rule (policy)
@@ -1026,7 +1030,43 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
             floor_codes[(d, fam, part)] = (need, code)
             if not any(family(r) == fam for r in roles_by_date[d]):
                 roles_by_date[d].add(code)
-    exclude = {c.key(n) for n in (exclude or ())} if c is not None else set()
+    # The roles kept on every minute the restaurant is open (a bartender):
+    # each such family is shaped on every trading day, in its own job code.
+    always_on = {}
+    for fam in (_rules.always_on_families(c) if c is not None else []):
+        codes = sorted(disp for low, disp in (getattr(c, "role_names", None) or {}).items() if family(low) == fam)
+        for d in dates:
+            if d in closed:
+                continue
+            here = sorted(r for r in roles_by_date[d] if family(r) == fam)
+            code = here[0] if here else (codes[0] if codes else None)
+            if code is None:
+                continue
+            roles_by_date[d].add(code)
+            # One of the family is the demand at every half hour of its
+            # window (schedule_rules.role_need_window: the open hours when the
+            # owner named the family, else from the first half hour its
+            # curves or kept rows have it on to the last) that the curves and the kept
+            # rows leave empty — so the patterns reach the open and the
+            # close, and never leave a hole, not only the busy hours.
+            day = sq._day_name(d)
+            o, cl = _rules.open_hours(c, day)
+            if o is None or cl is None or cl <= o:
+                continue
+            mine = [cv for (d2, r2), cv in curves.items() if d2 == d and family(r2) == fam]
+            on = ([t for cv in mine for t, k in cv.items() if k]
+                  + [t for t in range(o - o % SLOT, cl, SLOT) if fixed_on[fam].get(absm(d, t), 0) > 0])
+            lo, hi = _rules.role_need_window(c, fam, day, o, cl, first_start=min(on, default=None),
+                                             last_end=(max(on) + SLOT) if on else None)
+            if lo is None or hi <= lo:
+                continue
+            always_on[(d, fam)] = (lo, hi)
+            cur = curves.setdefault((d, code), {})
+            for t in range(lo + (-lo) % SLOT, hi, SLOT):
+                if fixed_on[fam].get(absm(d, t), 0) > 0 or any(cv.get(t) for cv in mine):
+                    continue
+                cur[t] = max(int(cur.get(t) or 0), 1)
+    exclude ={c.key(n) for n in (exclude or ())} if c is not None else set()
     people = _people(c, roster_roles, dates, ctx, context_rows, exclude, comp)
     rates_l = {str(k).strip().lower(): float(v) for k, v in (rates or {}).items() if v and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates_l.values()) / len(rates_l) if rates_l else 15.0)
@@ -1251,6 +1291,19 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
             short = m.new_int_var(0, gap, f"fl{d}_{fam}_{t}")
             m.add(sum(have) + short >= gap)
             obj.append((W_FLOOR_SLOT, short))
+    # a role kept on all day: somebody of the family on at every half hour
+    # of its window (above), less what kept rows already hold
+    for (d, fam), (lo, hi) in sorted(always_on.items()):
+        for t in range(lo + (-lo) % SLOT, hi, SLOT):
+            a = absm(d, t)
+            if fixed_on[fam].get(a, 0) > 0:
+                continue
+            have = [v for v, _r in on_at.get((fam, a), ())]
+            if not have:
+                continue
+            short = m.new_bool_var(f"ao{d}_{fam}_{t}")
+            m.add(sum(have) + short >= 1)
+            obj.append((W_ALWAYS_ON_SLOT, short))
     # the section cap and the owner's most-on-at-once
     cap = int(getattr(c, "section_cap", 0) or 0) if c is not None else 0
     cap_roles = sorted(getattr(c, "foh_roles", None) or {"server"}) if c is not None else ["server"]
