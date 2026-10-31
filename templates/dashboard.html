@@ -48524,6 +48524,7 @@ function sfw2RuleCheck(chk) {
 .br-cstat .cs small{font-size:13.5px;line-height:1.4;color:var(--ink3)}
 .br-cform{padding:24px 26px;border-radius:24px;border:1px solid var(--br-hair2);background:url(/static/img/glow/corner-tr-ember-v1.png) 0 0/100% 100% no-repeat,var(--br-plate);box-shadow:var(--elev-1)}
 .br-cform .top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+.br-ccont{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13.5px;color:var(--ink3);margin-right:auto}
 .br-cform .dt{display:flex;flex-direction:column;gap:6px;font:600 13px/1 'Apfel Grotezk',sans-serif;color:var(--ink3)}
 .br-cform .pg{display:flex;align-items:center;gap:10px;font:500 14px/1 'Space Grotesk',sans-serif;color:var(--ink2)}
 .br-cform .pg .br-pbar{width:140px;margin:0}
@@ -49824,7 +49825,7 @@ function sfw2RuleCheck(chk) {
      every Bar open. */
   function sheetWanted() {
     if (ST.tab !== 'stock') return;
-    var date = ST.cnt.date || todayIso();
+    var date = countDate();
     if (!ST.sheet || ST.sheet.count_date !== date) loadSheet(date);
   }
   /* A view's heading: its title, the period it covers, and — folded — how it
@@ -50220,16 +50221,27 @@ function sfw2RuleCheck(chk) {
   }
 
   /* ── Inventory: count the bar, log the waste ─────────────────────────── */
+  /* The sheet opens on a count still going: one saved in the last two days
+     (owner, 10/31/26 — "0 of 210 counted when I counted 15 yesterday": a
+     count that ran past midnight opened on a blank new date). Starting a new
+     date is one tap. */
+  function countDate(d) {
+    if (ST.cnt.date) return ST.cnt.date;
+    var lc = ((d || DATA || {}).counted || {}).last_count, t = todayIso(), gap;
+    gap = lc ? (Date.parse(t + 'T12:00:00') - Date.parse(lc + 'T12:00:00')) / 864e5 : 99;
+    return lc && gap > 0 && gap <= 2 ? lc : t;
+  }
   function countsSec2(d) {
     var cn = d.counted || {}, per = countedPeriod(d), miss = cn.missing || [], ml = '', i;
     for (i = 0; i < miss.length; i++) ml += (i ? '; ' : '') + esc2(miss[i].component) + (miss[i].why ? ' — ' + esc2(miss[i].why) : '');
-    var date = ST.cnt.date || todayIso();
+    var date = countDate(d), cont = !ST.cnt.date && date !== todayIso();
     var stat = function (l, v, s) { return '<div class="cs"><span>' + l + '</span><b>' + v + '</b>' + (s ? '<small>' + s + '</small>' : '') + '</div>'; };
     return '<section class="br-sec2" id="br-counts">' + head(per ? 'Pour cost, counted' : 'Count the bar', '', 'Count every bottle, can and keg after close: liquor and wine in bottles (2.5 for two and a half), packaged beer in cans or bottles, draft in kegs (0.5 for half a keg). Each count saves as you type it and is valued at what you last paid; the categories add up from their products. Two counts turn bought vs sold into counted pour cost.')
       + '<div class="br-cstat">' + stat('Last count', cn.last_count_mdy ? hn(cn.last_count_mdy) : 'None yet') + stat(cn.last_count_mdy ? 'Next due' : 'First due', cn.next_due_mdy ? hn(cn.next_due_mdy) : '—', 'month-end, after close')
       + stat('For counted pour cost', ml ? 'Still needed' : 'Ready', ml || '') + '</div>'
       + (per ? countedCard(per) : '')
       + '<div class="br-cform br-rise"><div class="top"><label class="dt">Count date<input class="br-in2 date" type="date" id="br-cdate" value="' + esc2(date) + '" max="' + esc2(todayIso()) + '" aria-label="Count date"></label>'
+      + (cont ? '<span class="br-ccont">Continuing your ' + hn(isoMdy(date)) + ' count <button type="button" class="cbtn cbtn-text cbtn-sm" data-br-cnew="1">Start a ' + hn(isoMdy(todayIso())) + ' count</button></span>' : '')
       + '<div class="pg" id="br-cprog">' + sheetProgress() + '</div></div>'
       + '<input class="br-q" id="br-csq" type="search" placeholder="Find a bottle, can or keg" aria-label="Find a product to count" aria-controls="br-csheet" value="' + esc2(ST.sheetQ || '') + '">'
       + '<div id="br-csheet" class="br-csheet">' + sheetBody() + '</div></div>'
@@ -50827,7 +50839,7 @@ function sfw2RuleCheck(chk) {
       else if (t.getAttribute && t.getAttribute('data-br-cnt')) ST.cnt[t.getAttribute('data-br-cnt')] = t.value;
     });
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-whyclose],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab],[data-br-handsave],[data-br-handx],[data-br-handedit],[data-br-handdel],[data-br-chadd]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-whyclose],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab],[data-br-handsave],[data-br-handx],[data-br-handedit],[data-br-handdel],[data-br-chadd],[data-br-cnew]') : null;
       if (!t) return;
       var a = function (n) { return t.getAttribute(n); };
       if (a('data-br-tab') != null) { setTab(a('data-br-tab')); return; }
@@ -50929,6 +50941,9 @@ function sfw2RuleCheck(chk) {
                  a('data-item') ? 'Added ' + hb.name + ' and matched — its cost shows under Cost' : (onSheet ? 'Added ' + hb.name + ' — count it below' : 'Saved ' + hb.name),
                  a('data-item') ? 'Added ' + hb.name + ' — the drink is matched and costed at your price' : (onSheet ? 'Added ' + hb.name + ' to the count' : 'Saved — drinks poured from ' + hb.name + ' use the new price'),
                  onSheet ? function () { ST.sheet = null; ST.sheetQ = hb.name; } : null);
+      } else if (a('data-br-cnew') != null) {
+        ST.cnt.date = todayIso(); ST.sheet = null;
+        if (DATA) rerender(DATA);
       } else if (a('data-br-chadd') != null) {
         openHandForm($id('br-chand'), {category: 'liquor', name: ST.sheetQ || ''});
       } else if (a('data-br-handx') != null) {
