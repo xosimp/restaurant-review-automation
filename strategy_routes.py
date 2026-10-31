@@ -2015,7 +2015,7 @@ def _do_roster_get(u):
 # owner's highest rule, and an Owner role paid by the hour is pay.
 _OWNER_STAFF_FIELDS = ("floor_manager", "acting_manager", "paid_hourly")
 _F1_STAFF_FIELDS = ("floor_manager", "paid_hourly", "acting_manager", "standing_shifts", "trainee", "closes_for",
-                    "work_days", "doubles")
+                    "work_days", "doubles", "priority_roles")
 
 
 def _do_staff_settings_set(u):
@@ -2079,7 +2079,7 @@ def _do_staff_settings_set(u):
                          acting_manager=b.get("acting_manager"), standing_shifts=b.get("standing_shifts"),
                          trainee=(b.get("trainee") if b.get("trainee") is not None else ({} if "trainee" in b else None)),
                          closes_for=b.get("closes_for"), work_days=b.get("work_days"),
-                         doubles=b.get("doubles"), updated_by=_who(u))
+                         doubles=b.get("doubles"), priority_roles=b.get("priority_roles"), updated_by=_who(u))
     except _ss.StaffSettingsError as e:
         return {"ok": False, "error": str(e)}, 400
     changed = [k for k in ("active", "employment_type", "min_hours", "max_hours", "daypart_availability", "is_minor",

@@ -11742,6 +11742,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-p .n{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swg-p .h{font-size:12px;color:var(--ink3)}
 .swg-p .h.ot{color:var(--hb-bad);font-weight:600}
+/* Priority on busy nights (owner, 10/30/26): the busiest day's ember, said in words. */
+.swg-p .h .pri{color:var(--ember);font-weight:600}
 .swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:flex-start;gap:4px;position:relative}
 .swg-chip{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);cursor:pointer;text-align:left;font:inherit;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,opacity .16s ease}
 /* The hovered shift lifts out on its own: no dimming of the rest of the
@@ -28317,8 +28319,26 @@ function _swHasContent(sec) {
   if (k === 'req') return full('sfw1-req');
   return true;
 }
+/* The week grid reads by role, never by the POS's AM/PM job codes (owner,
+   10/30/26: "get rid of the am/pm split — combine all roles"): Host AM and
+   Host PM are one Host group, and a role the owner renamed reads as named
+   (Simple EJ's Utility is its Food runner). The row keeps its job code. */
+var _swFams = null, _swFamsAsked = false;
+function _swRoleLabel(code) {
+  var low = String(code || '').replace(/\s+/g, ' ').replace(/^\s|\s$/g, '').toLowerCase(), f = (_swFams && _swFams.families) || [], fam = '', i, j;
+  if (!low) return '';
+  for (i = 0; i < f.length && !fam; i++) for (j = 0; j < (f[i].roles || []).length; j++) if (String(f[i].roles[j]).toLowerCase() === low) { fam = f[i].label || f[i].family || ''; break; }
+  if (!fam) fam = low.replace(/\s+(am|pm|day|night|lunch|dinner|brunch)$/i, '');
+  return fam.charAt(0).toUpperCase() + fam.slice(1);
+}
 function swRenderGrid() {
   var host = document.getElementById('swg'); if (!host) return;
+  if (!_swFamsAsked) {
+    _swFamsAsked = true;
+    fetch('/api/labor/role-families', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (f) {
+      if (f && f.ok) { _swFams = f; swRenderGrid(); }
+    })['catch'](function () {});
+  }
   // The selected shift is followed by its row, not its index: an edit
   // re-sorts the week.
   if (_swSelRow) { _swSel = _schedRows.indexOf(_swSelRow); if (_swSel < 0) { _swSel = null; _swSelRow = null; } }
@@ -28342,9 +28362,13 @@ function swRenderGrid() {
   for (i = 0; i < (_schedRosterNames || []).length; i++) person(_schedRosterNames[i]);
   var groups = {}, gOrder = [];
   for (i = 0; i < order.length; i++) {
-    var p = byPerson[order[i]], best = '', bn = -1, rk;
-    for (rk in p.roles) if (p.roles.hasOwnProperty(rk) && p.roles[rk] > bn) { best = rk; bn = p.roles[rk]; }
-    p.role = best || _schedRoleOf(p.name) || 'Other';
+    // The role they work most this week, AM and PM counted as one.
+    var p = byPerson[order[i]], best = '', bn = -1, rk, tally = {}, lab, top = '', tn = -1;
+    for (rk in p.roles) if (p.roles.hasOwnProperty(rk)) { lab = _swRoleLabel(rk); tally[lab] = (tally[lab] || 0) + p.roles[rk]; }
+    for (lab in tally) if (tally.hasOwnProperty(lab) && tally[lab] > tn) { top = lab; tn = tally[lab]; }
+    for (rk in p.roles) if (p.roles.hasOwnProperty(rk) && _swRoleLabel(rk) === top && p.roles[rk] > bn) { best = rk; bn = p.roles[rk]; }
+    p.code = best || _schedRoleOf(p.name) || '';
+    p.role = _swRoleLabel(p.code) || 'Other';
     if (!groups[p.role]) { groups[p.role] = []; gOrder.push(p.role); }
     groups[p.role].push(p);
   }
@@ -28390,13 +28414,14 @@ function swRenderGrid() {
       var q = g[j], ot = q.hrs > ceil;
       var sc = _swScore(q.name), dots = '';
       if (sc) { dots = '<span class="r" title="' + _escAttr('Operational score ' + sc + ' of 5') + '">'; for (var di = 1; di <= 5; di++) dots += '<i' + (di <= sc ? ' class="on"' : '') + '></i>'; dots += '</span>'; }
-      h += '<div class="swg-r"><div class="swg-p"><span class="n" title="' + _escAttr(q.name) + '">' + _escHtml(q.name) + dots + '</span><span class="h' + (ot ? ' ot' : '') + '">' + (q.hrs > 0 ? '<span class="hb-num">' + _schedHrs(q.hrs) + 'h</span>' : 'No shifts') + (ot ? ' · over ' + ceil + 'h' : '') + '</span></div>';
+      var pri = _swPriority(q.name, q.role) ? ' · <span class="pri" title="' + _escAttr('Priority for ' + q.role + ' on busy nights: filled first on Friday and Saturday nights, event nights and the week’s busiest shifts') + '">Priority</span>' : '';
+      h += '<div class="swg-r"><div class="swg-p"><span class="n" title="' + _escAttr(q.name) + '">' + _escHtml(q.name) + dots + '</span><span class="h' + (ot ? ' ot' : '') + '">' + (q.hrs > 0 ? '<span class="hb-num">' + _schedHrs(q.hrs) + 'h</span>' : 'No shifts') + (ot ? ' · over ' + ceil + 'h' : '') + pri + '</span></div>';
       for (k = 0; k < days.length; k++) {
         var list = (q.cells[days[k]] || []).slice().sort(function (a, b) { return (_schedMinutes(_schedRows[a].shift_start) || 0) - (_schedMinutes(_schedRows[b].shift_start) || 0); });
-        h += '<div class="swg-c" data-swg-drop="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" data-swg-role="' + _escAttr(q.role) + '">';
+        h += '<div class="swg-c" data-swg-drop="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" data-swg-role="' + _escAttr(q.code) + '">';
         for (var c = 0; c < list.length; c++) {
           var ri = list[c], rw = _schedRows[ri], why = rw.needs_review ? (rw.review_reason || 'needs review') : (rw.notes || '');
-          var sub = '<span class="hb-num">' + _schedHrs(_swRowHrs(rw)) + 'h</span>' + (rw.role && rw.role !== q.role ? ' · ' + _escHtml(rw.role) : '') + (rw.needs_review ? ' · ' + _escHtml(String(why).slice(0, 40)) : '');
+          var sub = '<span class="hb-num">' + _schedHrs(_swRowHrs(rw)) + 'h</span>' + (rw.role && _swRoleLabel(rw.role) !== q.role ? ' · ' + _escHtml(_swRoleLabel(rw.role)) : '') + (rw.needs_review ? ' · ' + _escHtml(String(why).slice(0, 40)) : '');
           h += '<button type="button" draggable="true" class="swg-chip' + (rw.needs_review || rw.review_unchecked ? ' bad' : '') + (rw.review_pending ? ' pending' : '') + (rw.locked ? ' locked' : '') + (_schedOverrides[ri] ? ' chg' : '') + (_swEditIdx === ri ? ' editing' : '') + (_swSel === ri ? ' sel' : '') + '" data-swg-chip="' + ri + '"'
              + ' aria-label="' + _escAttr(q.name + ', ' + _schedDayOf(days[k]) + ' ' + (rw.shift_start || '') + ' to ' + (rw.shift_end || '') + (rw.needs_review ? ', needs review' : '')) + '">'
              + '<span class="t">' + _escHtml(_swShort(rw.shift_start)) + '–' + _escHtml(_swShort(rw.shift_end)) + '</span><span class="s">' + sub + '</span>'
@@ -28828,6 +28853,19 @@ function _swScore(name) {
   var ro = (_swRoster && _swRoster.roster) || [], low = String(name || '').toLowerCase(), i;
   for (i = 0; i < ro.length; i++) if (String(ro[i].name || '').toLowerCase() === low) return +ro[i].score || 0;
   return 0;
+}
+/* Whether the person is Priority on busy nights in the role's family (staff
+   settings' priority_roles, lower-case families; daypart words off). */
+function _swPriority(name, role) {
+  var ro = (_swRoster && _swRoster.roster) || [], low = String(name || '').toLowerCase(), i, j;
+  var fam = String(role || '').replace(/\s+(AM|PM)$/i, '').replace(/^\s+|\s+$/g, '').toLowerCase();
+  for (i = 0; i < ro.length; i++) {
+    if (String(ro[i].name || '').toLowerCase() !== low) continue;
+    var pr = (ro[i].settings || {}).priority_roles || [];
+    for (j = 0; j < pr.length; j++) if (String(pr[j]).toLowerCase() === fam) return true;
+    return false;
+  }
+  return false;
 }
 function _swWeekHours(name) {
   var low = String(name || '').toLowerCase(), h = 0, n = {}, i;
@@ -30395,7 +30433,7 @@ function _swDropOk(i, cell) {
   var r = _schedRows[i]; if (!r || !cell) return false;
   var pr = String(cell.getAttribute('data-swg-drop') || '').split('|'), role = String(cell.getAttribute('data-swg-role') || '').toLowerCase();
   if (String(pr[0]).toLowerCase() === String(r.employee || '').toLowerCase() && pr[1] === r.date) return false;
-  return !r.role || !role || role === String(r.role).toLowerCase() || role === 'other';
+  return !r.role || !role || _swRoleLabel(role) === _swRoleLabel(r.role) || role === 'other';
 }
 function _swDropClear() { var ds = document.querySelectorAll('.swg-c.drop,.swg-c.nodrop'), k; for (k = 0; k < ds.length; k++) ds[k].className = 'swg-c'; }
 document.addEventListener('dragstart', function (ev) {
@@ -46591,6 +46629,7 @@ function sfw2RuleCheck(chk) {
     var st = r.settings || {}, h = '';
     if (sfw2TraineeActive(st.trainee, todayIso())) h += memPill('Training', 'neutral');
     if (r.floor_manager && r.floor_manager.counts) h += memPill('Runs the floor', 'neutral');
+    if ((st.priority_roles || []).length) h += memPill('Priority', 'neutral');
     return h;
   };
   window.sfw2RosterAlso = function (r) {
@@ -46666,10 +46705,38 @@ function sfw2RuleCheck(chk) {
     h += '<div><div class="k">Doubles</div><div class="chip-tog">';
     for (i = 0; i < dch.length; i++) h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (dch[i][2] ? ' on' : '') + (ro ? ' ro' : '') + '" data-sfw2-dbl="' + dch[i][0] + '" data-name="' + nm + '" aria-pressed="' + (dch[i][2] ? 'true' : 'false') + '"' + (ro ? ' disabled' : '') + '>' + dch[i][1] + '</button>';
     h += '</div><div class="sfw2-err" data-sfw2-err="dbl"></div></div>';
+    // Priority on busy nights (owner, 10/30/26): the roles they are filled
+    // first in on Friday and Saturday nights, event nights and the week's
+    // busiest shifts — a preference, never past a rule.
+    var pch = sfw2PriorityChoices(r), pr = st.priority_roles || [];
+    h += '<div><div class="k">Priority on busy nights</div><div class="chip-tog" data-sfw2-pr-box="' + nm + '">';
+    for (i = 0; i < pch.length; i++) {
+      var plit = sfw2HasPriority(pr, pch[i]);
+      h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (plit ? ' on' : '') + (ro ? ' ro' : '') + '" data-sfw2-pr="' + e(pch[i]) + '" aria-pressed="' + (plit ? 'true' : 'false') + '"' + (ro ? ' disabled' : '') + '>' + e(pch[i]) + '</button>';
+    }
+    if (!pch.length) h += '<span class="none">No roles on file for them yet.</span>';
+    h += '</div><div class="said"><small>' + (pr.length ? 'Filled first in these roles on Friday and Saturday nights, event nights and the week’s busiest shifts — never past their availability, hours or overtime.' : 'Nothing picked: busy shifts go to whoever fits best.') + '</small></div><div class="sfw2-err" data-sfw2-err="pr"></div></div>';
     // Reliability (D-44, L-18): missed, called out, late over clocked shifts.
     h += '<div><div class="k">Reliability</div><div class="sfw2-rel">' + n(sfw2ReliabilityLine(r.reliability)) + '</div></div>';
     return h;
   };
+  /* The roles somebody can be Priority in: the role they work most, the
+     others they worked lately and any already picked, daypart words off. */
+  function sfw2PriorityChoices(r) {
+    var seen = {}, out = [], st = (r && r.settings) || {}, i;
+    function add(x) { x = roleOf(x); if (!x || seen[x.toLowerCase()]) return; seen[x.toLowerCase()] = 1; out.push(x); }
+    add(r && r.role);
+    for (i = 0; i < ((r && r.recent_roles) || []).length; i++) add(r.recent_roles[i]);
+    for (i = 0; i < (st.priority_roles || []).length; i++) {
+      if (!sfw2HasPriority(out, st.priority_roles[i])) add(String(st.priority_roles[i]).charAt(0).toUpperCase() + String(st.priority_roles[i]).slice(1));
+    }
+    return out;
+  }
+  function sfw2HasPriority(list, role) {
+    var want = roleOf(role).toLowerCase(), i;
+    for (i = 0; i < (list || []).length; i++) if (roleOf(list[i]).toLowerCase() === want) return true;
+    return false;
+  }
   function _sfw2ChipTog(choices, picked, ro) {
     var on = {}, o = '', i;
     for (i = 0; i < (picked || []).length; i++) on[roleOf(picked[i]).toLowerCase()] = 1;
@@ -46707,9 +46774,10 @@ function sfw2RuleCheck(chk) {
     return out;
   }
   document.addEventListener('click', function (ev) {
-    var body = $id('roster-body'), sheet = $id('pp-roster'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dbl],[data-sfw2-dorm],[data-sfw2-open]') : null;
+    var body = $id('roster-body'), sheet = $id('pp-roster'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dbl],[data-sfw2-pr],[data-sfw2-dorm],[data-sfw2-open]') : null;
     if (!t || !((body && body.contains(t)) || (sheet && sheet.contains(t))) || t.disabled) return;
-    var cfBox = t.closest('[data-sfw2-cf-box]'), name = t.getAttribute('data-name') || (cfBox ? cfBox.getAttribute('data-sfw2-cf-box') : '');
+    var cfBox = t.closest('[data-sfw2-cf-box]') || t.closest('[data-sfw2-pr-box]');
+    var name = t.getAttribute('data-name') || (cfBox ? (cfBox.getAttribute('data-sfw2-cf-box') || cfBox.getAttribute('data-sfw2-pr-box')) : '');
     var r = entry(name), st = (r && r.settings) || {}, v, list, i;
     if (t.hasAttribute('data-sfw2-open')) {
       var cell = t.parentNode, form = cell ? cell.querySelector('[data-sfw2-form="' + t.getAttribute('data-sfw2-open') + '"]') : null;
@@ -46770,6 +46838,13 @@ function sfw2RuleCheck(chk) {
     if (t.hasAttribute('data-sfw2-dbl')) {
       v = t.getAttribute('data-sfw2-dbl');
       saveFacts(name, {doubles: v === 'yes' ? true : (v === 'no' ? false : 'auto')}, t, 'dbl', 'Saved — the next draft keeps it');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-pr')) {
+      var prole = t.getAttribute('data-sfw2-pr'), pcur = st.priority_roles || [], pnext = [], phad = false;
+      for (i = 0; i < pcur.length; i++) { if (roleOf(pcur[i]).toLowerCase() === prole.toLowerCase()) phad = true; else pnext.push(pcur[i]); }
+      if (!phad) pnext.push(prole);
+      saveFacts(name, {priority_roles: pnext}, t, 'pr', pnext.length ? 'Saved — ' + name + ' is filled first on busy nights' : 'Saved — no longer Priority on busy nights');
       return;
     }
     if (t.hasAttribute('data-sfw2-cf')) {
@@ -48449,6 +48524,7 @@ function sfw2RuleCheck(chk) {
 .br-cstat .cs small{font-size:13.5px;line-height:1.4;color:var(--ink3)}
 .br-cform{padding:24px 26px;border-radius:24px;border:1px solid var(--br-hair2);background:url(/static/img/glow/corner-tr-ember-v1.png) 0 0/100% 100% no-repeat,var(--br-plate);box-shadow:var(--elev-1)}
 .br-cform .top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+.br-ccont{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13.5px;color:var(--ink3);margin-right:auto}
 .br-cform .dt{display:flex;flex-direction:column;gap:6px;font:600 13px/1 'Apfel Grotezk',sans-serif;color:var(--ink3)}
 .br-cform .pg{display:flex;align-items:center;gap:10px;font:500 14px/1 'Space Grotesk',sans-serif;color:var(--ink2)}
 .br-cform .pg .br-pbar{width:140px;margin:0}
@@ -49749,7 +49825,7 @@ function sfw2RuleCheck(chk) {
      every Bar open. */
   function sheetWanted() {
     if (ST.tab !== 'stock') return;
-    var date = ST.cnt.date || todayIso();
+    var date = countDate();
     if (!ST.sheet || ST.sheet.count_date !== date) loadSheet(date);
   }
   /* A view's heading: its title, the period it covers, and — folded — how it
@@ -50145,16 +50221,27 @@ function sfw2RuleCheck(chk) {
   }
 
   /* ── Inventory: count the bar, log the waste ─────────────────────────── */
+  /* The sheet opens on a count still going: one saved in the last two days
+     (owner, 10/31/26 — "0 of 210 counted when I counted 15 yesterday": a
+     count that ran past midnight opened on a blank new date). Starting a new
+     date is one tap. */
+  function countDate(d) {
+    if (ST.cnt.date) return ST.cnt.date;
+    var lc = ((d || DATA || {}).counted || {}).last_count, t = todayIso(), gap;
+    gap = lc ? (Date.parse(t + 'T12:00:00') - Date.parse(lc + 'T12:00:00')) / 864e5 : 99;
+    return lc && gap > 0 && gap <= 2 ? lc : t;
+  }
   function countsSec2(d) {
     var cn = d.counted || {}, per = countedPeriod(d), miss = cn.missing || [], ml = '', i;
     for (i = 0; i < miss.length; i++) ml += (i ? '; ' : '') + esc2(miss[i].component) + (miss[i].why ? ' — ' + esc2(miss[i].why) : '');
-    var date = ST.cnt.date || todayIso();
+    var date = countDate(d), cont = !ST.cnt.date && date !== todayIso();
     var stat = function (l, v, s) { return '<div class="cs"><span>' + l + '</span><b>' + v + '</b>' + (s ? '<small>' + s + '</small>' : '') + '</div>'; };
     return '<section class="br-sec2" id="br-counts">' + head(per ? 'Pour cost, counted' : 'Count the bar', '', 'Count every bottle, can and keg after close: liquor and wine in bottles (2.5 for two and a half), packaged beer in cans or bottles, draft in kegs (0.5 for half a keg). Each count saves as you type it and is valued at what you last paid; the categories add up from their products. Two counts turn bought vs sold into counted pour cost.')
       + '<div class="br-cstat">' + stat('Last count', cn.last_count_mdy ? hn(cn.last_count_mdy) : 'None yet') + stat(cn.last_count_mdy ? 'Next due' : 'First due', cn.next_due_mdy ? hn(cn.next_due_mdy) : '—', 'month-end, after close')
       + stat('For counted pour cost', ml ? 'Still needed' : 'Ready', ml || '') + '</div>'
       + (per ? countedCard(per) : '')
       + '<div class="br-cform br-rise"><div class="top"><label class="dt">Count date<input class="br-in2 date" type="date" id="br-cdate" value="' + esc2(date) + '" max="' + esc2(todayIso()) + '" aria-label="Count date"></label>'
+      + (cont ? '<span class="br-ccont">Continuing your ' + hn(isoMdy(date)) + ' count <button type="button" class="cbtn cbtn-text cbtn-sm" data-br-cnew="1">Start a ' + hn(isoMdy(todayIso())) + ' count</button></span>' : '')
       + '<div class="pg" id="br-cprog">' + sheetProgress() + '</div></div>'
       + '<input class="br-q" id="br-csq" type="search" placeholder="Find a bottle, can or keg" aria-label="Find a product to count" aria-controls="br-csheet" value="' + esc2(ST.sheetQ || '') + '">'
       + '<div id="br-csheet" class="br-csheet">' + sheetBody() + '</div></div>'
@@ -50752,7 +50839,7 @@ function sfw2RuleCheck(chk) {
       else if (t.getAttribute && t.getAttribute('data-br-cnt')) ST.cnt[t.getAttribute('data-br-cnt')] = t.value;
     });
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-whyclose],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab],[data-br-handsave],[data-br-handx],[data-br-handedit],[data-br-handdel],[data-br-chadd]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-whyclose],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab],[data-br-handsave],[data-br-handx],[data-br-handedit],[data-br-handdel],[data-br-chadd],[data-br-cnew]') : null;
       if (!t) return;
       var a = function (n) { return t.getAttribute(n); };
       if (a('data-br-tab') != null) { setTab(a('data-br-tab')); return; }
@@ -50854,6 +50941,9 @@ function sfw2RuleCheck(chk) {
                  a('data-item') ? 'Added ' + hb.name + ' and matched — its cost shows under Cost' : (onSheet ? 'Added ' + hb.name + ' — count it below' : 'Saved ' + hb.name),
                  a('data-item') ? 'Added ' + hb.name + ' — the drink is matched and costed at your price' : (onSheet ? 'Added ' + hb.name + ' to the count' : 'Saved — drinks poured from ' + hb.name + ' use the new price'),
                  onSheet ? function () { ST.sheet = null; ST.sheetQ = hb.name; } : null);
+      } else if (a('data-br-cnew') != null) {
+        ST.cnt.date = todayIso(); ST.sheet = null;
+        if (DATA) rerender(DATA);
       } else if (a('data-br-chadd') != null) {
         openHandForm($id('br-chand'), {category: 'liquor', name: ST.sheetQ || ''});
       } else if (a('data-br-handx') != null) {

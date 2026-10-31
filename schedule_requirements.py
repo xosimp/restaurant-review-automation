@@ -15,6 +15,7 @@ Pure: no I/O, no model call. labor.generate_optimized_schedule calls these
 while it builds the prompt; schedule_engine gathers the inputs.
 """
 import json
+import math
 import re
 from datetime import datetime
 
@@ -260,6 +261,125 @@ def busy_shifts(dates: list, profiles: list = None, demand_by_day: dict = None,
             if _sq.DEMAND_RANK.get(demand, 1) >= _sq.DEMAND_RANK[_sq.HARD_DEMAND]:
                 out.add((d, part))
     return out
+
+
+# Priority staffing (owner, 10/30/26 — Simple EJ's: "Sloane, Emily and Mia
+# primarily for busy nights"): the share of the week's shifts, busiest
+# first, that count as busy, and the nights that are busy unless the
+# restaurant's own demand puts them below the week's middle.
+PRIORITY_TOP_SHARE = 0.25
+PRIORITY_WEEKEND_NIGHTS = ("Friday", "Saturday")
+
+
+def _signal_busy(entry) -> bool:
+    """Whether a date's demand signal (demand_signals.by_date) is one the
+    schedule plans on as a busier day: a positive lift (the owner's figure,
+    booked covers over the weekday's typical, a measured event or post), or
+    an owner's event with no figure (`assumed`) or another labelled signal
+    with none. A lift at or below zero is not. A catalog game nobody has
+    measured to matter here is `context` only (demand_signals' own rule,
+    event re-audit P1-01) and makes nothing busy on its own."""
+    if not isinstance(entry, dict):
+        return False
+    lift = entry.get("lift_pct")
+    if lift is not None:
+        try:
+            return float(lift) > 0
+        except (TypeError, ValueError):
+            return False
+    return bool(entry.get("assumed") or entry.get("labels"))
+
+
+def _shift_key(k):
+    key = tuple(k.split("|", 1)) if isinstance(k, str) else tuple(k or ())
+    if len(key) != 2:
+        return None
+    part = str(key[1] or "").strip().lower()
+    return str(key[0] or "")[:10], ("night" if part == "late" else part)
+
+
+def _people(v) -> float:
+    if isinstance(v, dict):
+        v = v.get("required", v.get("people", 0))
+    try:
+        return max(0.0, float(v or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def priority_busy_shifts(dates, requirements_by_date: dict = None, levels: dict = None,
+                         demand_by_date: dict = None) -> set:
+    """{(date, daypart)}: the week's busy shifts, the ones a person marked
+    Priority in a role (staff settings' priority_roles) is filled first on.
+    Pure.
+
+    A shift's demand is the people its requirement asks for across every
+    role (`requirements_by_date`, {(date, daypart) or "date|daypart":
+    {role: people}} — the demand-scaled usual crew, a "late" segment
+    counted with the night), ties broken by its sales level (`levels`,
+    {(date, daypart): weight}, shift_quality.DEMAND_WEIGHT of the shift's
+    profile — the forecast with any dated lift in it). Without any
+    requirement the level alone ranks the shifts. Busy is:
+
+      * the top PRIORITY_TOP_SHARE of the week's shifts by that demand
+        (ties at the line included), and only those strictly above the
+        week's middle (upper median) — a flat week has no top quartile;
+      * Friday and Saturday night (PRIORITY_WEEKEND_NIGHTS) unless their
+        demand is below the week's middle (lower median) — the owner's own
+        words; with nothing measured at all they are busy;
+      * the night of any date with a demand signal the schedule plans on
+        (`demand_by_date`, demand_signals.by_date: _signal_busy) — an
+        event or game night measured to matter, an owner's event, booked
+        covers over the usual — or that date's shifts where it has no night.
+
+    A date with no requirement while others have one is closed or not
+    staffed, and none of its shifts is busy."""
+    dateset = {str(d)[:10] for d in dates or () if d}
+    shifts = {}
+    for k, roles in (requirements_by_date or {}).items():
+        key = _shift_key(k)
+        if not key or key[0] not in dateset or not isinstance(roles, dict):
+            continue
+        n = sum(_people(v) for v in roles.values())
+        if n > 0:
+            shifts[key] = [shifts.get(key, [0.0, 0.0])[0] + n, 0.0]
+    measured = bool(shifts)
+    for k, w in (levels or {}).items():
+        key = _shift_key(k)
+        if not key or key[0] not in dateset:
+            continue
+        try:
+            w = float(w or 0)
+        except (TypeError, ValueError):
+            continue
+        if key in shifts:
+            shifts[key][1] = max(shifts[key][1], w)
+        elif not measured and w > 0:
+            shifts[key] = [0.0, w]
+    score = {k: (v[0], v[1]) for k, v in shifts.items()}
+    busy = set()
+    if score:
+        ranked = sorted(score.values(), reverse=True)
+        asc = sorted(score.values())
+        n = len(ranked)
+        line = ranked[max(1, math.ceil(n * PRIORITY_TOP_SHARE)) - 1]
+        upper_mid, lower_mid = asc[n // 2], asc[(n - 1) // 2]
+        busy |= {k for k, v in score.items() if v >= line and v > upper_mid}
+    for d in sorted(dateset):
+        if _day_name(d) in PRIORITY_WEEKEND_NIGHTS:
+            key = (d, "night")
+            if not score or (key in score and score[key] >= lower_mid):
+                busy.add(key)
+    for d, entry in (demand_by_date or {}).items():
+        d = str(d or "")[:10]
+        if d not in dateset or not _signal_busy(entry):
+            continue
+        same_day = [k for k in score if k[0] == d]
+        if not score or (d, "night") in score:
+            busy.add((d, "night"))
+        else:
+            busy.update(same_day)
+    return busy
 
 
 def closing_part(day: str, close_times: dict = None) -> str:

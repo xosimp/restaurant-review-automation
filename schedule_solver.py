@@ -209,6 +209,14 @@ K_MIN_HOURS_NEW = 1000.0  # per hour under what the draft kept somebody at towar
 # above quality (coverage, overtime, the minimums) still win. A person's own
 # pending day-off ask is never a miss.
 K_HABIT = 250.0
+# Somebody not Priority in the role on a busy shift a Priority person of the
+# role could legally take (staff settings' priority_roles, owner 10/30/26 —
+# Simple EJ's hosts on Friday and Saturday nights and game nights): more
+# than a whole peak shift's score, so no fairness, preference, strength or
+# stability gain trades it away, and less than a habit the manager taught
+# by hand and every tier above quality — coverage, overtime, the minimums,
+# the hours maximum and availability (those are the domain) always win.
+K_PRIORITY = 220.0
 # What the edit predictor costs: points of the shift a row the manager is
 # expected to change is kept on (schedule_optimizer.LIKELY_EDIT_SHIFT_POINTS
 # — the weight the repair loop holds a move to). The scheduling memory is a
@@ -303,6 +311,7 @@ class Problem:
         self._build_caps()
         self._build_scale()
         self._build_domains()
+        self._build_priority()
         self._build_groups()
         self._build_components()
 
@@ -1301,6 +1310,56 @@ class Problem:
                 "kept": self.names[u.draft] if u.draft is not None else None,
                 "reasons": dict(sorted(why.items())[:12]), "text": text}
 
+    # ── priority: who is filled first on the week's busy shifts ────────────
+    def _build_priority(self):
+        """The busy shifts (schedule_requirements.priority_busy_shifts over
+        the week's requirements, each shift's sales level and the dated
+        demand signals) and, per unit, the people Priority in its role
+        family who may legally work it (Constraints.priority_roles — staff
+        settings' priority_roles, owner 10/30/26). A standby or a manager
+        candidate the plan could not cover is no shift anybody is owed, so
+        none is a priority shift."""
+        import schedule_requirements as _sreq
+        c, s = self.c, self.signals
+        self.priority_fams = [set() for _ in self.names]
+        self.busy_parts = set()
+        self.priority_people = {}
+        said = getattr(c, "priority_roles", None) or {} if c is not None else {}
+        if not said:
+            return
+        for k, fams in said.items():
+            p = self.pidx.get(k)
+            if p is None:
+                p = self.pidx.get(self.key(k))
+            if p is not None:
+                self.priority_fams[p] = {str(f).strip().lower() for f in fams or () if f}
+        if not any(self.priority_fams):
+            return
+        dates = sorted(set(self.week_dates) | {u.date for u in self.units if u.date})
+        levels = {}
+        for d in dates:
+            day = sq._day_name(d, "")
+            if not day:
+                continue
+            for part in _sreq.DAYPARTS:
+                levels[(d, part)] = sq.DEMAND_WEIGHT.get(self.profile(d, day, part).demand, 1.0)
+        self.busy_parts = _sreq.priority_busy_shifts(dates, s.get("requirements_by_date") or {}, levels,
+                                                     s.get("demand_by_date") or {})
+        for u in self.units:
+            if u.fixed or not any(pt in self.busy_parts for pt in u.parts):
+                continue
+            if any(r.get("_standby") or r.get("_mgr_extra") for r in u.rows):
+                continue
+            who = {p for p in self._dom_of(u) if self.priority_fams[p] & u.fams}
+            if who:
+                self.priority_people[u.id] = who
+
+    def priority_cost(self, u, p) -> float:
+        """K_PRIORITY when u is a busy shift somebody Priority in its role
+        family may legally work and p is not one of them; else 0."""
+        who = self.priority_people.get(u.id) if getattr(self, "priority_people", None) else None
+        return K_PRIORITY if who and p not in who else 0.0
+
     # ── groups: each shift as the scorer sees it, and the day's rules ──────
     def _build_groups(self):
         s, c = self.signals, self.c
@@ -1637,6 +1696,11 @@ class Problem:
                     self.l_weight[q] for q in fans)
         if self.primary_role[p] and self.primary_role[p] not in u.roles:
             out["role"] = K_OFF_ROLE
+        # Priority on a busy shift: somebody else of the role while a
+        # Priority person of it could legally take the shift.
+        prio = self.priority_cost(u, p)
+        if prio:
+            out["priority"] = prio
         # Labor dollars: what their own rate costs over the draft's person
         # on the shift (a cheaper person earns nothing — the solver
         # finishes the draft's quality, it never trades it for dollars).
@@ -3069,6 +3133,7 @@ _WHY = {
     "learned": lambda P, u, o, n: "it is what the manager keeps doing on that shift",
     "habit": lambda P, u, o, n: "it is what the manager has taught the draft by hand on that shift",
     "likely_edit": lambda P, u, o, n: f"the manager usually changes {P.names[o]} on that shift",
+    "priority": lambda P, u, o, n: f"{P.names[n]} is Priority for {u.role_label or 'the role'} on busy shifts",
 }
 
 

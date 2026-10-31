@@ -22,6 +22,7 @@
 # 10/10/26: psycopg[binary] 3.2.3 added (with psycopg-binary) for the Postgres
 # readiness work (db_dialect, scripts/run_pg_copy.py); every existing pin held.
 # 10/19/26: werkzeug 3.1.8 -> 3.1.9 (pip-audit PYSEC-2026-4312); every other pin held.
+# 10/31/26: pyasn1 0.6.4 -> 0.6.5, pypdf 6.21.2 -> 6.21.4 (pip-audit); every other pin held.
 absl-py==2.5.1
     # via ortools
 annotated-types==0.8.0
@@ -121,7 +122,7 @@ psycopg[binary]==3.2.3
     # via -r requirements.in
 psycopg-binary==3.2.3
     # via psycopg
-pyasn1==0.6.4
+pyasn1==0.6.5
     # via
     #   pyasn1-modules
     #   webauthn
@@ -137,7 +138,7 @@ pyjwt==2.15.1
     # via -r requirements.in
 pyopenssl==26.4.0
     # via webauthn
-pypdf==6.21.2
+pypdf==6.21.4
     # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via pandas

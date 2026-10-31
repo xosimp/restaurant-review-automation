@@ -228,6 +228,18 @@ def test_role_families_are_suggested_from_the_job_codes_and_stored_by_the_owner(
     assert status == 400
 
 
+def test_a_role_the_owner_renamed_reads_as_they_named_it():
+    # Owner, 10/30/26: Simple EJ's Utility AM/PM codes are its food runners.
+    rid = _rid()
+    _team(rid, [("A", "Utility AM"), ("B", "Utility PM"), ("C", "Server AM")])
+    out, status = _call(strategy_routes._do_role_families_set, _u(OWNER, rid),
+                        {"families": {"Utility AM": "Food runner", "Utility PM": "Food runner"}})
+    assert status == 200
+    fams = {f["label"]: f["roles"] for f in out["families"]}
+    assert fams["Food runner"] == ["Utility AM", "Utility PM"] and "Utility" not in fams
+    assert fams["Server"] == ["Server AM"]
+
+
 # ── D-14: a staffing rule said back as it will be checked ─────────────────
 
 def test_a_saved_staffing_rule_is_read_back():

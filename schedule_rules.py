@@ -1783,6 +1783,10 @@ class Constraints:
     # real floor days): {lower: [{"day", "start", "end", "role"}]}.
     standing_shifts: dict = field(default_factory=dict)
     work_days: dict = field(default_factory=dict)       # {key: {"Monday",...}} days worked, hours left to the draft
+    # Who is filled first in a role family on a busy shift (staff settings'
+    # priority_roles, owner 10/30/26): {key: set(family lower)} — a
+    # preference the solvers rank above every ordinary one, never a rule.
+    priority_roles: dict = field(default_factory=dict)
     # The restaurant's role families ("Server AM" and "Server PM" are one
     # role): {role lower: family lower}; family() reads it with
     # shift_quality.role_family as the default.
@@ -3820,6 +3824,12 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     # The days they work with no fixed hours (owner, 10/9/26: "any time").
     if st.get("work_days"):
         c.work_days[key] = set(st["work_days"])
+    # The role families they are filled first in on busy shifts (owner,
+    # 10/30/26).
+    if st.get("priority_roles"):
+        fams = {c.family(x) for x in st["priority_roles"] if isinstance(x, str) and x.strip()}
+        if fams:
+            c.priority_roles[key] = fams
     # Whether they work doubles: the owner's word; unset, the solver
     # reads their own history (schedule_objective.doubles_ok).
     if st.get("doubles") is not None:
@@ -6087,8 +6097,13 @@ def _floor_breaches(c, d, day, items, counted) -> list:
 
 def _family_label(c, fam) -> str:
     """How a role family reads to the owner: its job code without the
-    daypart words, as the restaurant spells it ("Server" for Server AM/PM)."""
+    daypart words, as the restaurant spells it ("Server" for Server AM/PM).
+    A role the owner named in their map is called what they named it: Simple
+    EJ's Utility AM/PM codes are its "Food runner" (owner, 10/30/26), never
+    "Utility" again."""
     from collections import Counter
+    if fam and fam in set((c.role_families or {}).values()):
+        return str(fam)[:1].upper() + str(fam)[1:]
     names = Counter()
     for low, disp in (c.role_names or {}).items():
         if c.family(low) == fam:
