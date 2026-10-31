@@ -66,6 +66,11 @@ V1_OPTIONAL = {
     ('POST', '/mobile/api/labor/availability-changes/<int:change_id>/decide', 'covered_by'): _FLOOR_COVER,
     ('POST', '/mobile/api/labor/availability', 'covered_by'): _FLOOR_COVER,
     ('POST', '/mobile/api/labor/staff-settings', 'covered_by'): _FLOOR_COVER,
+    # Priority on busy nights (10/30/26): read with b.get, None keeps what is
+    # stored (staff_settings.upsert), so an old phone's save changes nothing.
+    ('POST', '/mobile/api/labor/staff-settings', 'priority_roles'): (
+        "the roles somebody is filled first in on busy shifts, set from the web's Team screen: absent, the stored "
+        "value is kept"),
 }
 
 

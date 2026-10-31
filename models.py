@@ -9994,7 +9994,8 @@ def init_staff_settings(db_path: str = DB_PATH):
                        ("trainee", "TEXT"),               # {"target_role", "trainer", "from", "until"} while in training
                        ("closes_for", "TEXT"),            # ["Bartender"] the roles a closer closes for; [] = their own
                        ("work_days", "TEXT"),             # ["Monday", ...] days they work, hours left to the draft (10/9/26)
-                       ("doubles", "INTEGER")):           # 1 works doubles, 0 never, NULL their own history decides (LOGIC-19)
+                       ("doubles", "INTEGER"),            # 1 works doubles, 0 never, NULL their own history decides (LOGIC-19)
+                       ("priority_roles", "TEXT")):       # ["host"] role families they're filled first in on busy shifts (10/30/26)
         if name not in have:
             conn.execute(f"ALTER TABLE staff_settings ADD COLUMN {name} {decl}")
     conn.commit()

@@ -62,6 +62,7 @@ FOOD_SAFETY_CERT = "food_protection_manager"
 MAX_STANDING_SHIFTS = 21
 MAX_ACTING_RANGES = 20
 MAX_CLOSES_FOR = 6
+MAX_PRIORITY_ROLES = 8
 STANDING_SHIFT_MAX_HOURS = 16
 
 
@@ -126,6 +127,12 @@ def _row(r):
         # re-audit 10/11/26 LOGIC-19): True or False as the owner set it;
         # None is automatic (a double on a quarter of the days they worked).
         "doubles": (None if "doubles" not in keys or r["doubles"] is None else bool(r["doubles"])),
+        # The role families they are filled first in on a busy shift
+        # (owner, 10/30/26 — Simple EJ's hosts on Friday and Saturday
+        # nights and game nights): ["host"]. A preference the solver ranks
+        # above every ordinary one, never above a hard rule
+        # (schedule_requirements.priority_busy_shifts says which shifts).
+        "priority_roles": [x for x in _json_list(r, "priority_roles", keys) if isinstance(x, str) and x],
         "updated_by": r["updated_by"],
         "updated_at": r["updated_at"],
     }
@@ -424,6 +431,23 @@ def _clean_closes_for(raw) -> list:
     return out
 
 
+def _clean_priority_roles(raw) -> list:
+    """["host", "bartender"]: the role families someone is Priority in on
+    busy shifts — any role name is read as its family ("Host AM" is
+    "host", schedule_roles.role_family), once each, in the order given."""
+    if not isinstance(raw, list):
+        raise StaffSettingsError("priority roles is a list of roles")
+    from schedule_roles import role_family
+    out = []
+    for x in raw:
+        fam = role_family(" ".join(str(x or "").split())[:60])
+        if fam and fam not in out:
+            out.append(fam)
+    if len(out) > MAX_PRIORITY_ROLES:
+        raise StaffSettingsError(f"somebody is Priority in at most {MAX_PRIORITY_ROLES} roles")
+    return out
+
+
 def _clean_dayparts(raw) -> dict:
     """{weekday: any|morning|night|off} for what a client sent; raises when
     it isn't a map or every day is off."""
@@ -509,7 +533,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
            experienced=None, minor_age_band=None, floor_manager=None, paid_hourly=None,
            acting_manager=None, standing_shifts=None, trainee=None, closes_for=None,
-           work_days=None, doubles=None, db_path=DB_PATH) -> dict:
+           work_days=None, doubles=None, priority_roles=None, db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
     stored value; the caller passes only what changed.
 
@@ -520,7 +544,8 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
     True / False / "auto"; `paid_hourly` (an Owner role held to overtime);
     `acting_manager` [{from, until, note}]; `standing_shifts` [{day, start,
     end, role}]; `trainee` {target_role, trainer, from, until} or {} to end
-    it; `closes_for` [role]. Each replaces what is stored."""
+    it; `closes_for` [role]; `priority_roles` [role family] they are filled
+    first in on busy shifts ([] clears). Each replaces what is stored."""
     if employee_name is not None and not isinstance(employee_name, str):
         raise StaffSettingsError("an employee name is required")
     name = (employee_name or "").strip()[:120]
@@ -578,6 +603,8 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         closes_for = _clean_closes_for(closes_for)
     if work_days is not None:
         work_days = _clean_work_days(work_days)
+    if priority_roles is not None:
+        priority_roles = _clean_priority_roles(priority_roles)
     conn = get_conn(db_path)
     try:
         # The row this person already has, whatever case it was saved in:
@@ -594,7 +621,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                                          "desired_hours": None, "experienced": False, "minor_age_band": None,
                                          "floor_manager": None, "paid_hourly": False, "acting_manager": [],
                                          "standing_shifts": [], "trainee": None, "closes_for": [], "work_days": [],
-                                         "doubles": None}
+                                         "doubles": None, "priority_roles": []}
         if time_windows is not None:
             time_windows = _keep_window_dates(raw_windows, time_windows, current.get("time_windows") or {})
         new = {
@@ -620,6 +647,8 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             "work_days": work_days if work_days is not None else current.get("work_days") or [],
             "doubles": ((None if doubles == AUTO else int(_flag(doubles))) if doubles is not None
                         else (None if current.get("doubles") is None else int(current["doubles"]))),
+            "priority_roles": (priority_roles if priority_roles is not None
+                               else current.get("priority_roles") or []),
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
@@ -634,15 +663,15 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                  "experienced": experienced, "minor_age_band": minor_age_band,
                  "floor_manager": floor_manager, "paid_hourly": paid_hourly, "acting_manager": acting_manager,
                  "standing_shifts": standing_shifts, "trainee": trainee, "closes_for": closes_for,
-                 "work_days": work_days, "doubles": doubles}
+                 "work_days": work_days, "doubles": doubles, "priority_roles": priority_roles}
         sets = [f"{col}=excluded.{col}" for col, v in given.items() if v is not None]
         sets += ["updated_by=excluded.updated_by", "updated_at=excluded.updated_at"]
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
                             min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
                             preferred_dayparts, desired_hours, experienced, minor_age_band, floor_manager,
                             paid_hourly, acting_manager, standing_shifts, trainee, closes_for, work_days,
-                            doubles, updated_by, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                            doubles, priority_roles, updated_by, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET """ + ", ".join(sets),
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
@@ -651,7 +680,8 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                       new["minor_age_band"], new["floor_manager"], new["paid_hourly"],
                       json.dumps(new["acting_manager"]), json.dumps(new["standing_shifts"]),
                       json.dumps(new["trainee"]) if new["trainee"] else None, json.dumps(new["closes_for"]),
-                      json.dumps(new["work_days"]), new["doubles"], (updated_by or "").strip()[:120] or None))
+                      json.dumps(new["work_days"]), new["doubles"], json.dumps(new["priority_roles"]),
+                      (updated_by or "").strip()[:120] or None))
         if time_windows is not None and time_windows != (current.get("time_windows") or {}):
             # The staff app edits these windows on its availability screen
             # and saves against that row's version (save_own_availability).
@@ -676,7 +706,7 @@ _ROSTER_FIELDS = {"employment_type": "employment type", "min_hours": "minimum ho
                   "floor_manager": "floor manager", "paid_hourly": "paid hourly",
                   "acting_manager": "acting manager dates", "standing_shifts": "standing shifts",
                   "trainee": "training", "closes_for": "closes for", "work_days": "work days",
-                  "doubles": "works doubles"}
+                  "doubles": "works doubles", "priority_roles": "priority on busy shifts"}
 
 
 def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PATH):

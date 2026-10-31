@@ -40,6 +40,9 @@ far above everything below it:
   min_hours    hours under someone's minimum
   requirement  a SHIFT REQUIREMENTS shift left unfilled (per hour)
   budget       dollars past the hourly labor budget
+  priority     a busy shift given to somebody not Priority in its role while
+               a Priority person of it could legally take it (W_PRIORITY,
+               under a hand-taught habit, over every quality term)
   quality      labor dollars at each person's rate; STABILITY against the
                last PUBLISHED week per slot (same person, weekday, daypart,
                role family, start within 30 min — about a tenth of
@@ -117,7 +120,7 @@ REQ_VALUE_BOUNDS = (0.1, 8.0)       # its demand x criticality against average: 
 # decide which shift goes empty.
 PHASE_RULES = frozenset({"manager", "floor", "closer", "policy_hours", "policy_rest", "policy_run", "overtime",
                          "min_hours", "requirement", "budget", "habit", "leadership", "pending", "memory",
-                         "commitment", "starved"})
+                         "commitment", "starved", "priority"})
 PHASE_STABILITY = frozenset({"stability", "change", "usual"})
 PHASE_SHARES = (0.6, 0.15, 0.25)    # each phase's share of the deterministic work budget
 # A habit the manager taught by hand, broken (schedule_memory tier "bound"):
@@ -127,6 +130,15 @@ PHASE_SHARES = (0.6, 0.15, 0.25)    # each phase's share of the deterministic wo
 # still win. It used to be a soft cost scaled by the habit's confidence,
 # tradeable for a modest fairness or preference gain.
 W_HABIT = 2 * 10 ** 6
+# A busy shift given to somebody not Priority in its role while a Priority
+# person of the role could legally take it (staff settings' priority_roles,
+# owner 10/30/26; schedule_solver.Problem.priority_cost): per shift, above
+# every soft quality term — fairness, preferences, stability, strength —
+# and below a hand-taught habit and every rule tier. Never more than
+# PRIORITY_HOLE_SHARE of what leaving that shift empty costs, so it can
+# never make an empty shift the cheaper answer.
+W_PRIORITY = 6 * 10 ** 5
+PRIORITY_HOLE_SHARE = 0.4
 W_CHANGE_RESOLVE = 5 * 10 ** 6      # a re-solve changing a person on a shift that stays
 BUDGET_OVER_FACTOR = 3              # a dollar past the budget costs this many dollars of quality
 K_CHANGE_IMPROVE = 0.02             # points: the repair loop's tie-break toward the draft
@@ -155,6 +167,7 @@ TERM_LABELS = {
     "preferences": "staff preferences",
     "memory": "what the scheduling memory learned",
     "habit": "a habit the manager taught by hand, broken",
+    "priority": "a busy shift not given to somebody Priority in the role",
     "reliability": "reliability",
     "role": "a fill-in from another role",
     "pending": "a day someone asked off",
@@ -480,6 +493,17 @@ class _Model:
                         vals.append(float(u.dw or 1.0) * _obj.default_criticality(role))
         v = sum(vals) / len(vals) if vals else float(u.dw or 1.0) * _obj.default_criticality(role)
         return max(REQ_VALUE_BOUNDS[0], min(REQ_VALUE_BOUNDS[1], v))
+
+    def priority_weight(self, u) -> int:
+        """W_PRIORITY for a busy shift handed to somebody not Priority in
+        its role, held under PRIORITY_HOLE_SHARE of the shift's own hole
+        cost (a requirement shift in a draft: its hours x W_REQ_HOUR x its
+        value) so an empty shift is never the cheaper answer."""
+        w = W_PRIORITY
+        if self.mode == "draft" and not any(r.get("_floor") for r in u.rows):
+            hole = max(0.25, u.hours) * W_REQ_HOUR * self.value_rel(u)
+            w = min(w, PRIORITY_HOLE_SHARE * hole)
+        return max(1, int(round(w)))
 
     # quality points per dollar: LABOR_POINTS_PER_PCT for 1% of the week's labor
     def _per_cent(self) -> float:
@@ -1052,6 +1076,8 @@ class _Model:
                     if term == "habit" and val:
                         # Its own tier: misses x W_HABIT.
                         book.add("habit", v, round(val / _solver.K_HABIT) * W_HABIT, {"unit": u.id, "person": p})
+                    elif term == "priority" and val:
+                        book.add("priority", v, self.priority_weight(u), {"unit": u.id, "person": p})
                     elif term and val:
                         book.add(term, v, val * Q, {"unit": u.id, "person": p})
                 if stab and p in ref:
@@ -1201,6 +1227,15 @@ class _Model:
             if cands:
                 take(u, max(cands, key=lambda p: rank(p, u)))
                 done_close.add(key)
+        # A busy shift to somebody Priority in its role, when one has room
+        # (the priority term ranks above keeping last week's person).
+        prio = getattr(prob, "priority_people", None) or {}
+        for u in order:
+            if u.id in pick or u.id not in prio:
+                continue
+            cands = [p for p in sorted(prio[u.id]) if ok(p, u) and room(p, u) >= 0]
+            if cands:
+                take(u, max(cands, key=lambda p: rank(p, u)))
         for u in order:
             if u.id in pick:
                 continue
@@ -1766,6 +1801,7 @@ def _marginal(prob, mdl, u, p, q, hours, on_date) -> dict:
              "learned_preference": f"{prob.names[q]} keeps dropping that shift",
              "learned": "it is what the managers keep doing on that shift",
              "habit": "it is what the manager has taught the draft by hand on that shift",
+             "priority": f"{prob.names[p]} is Priority for {u.role_label or 'the role'} on busy shifts",
              "reliability": f"{prob.names[q]} has a reliability risk on it",
              "role": f"it is {prob.names[p]}'s own role",
              "rotation_weekend": f"{prob.names[q]} is due a weekend off",
