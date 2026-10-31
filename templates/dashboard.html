@@ -11742,6 +11742,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-p .n{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swg-p .h{font-size:12px;color:var(--ink3)}
 .swg-p .h.ot{color:var(--hb-bad);font-weight:600}
+/* Priority on busy nights (owner, 10/30/26): the busiest day's ember, said in words. */
+.swg-p .h .pri{color:var(--ember);font-weight:600}
 .swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:flex-start;gap:4px;position:relative}
 .swg-chip{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);cursor:pointer;text-align:left;font:inherit;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,opacity .16s ease}
 /* The hovered shift lifts out on its own: no dimming of the rest of the
@@ -28412,7 +28414,8 @@ function swRenderGrid() {
       var q = g[j], ot = q.hrs > ceil;
       var sc = _swScore(q.name), dots = '';
       if (sc) { dots = '<span class="r" title="' + _escAttr('Operational score ' + sc + ' of 5') + '">'; for (var di = 1; di <= 5; di++) dots += '<i' + (di <= sc ? ' class="on"' : '') + '></i>'; dots += '</span>'; }
-      h += '<div class="swg-r"><div class="swg-p"><span class="n" title="' + _escAttr(q.name) + '">' + _escHtml(q.name) + dots + '</span><span class="h' + (ot ? ' ot' : '') + '">' + (q.hrs > 0 ? '<span class="hb-num">' + _schedHrs(q.hrs) + 'h</span>' : 'No shifts') + (ot ? ' · over ' + ceil + 'h' : '') + '</span></div>';
+      var pri = _swPriority(q.name, q.role) ? ' · <span class="pri" title="' + _escAttr('Priority for ' + q.role + ' on busy nights: filled first on Friday and Saturday nights, event nights and the week’s busiest shifts') + '">Priority</span>' : '';
+      h += '<div class="swg-r"><div class="swg-p"><span class="n" title="' + _escAttr(q.name) + '">' + _escHtml(q.name) + dots + '</span><span class="h' + (ot ? ' ot' : '') + '">' + (q.hrs > 0 ? '<span class="hb-num">' + _schedHrs(q.hrs) + 'h</span>' : 'No shifts') + (ot ? ' · over ' + ceil + 'h' : '') + pri + '</span></div>';
       for (k = 0; k < days.length; k++) {
         var list = (q.cells[days[k]] || []).slice().sort(function (a, b) { return (_schedMinutes(_schedRows[a].shift_start) || 0) - (_schedMinutes(_schedRows[b].shift_start) || 0); });
         h += '<div class="swg-c" data-swg-drop="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" data-swg-role="' + _escAttr(q.code) + '">';
@@ -28850,6 +28853,19 @@ function _swScore(name) {
   var ro = (_swRoster && _swRoster.roster) || [], low = String(name || '').toLowerCase(), i;
   for (i = 0; i < ro.length; i++) if (String(ro[i].name || '').toLowerCase() === low) return +ro[i].score || 0;
   return 0;
+}
+/* Whether the person is Priority on busy nights in the role's family (staff
+   settings' priority_roles, lower-case families; daypart words off). */
+function _swPriority(name, role) {
+  var ro = (_swRoster && _swRoster.roster) || [], low = String(name || '').toLowerCase(), i, j;
+  var fam = String(role || '').replace(/\s+(AM|PM)$/i, '').replace(/^\s+|\s+$/g, '').toLowerCase();
+  for (i = 0; i < ro.length; i++) {
+    if (String(ro[i].name || '').toLowerCase() !== low) continue;
+    var pr = (ro[i].settings || {}).priority_roles || [];
+    for (j = 0; j < pr.length; j++) if (String(pr[j]).toLowerCase() === fam) return true;
+    return false;
+  }
+  return false;
 }
 function _swWeekHours(name) {
   var low = String(name || '').toLowerCase(), h = 0, n = {}, i;
@@ -46613,6 +46629,7 @@ function sfw2RuleCheck(chk) {
     var st = r.settings || {}, h = '';
     if (sfw2TraineeActive(st.trainee, todayIso())) h += memPill('Training', 'neutral');
     if (r.floor_manager && r.floor_manager.counts) h += memPill('Runs the floor', 'neutral');
+    if ((st.priority_roles || []).length) h += memPill('Priority', 'neutral');
     return h;
   };
   window.sfw2RosterAlso = function (r) {
@@ -46688,10 +46705,38 @@ function sfw2RuleCheck(chk) {
     h += '<div><div class="k">Doubles</div><div class="chip-tog">';
     for (i = 0; i < dch.length; i++) h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (dch[i][2] ? ' on' : '') + (ro ? ' ro' : '') + '" data-sfw2-dbl="' + dch[i][0] + '" data-name="' + nm + '" aria-pressed="' + (dch[i][2] ? 'true' : 'false') + '"' + (ro ? ' disabled' : '') + '>' + dch[i][1] + '</button>';
     h += '</div><div class="sfw2-err" data-sfw2-err="dbl"></div></div>';
+    // Priority on busy nights (owner, 10/30/26): the roles they are filled
+    // first in on Friday and Saturday nights, event nights and the week's
+    // busiest shifts — a preference, never past a rule.
+    var pch = sfw2PriorityChoices(r), pr = st.priority_roles || [];
+    h += '<div><div class="k">Priority on busy nights</div><div class="chip-tog" data-sfw2-pr-box="' + nm + '">';
+    for (i = 0; i < pch.length; i++) {
+      var plit = sfw2HasPriority(pr, pch[i]);
+      h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (plit ? ' on' : '') + (ro ? ' ro' : '') + '" data-sfw2-pr="' + e(pch[i]) + '" aria-pressed="' + (plit ? 'true' : 'false') + '"' + (ro ? ' disabled' : '') + '>' + e(pch[i]) + '</button>';
+    }
+    if (!pch.length) h += '<span class="none">No roles on file for them yet.</span>';
+    h += '</div><div class="said"><small>' + (pr.length ? 'Filled first in these roles on Friday and Saturday nights, event nights and the week’s busiest shifts — never past their availability, hours or overtime.' : 'Nothing picked: busy shifts go to whoever fits best.') + '</small></div><div class="sfw2-err" data-sfw2-err="pr"></div></div>';
     // Reliability (D-44, L-18): missed, called out, late over clocked shifts.
     h += '<div><div class="k">Reliability</div><div class="sfw2-rel">' + n(sfw2ReliabilityLine(r.reliability)) + '</div></div>';
     return h;
   };
+  /* The roles somebody can be Priority in: the role they work most, the
+     others they worked lately and any already picked, daypart words off. */
+  function sfw2PriorityChoices(r) {
+    var seen = {}, out = [], st = (r && r.settings) || {}, i;
+    function add(x) { x = roleOf(x); if (!x || seen[x.toLowerCase()]) return; seen[x.toLowerCase()] = 1; out.push(x); }
+    add(r && r.role);
+    for (i = 0; i < ((r && r.recent_roles) || []).length; i++) add(r.recent_roles[i]);
+    for (i = 0; i < (st.priority_roles || []).length; i++) {
+      if (!sfw2HasPriority(out, st.priority_roles[i])) add(String(st.priority_roles[i]).charAt(0).toUpperCase() + String(st.priority_roles[i]).slice(1));
+    }
+    return out;
+  }
+  function sfw2HasPriority(list, role) {
+    var want = roleOf(role).toLowerCase(), i;
+    for (i = 0; i < (list || []).length; i++) if (roleOf(list[i]).toLowerCase() === want) return true;
+    return false;
+  }
   function _sfw2ChipTog(choices, picked, ro) {
     var on = {}, o = '', i;
     for (i = 0; i < (picked || []).length; i++) on[roleOf(picked[i]).toLowerCase()] = 1;
@@ -46729,9 +46774,10 @@ function sfw2RuleCheck(chk) {
     return out;
   }
   document.addEventListener('click', function (ev) {
-    var body = $id('roster-body'), sheet = $id('pp-roster'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dbl],[data-sfw2-dorm],[data-sfw2-open]') : null;
+    var body = $id('roster-body'), sheet = $id('pp-roster'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dbl],[data-sfw2-pr],[data-sfw2-dorm],[data-sfw2-open]') : null;
     if (!t || !((body && body.contains(t)) || (sheet && sheet.contains(t))) || t.disabled) return;
-    var cfBox = t.closest('[data-sfw2-cf-box]'), name = t.getAttribute('data-name') || (cfBox ? cfBox.getAttribute('data-sfw2-cf-box') : '');
+    var cfBox = t.closest('[data-sfw2-cf-box]') || t.closest('[data-sfw2-pr-box]');
+    var name = t.getAttribute('data-name') || (cfBox ? (cfBox.getAttribute('data-sfw2-cf-box') || cfBox.getAttribute('data-sfw2-pr-box')) : '');
     var r = entry(name), st = (r && r.settings) || {}, v, list, i;
     if (t.hasAttribute('data-sfw2-open')) {
       var cell = t.parentNode, form = cell ? cell.querySelector('[data-sfw2-form="' + t.getAttribute('data-sfw2-open') + '"]') : null;
@@ -46792,6 +46838,13 @@ function sfw2RuleCheck(chk) {
     if (t.hasAttribute('data-sfw2-dbl')) {
       v = t.getAttribute('data-sfw2-dbl');
       saveFacts(name, {doubles: v === 'yes' ? true : (v === 'no' ? false : 'auto')}, t, 'dbl', 'Saved — the next draft keeps it');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-pr')) {
+      var prole = t.getAttribute('data-sfw2-pr'), pcur = st.priority_roles || [], pnext = [], phad = false;
+      for (i = 0; i < pcur.length; i++) { if (roleOf(pcur[i]).toLowerCase() === prole.toLowerCase()) phad = true; else pnext.push(pcur[i]); }
+      if (!phad) pnext.push(prole);
+      saveFacts(name, {priority_roles: pnext}, t, 'pr', pnext.length ? 'Saved — ' + name + ' is filled first on busy nights' : 'Saved — no longer Priority on busy nights');
       return;
     }
     if (t.hasAttribute('data-sfw2-cf')) {
