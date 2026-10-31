@@ -28,7 +28,7 @@ resend==2.48.0
 reportlab==4.5.1
 pyjwt==2.15.1
 cryptography==50.0.1
-pypdf==6.21.2
+pypdf==6.21.4
 qrcode[pil]==8.2
 httpx[http2]==0.28.1
 pillow==13.0.0
