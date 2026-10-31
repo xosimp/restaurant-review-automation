@@ -1257,8 +1257,8 @@ def _backfill_units(conn, rid, dkeys) -> int:
             if _infer_unit(ln, book):
                 _settle(ln, rate)
                 conn.execute("UPDATE fintech_invoice_lines SET uom=?, upc=?, uom_inferred=1, deposit=?, adjustment=?, "
-                             "ppc=? WHERE id=?", (ln["uom"], ln["upc"], ln["deposit"], ln["adjustment"], ln.get("ppc"),
-                                                  h["id"]))
+                             "ppc=? WHERE id=? AND restaurant_id=?",
+                             (ln["uom"], ln["upc"], ln["deposit"], ln["adjustment"], ln.get("ppc"), h["id"], rid))
                 n += 1
     return n
 
