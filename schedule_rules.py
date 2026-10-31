@@ -171,6 +171,10 @@ HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "min
                             "minor_early", "minor_week_hours", "minor_school_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
                             "no_manager", "role_not_held", "role_window",
+                            # a role the restaurant keeps on every open minute
+                            # (a bartender), or on from the open (a host)
+                            # (owner, 10/30/26): role_cover_gaps
+                            "role_gap", "role_late_open",
                             # the owner's own words, confirmed (owner_rules): a person
                             # kept off, on, or closing
                             "owner_word_off", "owner_word_on", "owner_word_close"})
@@ -242,6 +246,8 @@ LABELS = {
     "notice_short": "less notice than the schedule notice rule",
     "owner_rule": "fewer on than a standing rule the owner set",
     "no_manager": "no manager on the floor",
+    "role_gap": "nobody of a role you keep on all day is on while you're open",
+    "role_late_open": "nobody of a role you want on at open is on when you open",
     "no_manager_roster": "nobody on the roster is a manager or owner",
     "payroll_tail_full": "at the overtime line with days of the payroll week still to come",
     "shift_too_short": "shorter than your shortest shift",
@@ -705,6 +711,9 @@ def compliance(restaurant) -> dict:
         out["rest_mode"] = data["rest_mode"]
     if "seventh_day_ot" in data and data["seventh_day_ot"] not in (None, ""):
         out["seventh_day_ot"] = bool(data["seventh_day_ot"])
+    for k in ROLE_COVER_KEYS:
+        if data.get(k) is not None:
+            out[k] = role_list(data[k])
     return _with_pack(out, restaurant, data)
 
 
@@ -743,6 +752,230 @@ def opening_lead_minutes(c) -> int:
     comp = getattr(c, "compliance", None) if not isinstance(c, dict) else c
     v = (comp or {}).get("opening_manager_lead_minutes")
     return _allowance(DEFAULTS["opening_manager_lead_minutes"] if v in (None, "") else v)
+
+
+# ── roles kept on: all day, or from the open (owner, 10/30/26) ────────────
+#
+# Simple EJ's Tue 11/10/26 draft had Amy behind the bar 10:00am-1:30pm and
+# Stephanie from 3:00pm — open, with no bartender on for 90 minutes ("there
+# can NEVER be a bartender gap like this"), and its opening host on at noon
+# for an 11am open. Two per-restaurant settings, stored beside the manager
+# allowances in restaurants.compliance_json (the scheduling rules):
+#
+#   "always_on_roles":  role families somebody of which is on EVERY minute
+#                       the restaurant is open (open_times -> close_times, a
+#                       small-hours close the next morning). [] turns it off.
+#                       Not set: the bartenders (ALWAYS_ON_DEFAULT), held
+#                       from the day's first bartender on to its last one
+#                       off — never a hole in the bar once it is open (the
+#                       1:30-3:00pm gap) — but not from the doors' open to
+#                       the close: a bistro whose bar opens at 4pm is not
+#                       handed an 11am bartender it never runs
+#                       (schedule_benchmark's bistro); the stay until close
+#                       is the closer rule's. Naming the family here holds
+#                       it the whole time the restaurant is open
+#                       (always_on_from_open).
+#   "on_at_open_roles": role families somebody of which is on from the open
+#                       minute. Not set: none.
+#
+# Families, never job codes ("Bartender AM" and "Bartender PM" are one role),
+# and only a family somebody on the roster works: a restaurant with no
+# bartenders is untouched. A role window the owner set for the family (the
+# RESTAURANT HOURS & SHIFT RULES: "bartenders from 3pm") bounds the stretch.
+# Held like the floors: the sweep's hard role_gap / role_late_open (day-level,
+# TIER_COVERAGE, so no lower pass may open one), the repair stage
+# cover_role_gaps, Stage 1's shapes and CP-SAT's always_on term, and the
+# publish gate (a hard breach is a must-fix).
+ROLE_COVER_KEYS = ("always_on_roles", "on_at_open_roles")
+ALWAYS_ON_DEFAULT = ("bartender",)
+ON_AT_OPEN_DEFAULT = ()
+
+
+def role_list(v) -> list:
+    """A stored roles setting as a clean list of lower-case role names: a
+    list (or one comma-separated string), each name trimmed, no repeats, at
+    most 12."""
+    if isinstance(v, str):
+        v = v.split(",")
+    if not isinstance(v, (list, tuple, set)):
+        return []
+    out = []
+    for x in v:
+        name = " ".join(str(x or "").lower().split())[:60]
+        if name and name not in out:
+            out.append(name)
+    return out[:12]
+
+
+def role_holders(c, fam) -> set:
+    """The roster people (c.key) who work role family `fam` — a role of it
+    is their roster role, one they hold, or one they have worked here —
+    active ones only."""
+    out = set()
+    if not fam or c is None:
+        return out
+    inactive, active = getattr(c, "inactive", None) or set(), getattr(c, "active", None) or set()
+    pools = list((getattr(c, "known_roles", None) or {}).items()) + \
+        list((getattr(c, "held_roles", None) or {}).items())
+    for key, roles in pools:
+        if not key or key in inactive or (active and key not in active):
+            continue
+        if any(c.family(r) == fam for r in (roles or ()) if str(r or "").strip()):
+            out.add(key)
+    return out
+
+
+def _role_cover_families(c, setting, default) -> list:
+    comp = getattr(c, "compliance", None) or {}
+    raw = comp.get(setting)
+    wanted = list(default) if raw is None else role_list(raw)
+    out = []
+    for r in wanted:
+        fam = c.family(r)
+        if fam and fam not in out and role_holders(c, fam):
+            out.append(fam)
+    return out
+
+
+def always_on_from_open(c) -> bool:
+    """Whether the always-on families are held from the doors' open (the
+    owner named them, compliance always_on_roles) or, by default, from the
+    day's first one on (role_need_window)."""
+    return (getattr(c, "compliance", None) or {}).get("always_on_roles") is not None
+
+
+def role_need_window(c, fam, day, o, cl, first_start=None, last_end=None, from_open=None) -> tuple:
+    """(start, end) business minutes an always-on family must be covered on
+    `day`: its open window (role_open_window) — the whole of it when the
+    owner named the family (always_on_from_open), else from `first_start`
+    to `last_end`, the day's first one of the family on and last one off
+    ((None, None) when nobody of it is)."""
+    lo, hi = role_open_window(c, fam, day, o, cl)
+    if not (always_on_from_open(c) if from_open is None else from_open):
+        if first_start is None or last_end is None:
+            return None, None
+        lo, hi = max(lo, int(first_start)), min(hi, int(last_end))
+    return lo, hi
+
+
+def always_on_families(c) -> list:
+    """The role families this restaurant keeps on every minute it is open
+    (compliance always_on_roles, else ALWAYS_ON_DEFAULT) that somebody on
+    the roster works."""
+    return _role_cover_families(c, "always_on_roles", ALWAYS_ON_DEFAULT)
+
+
+def on_at_open_families(c) -> list:
+    """The role families this restaurant wants on from the open minute
+    (compliance on_at_open_roles) that somebody on the roster works — less
+    those already kept on all day, which are on at the open by that rule."""
+    always = set(always_on_families(c))
+    return [f for f in _role_cover_families(c, "on_at_open_roles", ON_AT_OPEN_DEFAULT) if f not in always]
+
+
+def role_open_window(c, fam, day, o, cl) -> tuple:
+    """(start, end) business minutes of `day` a role family is held to: the
+    open hours `o`..`cl`, inside any window the owner's hours & shift rules
+    give the family that day."""
+    lo, hi = o, cl
+    w = ((getattr(c, "role_windows", None) or {}).get(fam) or {}).get(day) or {}
+    if w.get("earliest") is not None:
+        lo = max(lo, int(w["earliest"]))
+    if w.get("latest") is not None:
+        latest = int(w["latest"])
+        if latest <= lo:
+            latest += 24 * 60
+        hi = min(hi, latest)
+    return lo, hi
+
+
+def _role_cover_day(c, d, day, counted, always, at_open) -> list:
+    """[(kind, family, start, end, first_start)] — one date's stretches with
+    nobody of an always-on family on while open ("role_gap"), and each
+    on-at-open family nobody of which is on at the open ("role_late_open",
+    to the first one's start, or the end of its window when none is on).
+    `counted` is the date's rows that put somebody on the floor."""
+    if not (always or at_open):
+        return []
+    o, cl = open_hours(c, day)
+    if o is None or cl is None or cl <= o:
+        return []
+    spans = {}
+    for r in counted or ():
+        fam = c.family(r.get("role"))
+        if fam in always or fam in at_open:
+            sp = _span(r)
+            if sp:
+                spans.setdefault(fam, []).append(sp)
+    out = []
+    from_open = always_on_from_open(c)
+    for fam in always:
+        mine = spans.get(fam, [])
+        lo, hi = role_need_window(c, fam, day, o, cl, first_start=min((a for a, _b in mine), default=None),
+                                  last_end=max((b for _a, b in mine), default=None), from_open=from_open)
+        if lo is None or hi <= lo:
+            continue
+        for gs, ge in _uncovered([(lo, hi)], _merge(mine)):
+            if ge > gs:
+                out.append(("role_gap", fam, gs, ge, None))
+    for fam in at_open:
+        lo, hi = role_open_window(c, fam, day, o, cl)
+        if hi <= lo:
+            continue
+        have = _merge(spans.get(fam, []))
+        if any(s_ <= lo < e_ for s_, e_ in have):
+            continue
+        nxt = min((s_ for s_, _e in have if lo < s_ < hi), default=None)
+        out.append(("role_late_open", fam, lo, nxt if nxt is not None else hi, nxt))
+    return out
+
+
+def role_cover_gaps(rows: list, c: "Constraints", dates=None) -> dict:
+    """{date: [{"kind": "role_gap" | "role_late_open", "family", "start",
+    "end", "first_start"}]} — every stretch the restaurant is open with
+    nobody of a role it keeps on all day, and every on-at-open role late at
+    the open, over the dates with somebody on (closed dates never). {} when
+    the restaurant keeps no such role, or nobody on the roster works one."""
+    always, at_open = always_on_families(c), on_at_open_families(c)
+    if not (always or at_open):
+        return {}
+    by_date = {}
+    for r in rows or []:
+        d = r.get("date")
+        if not d or not (r.get("employee") or "").strip() or d in (c.closed_dates or set()):
+            continue
+        if dates is not None and d not in dates:
+            continue
+        by_date.setdefault(d, []).append(r)
+    out = {}
+    for d, rs in sorted(by_date.items()):
+        day = _weekday_of(d)
+        if not day:
+            continue
+        got = _role_cover_day(c, d, day, [r for r in rs if _on_the_floor(c, r)], always, at_open)
+        if got:
+            out[d] = [{"kind": k, "family": f, "start": a, "end": b, "first_start": n} for k, f, a, b, n in got]
+    return out
+
+
+def _role_cover_breaches(c, d, day, items, counted, always, at_open) -> list:
+    """role_gap and role_late_open for one trading day, day-level, each
+    pinned to a row of the role (else the day's first), its severity the
+    hours uncovered."""
+    out = []
+    for kind, fam, gs, ge, nxt in _role_cover_day(c, d, day, [r for _i, r in counted], always, at_open):
+        lab = _family_label(c, fam).lower()
+        mine = [(i, r) for i, r in counted if c.family(r.get("role")) == fam]
+        i0, r0 = (mine or counted or items)[0]
+        a, b = _fmt_minutes(gs % (24 * 60)), _fmt_minutes(ge % (24 * 60))
+        if kind == "role_gap":
+            detail = f"no {lab} on {a}–{b} while you're open"
+        else:
+            detail = f"no {lab} on at open ({a})" + (f" — the first starts {b}" if nxt is not None
+                                                     else f" — none is on {day}")
+        out.append(_v(kind, i0, r0, detail, floor_role=fam, gap_start=gs, gap_end=ge, minutes=ge - gs,
+                      severity=round((ge - gs) / 60.0, 2), day_level=True))
+    return out
 REST_MODES = ("hard", "consent_premium", "off")
 
 
@@ -932,7 +1165,7 @@ def closed_in(restaurant, week_dates) -> set:
 # DEFAULTS) by naming them in `reset`.
 RESETTABLE = tuple(_BOUNDS) + ("minor_latest_end", "keyholder_until_close", "rest_mode", "seventh_day_ot",
                                 "closing_manager_stays_minutes", "opening_manager_lead_minutes",
-                                "second_manager_from_staff")
+                                "second_manager_from_staff") + ROLE_COVER_KEYS
 
 
 def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
@@ -1000,6 +1233,14 @@ def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
     if "seventh_day_ot" in data:
         v = data.get("seventh_day_ot")
         clean["seventh_day_ot"] = None if v in (None, "") else bool(v)
+    for k in ROLE_COVER_KEYS:
+        if k in data:
+            # null puts the default back (bartenders all day, nobody at
+            # open); [] is "none".
+            if data[k] is None:
+                clean.pop(k, None)
+            else:
+                clean[k] = role_list(data[k])
     return clean
 
 
@@ -5682,6 +5923,8 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
     for i, r in enumerate(rows or []):
         if r.get("date") and (r.get("employee") or "").strip():
             by_date.setdefault(r["date"], []).append((i, r))
+    # The roles kept on all day and on at the open (owner, 10/30/26).
+    always, at_open = (always_on_families(c), on_at_open_families(c)) if by_date else ([], [])
     for d, items in sorted(by_date.items()):
         if d in (c.closed_dates or set()):
             continue
@@ -5724,6 +5967,8 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
                               + f" — {said}",
                               floor_role=rule.get("family") or role_low, severity=rule["min"] - n_on,
                               day_level=True))
+        if always or at_open:
+            out.extend(_role_cover_breaches(c, d, day, items, counted, always, at_open))
         ends_all = [(end_minutes(r), i, r) for i, r in items]
         ends_all = [(e, i, r) for e, i, r in ends_all if e is not None]
         if not ends_all:
@@ -6579,6 +6824,12 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                # owner's RESTAURANT HOURS & SHIFT RULES: the owner's staffing
                # rules, ranked with the floors
                "role_window": TIER_COVERAGE, "over_role_max": TIER_COVERAGE,
+               # A role the restaurant is never without while it is open (a
+               # bartender), and one it wants on from the open (a host):
+               # the owner's staffing rules, ranked with the floors, so no
+               # pass below them — the trims, the solver, the optimizer —
+               # may open a stretch with nobody of the role on.
+               "role_gap": TIER_COVERAGE, "role_late_open": TIER_COVERAGE,
                # The owner's own words (owner_rules): confirmed, ranked with
                # the owner's staffing rules, so no pass below them — the
                # overtime rebalance, the minimum hours, the trim, the solver,
@@ -6971,6 +7222,8 @@ def breach_id(v) -> tuple:
         return (kind, d, v.get("close_role") or "")
     if kind == "no_manager":
         return (kind, d)
+    if kind in ("role_gap", "role_late_open"):
+        return (kind, d, v.get("floor_role") or "")
     if kind in ("no_manager_roster", "manager_rule_unusable"):
         return (kind,)
     if kind == "no_manager_on_duty":
@@ -7182,7 +7435,7 @@ _PERSON_WEEK_KINDS = frozenset({"over_max_hours", "over_hours_ceiling", "payroll
 # violations()' order of the day-level blocks.
 _DAY_PHASE = {"ends_before_role_close": 2, "role_time": 3, "coverage_floor": 4, "owner_rule": 4,
               "nobody_at_close": 4, "keyholder_until_close": 4, "closer_unavailable": 4,
-              "trainee_unpaired": 4, "no_manager": 5, "no_manager_on_duty": 6, "over_section_cap": 7,
+              "trainee_unpaired": 4, "role_gap": 4, "role_late_open": 4, "no_manager": 5, "no_manager_on_duty": 6, "over_section_cap": 7,
               "over_role_max": 7.5}
 # The two about the whole week, not a person or a date.
 _WEEK_KINDS = frozenset({"no_manager_roster", "manager_rule_unusable"})
@@ -9188,6 +9441,259 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
                      "text": (f"{mins / 60.0:g}h of the week has no manager on ({', '.join(_mdy(d) for d in dates)}): "
                               "nobody who manages could legally cover it — each day says why. Name an acting "
                               "manager for those dates, or raise a manager's weekly cap.")}
+    return {"rows": rep.rows, "extended": extended, "added": added, "left": left, "shortfall": shortfall}
+
+
+# ── the roles kept on, covered (owner, 10/30/26) ──────────
+#
+# A stretch the restaurant is open with nobody of a role it keeps on all day
+# (role_gap: the bartender off at 1:30pm, the next on at 3:00pm), or an
+# on-at-open role late at the open (role_late_open: the host on at noon for
+# an 11am open), put right the way the manager backstop puts a manager gap
+# right: one of the role already on that day runs on or comes in earlier,
+# else somebody who works the role comes in — inside their availability,
+# their windows, time off and their own limits always (can_add / fillable),
+# inside the overtime line and the restaurant's policy limits first (the
+# FILL_ROUNDS), and never making anything at or above the coverage rank new
+# or worse. What it cannot cover stays the sweep's hard breach, with why.
+
+ROLE_FILL_MAX_SWEEPS = 160
+# Running somebody on is the least disruption — until it makes a shift
+# longer than this (10h, schedule_benchmark's long shift): then a teammate
+# coming in is tried first, and the long shift only when nobody can.
+ROLE_FILL_LONG_MINUTES = 600
+
+
+def cover_role_gaps(rows: list, c: "Constraints", editable=None, line: float = None,
+                    max_sweeps: int = ROLE_FILL_MAX_SWEEPS) -> dict:
+    """Returns {rows, extended: [{index, employee, day, date, from, to, kind,
+    reason}], added: [... "leg": True for a second shift that day], left:
+    [{date, day, family, kind, from, to, minutes, gap_start, gap_end,
+    reasons: [{employee, why}]}], shortfall: {hours, dates, text} or None}."""
+    rep = _Repair(rows, c, upto=TIER_POLICY, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
+                  tier=TIER_COVERAGE)
+    extended, added, left = [], [], []
+    always, at_open = always_on_families(c), on_at_open_families(c)
+    if not (always or at_open):
+        return {"rows": rep.rows, "extended": extended, "added": added, "left": left, "shortfall": None}
+    display = _display(c, rep.rows)
+    names = {}
+    for nm in display.values():
+        names.setdefault(c.key(nm), nm)
+    holders = {fam: role_holders(c, fam) for fam in list(always) + list(at_open)}
+    max_shift_m = int(float(c.compliance.get("max_shift_hours") or DEFAULTS["max_shift_hours"]) * 60)
+    shortest_m = int(round(shortest_shift_hours(c) * 60))
+
+    def free(r):
+        return (editable is None or r.get("date") in editable) and not _is_pinned(r)
+
+    def legal(new, others, mode):
+        nm, d = new.get("employee"), new.get("date")
+        ok, why = c.fillable(nm, d)
+        if not ok:
+            return False, why
+        ok, why = c.can_add(new, others, line=line, overtime=mode[0], policy=mode[1])
+        if not ok:
+            return False, why
+        if c.is_salaried(nm) and (mode[1] or c.salaried_cap_set(nm)):
+            cap = c.salaried_limit(nm)
+            have = _bucket_hours(c, others, _low(nm), c.bucket(d)) + row_hours(new)
+            if have > cap + 0.05:
+                return False, f"at their {cap:g}h weekly cap"
+        return True, ""
+
+    def sized(gs, ge, day_lo, day_hi, avoid=()):
+        """A new shift over the stretch: as long as the stretch, or the
+        owner's shortest shift, inside the role's open window and the
+        longest shift, clear of the person's other shifts that day."""
+        cover_end = min(ge, gs + max_shift_m)
+        length = min(max(ge - gs, shortest_m), max_shift_m)
+        lo, hi = gs, gs + length
+        if hi > day_hi:
+            hi = max(cover_end, day_hi)
+            lo = max(day_lo, min(gs, hi - length))
+        for s0, e0 in avoid:
+            if lo < e0 <= gs:
+                lo = e0
+            if cover_end <= s0 < hi:
+                hi = s0
+        if shortest_m and hi - lo < shortest_m:
+            return None, None
+        return lo, hi
+
+    def code_for(d, fam, key, gs, ge):
+        """The job code a new shift of the family is written in: the code of
+        the role's shift nearest the stretch that day, else the person's
+        own code of the family, else the family as the restaurant spells it."""
+        near = []
+        for x in rep.rows:
+            if x.get("date") != d or c.family(x.get("role")) != fam:
+                continue
+            sp = _span(x)
+            if sp:
+                near.append((min(abs(sp[1] - gs), abs(sp[0] - ge)), str(x.get("role") or "")))
+        if near:
+            return sorted(near)[0][1]
+        mine = sorted(r for r in (c.known_roles.get(key) or ()) if c.family(r) == fam)
+        if mine:
+            return c.role_names.get(mine[0], mine[0])
+        return _family_label(c, fam)
+
+    def options(d, fam, kind, gs, ge, day_lo, day_hi, strict):
+        out = []
+        day_rows = [(j, x) for j, x in enumerate(rep.rows) if x.get("date") == d and (x.get("employee") or "").strip()]
+        tmpl = day_rows[0][1] if day_rows else {}
+        lab = _family_label(c, fam).lower()
+        note = (f"Cavnar AI: a {lab} on every minute you're open" if kind == "role_gap"
+                else f"Cavnar AI: a {lab} on at open")
+        # 1. one of the role already on that day runs on, or comes in earlier
+        for j, x in day_rows:
+            if c.family(x.get("role")) != fam or not free(x) or c.training_row(x):
+                continue
+            nm = x.get("employee")
+            if not c.can_work(nm, d)[0]:
+                continue
+            sp = _span(x)
+            if not sp:
+                continue
+            s0, e0 = sp
+            if gs - _ADJACENT_MIN <= e0 <= gs:
+                ns, ne = s0, min(ge, s0 + max_shift_m)
+            elif ge <= s0 <= ge + _ADJACENT_MIN:
+                ns, ne = max(gs, e0 - max_shift_m), e0
+            else:
+                continue
+            if ne - ns <= e0 - s0:
+                continue
+            new = _retimed(x, ns, ne, c)
+            others = rep.rows[:j] + rep.rows[j + 1:]
+            if not legal(new, others, strict)[0]:
+                continue
+            run, hours = _fatigue_rank(c, others, _low(nm), d, row_hours(new))
+            # A shift run past ROLE_FILL_LONG_MINUTES (that it was not
+            # already) comes after somebody else coming in.
+            long_ = ne - ns > max(ROLE_FILL_LONG_MINUTES, e0 - s0)
+            out.append((3 if long_ else 0, run, hours, nm, "extend", j, new))
+        # 2. somebody who works the role comes in (a second shift that day
+        # for somebody already on, inside the longest shift)
+        for key in sorted(holders.get(fam) or ()):
+            nm = names.get(key)
+            if not nm:
+                continue
+            mine = [_span(x) for _j, x in day_rows if c.key(x.get("employee")) == key]
+            mine = [sp for sp in mine if sp]
+            if any(a < ge and b > gs for a, b in mine):
+                continue          # on through the stretch already, in another role or unable to count
+            lo, hi = sized(gs, ge, day_lo, day_hi, avoid=mine)
+            if lo is None:
+                continue
+            new = _new_row(tmpl, d, nm, code_for(d, fam, key, gs, ge), lo, hi, note, c)
+            if mine and sum(b - a for a, b in mine) / 60.0 + row_hours(new) > max_shift_m / 60.0 + 0.01:
+                continue
+            if not legal(new, rep.rows, strict)[0]:
+                continue
+            run, hours = _fatigue_rank(c, rep.rows, _low(nm), d, row_hours(new))
+            out.append((1 if mine else 2, run, hours, nm, "leg" if mine else "add", None, new))
+        # The least disruption first — a shift run on, then a second leg,
+        # then a new shift — then the least tired, the fewest hours.
+        out.sort(key=lambda t: t[:4])
+        return out
+
+    def why_not(d, fam, gs, ge):
+        reasons = []
+        for key in sorted(holders.get(fam) or ()):
+            nm = names.get(key)
+            if not nm:
+                continue
+            ok, why = c.can_work(nm, d)
+            if ok:
+                ok, why = c.fillable(nm, d)
+            if ok:
+                probe = _new_row({}, d, nm, code_for(d, fam, key, gs, ge), gs, min(ge, gs + max_shift_m), "", c)
+                ok, why = c.can_add(probe, rep.rows, line=line, overtime=False, policy=False)
+                if ok:
+                    why = "could not be fitted around the rest of the day without breaking another rule"
+            reasons.append({"employee": nm, "why": why})
+        return reasons
+
+    for d in sorted(role_cover_gaps(rep.rows, c).keys()):
+        if editable is not None and d not in editable:
+            continue
+        day = _weekday_of(d) or d
+        o, cl = open_hours(c, day)
+        skipped = set()
+        while not rep.spent:
+            gaps = [g for g in (role_cover_gaps(rep.rows, c, dates={d}).get(d) or [])
+                    if (g["kind"], g["family"], g["start"], g["end"]) not in skipped]
+            if not gaps:
+                break
+            g = gaps[0]
+            kind, fam, gs, ge = g["kind"], g["family"], int(g["start"]), int(g["end"])
+            bid = (kind, d, fam)
+            before = rep.severity(bid)
+            day_lo, day_hi = role_open_window(c, fam, day, o, cl)
+            lab = _family_label(c, fam).lower()
+            done = None
+            for strict in FILL_ROUNDS:
+                for opt in options(d, fam, kind, gs, ge, day_lo, day_hi, strict):
+                    if rep.spent:
+                        break
+                    nm, how, j, new = opt[-4], opt[-3], opt[-2], opt[-1]
+                    trial = list(rep.rows)
+                    if how == "extend":
+                        trial[j] = new
+                    else:
+                        trial.append(new)
+                    worse, after = rep.judge(trial, upto=TIER_POLICY if strict[1] else TIER_COVERAGE,
+                                             soft_upto=TIER_OVERTIME if strict == FILL_ROUNDS[0] else None)
+                    if worse or float((after[1].get("by_id") or {}).get(bid, 0.0)) >= before - 0.001:
+                        continue
+                    done = (how, j, nm, new, trial, after, strict)
+                    break
+                if done or rep.spent:
+                    break
+            span_txt = f"{_fmt_minutes(gs % (24 * 60))}–{_fmt_minutes(ge % (24 * 60))}"
+            if done is None:
+                skipped.add((kind, fam, gs, ge))
+                left.append({"date": d, "day": day, "family": fam, "kind": kind,
+                             "from": _fmt_minutes(gs % (24 * 60)), "to": _fmt_minutes(ge % (24 * 60)),
+                             "minutes": ge - gs, "gap_start": gs, "gap_end": ge,
+                             "reasons": why_not(d, fam, gs, ge)})
+                continue
+            how, j, nm, new, trial, after, strict = done
+            was = rep.rows[j] if how == "extend" else None
+            before_prof = rep.prof
+            rep.take(trial, after)
+            idx = j if how == "extend" else len(trial) - 1
+            ot = ""
+            if strict == FILL_ROUNDS[1]:
+                ot = f" (overtime: nobody who works {lab} could cover it inside their hours)"
+            elif strict == FILL_ROUNDS[2]:
+                past = [w["label"] for w in regressions(before_prof, after[1], upto=TIER_POLICY, hard_only=False)
+                        if w["tier"] == TIER_POLICY]
+                ot = (" (past your " + (past[0] if past else "scheduling limits") + f": a {lab} on outranks it, "
+                      f"and nobody who works {lab} could cover the stretch inside it)")
+            now = f"{new['shift_start']}–{new['shift_end']}"
+            what = (f"No {lab} was on {day} {span_txt}" if kind == "role_gap"
+                    else f"No {lab} was on at open {day} ({_fmt_minutes(gs % (24 * 60))})")
+            if how == "extend":
+                extended.append({"index": idx, "employee": nm, "day": day, "date": d, "from": hours_label(was),
+                                 "to": now, "kind": "role_cover", "family": fam,
+                                 "reason": f"{what}: {nm} works {now} to cover it{ot}."})
+            else:
+                added.append({"index": idx, "employee": nm, "day": day, "date": d, "from": NO_ONE, "to": now,
+                              "kind": "role_cover", "family": fam, "leg": how == "leg",
+                              "reason": (f"{what}: added {nm} {now}"
+                                         + (" as a second shift that day" if how == "leg" else "") + f"{ot}.")})
+    shortfall = None
+    if left:
+        dates = sorted({x["date"] for x in left})
+        mins = sum(int(x["minutes"]) for x in left)
+        roles = sorted({_family_label(c, x["family"]).lower() for x in left})
+        shortfall = {"hours": round(mins / 60.0, 2), "dates": dates,
+                     "text": (f"{mins / 60.0:g}h open with no {' or '.join(roles)} on "
+                              f"({', '.join(_mdy(d) for d in dates)}): nobody who works the role could legally "
+                              "cover it — each day says why.")}
     return {"rows": rep.rows, "extended": extended, "added": added, "left": left, "shortfall": shortfall}
 
 
